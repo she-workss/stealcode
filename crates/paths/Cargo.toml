@@ -1,0 +1,14 @@
+[package]
+name = "paths"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+dirs.workspace = true
+utils.workspace = true
+
+[lints]
+workspace = true

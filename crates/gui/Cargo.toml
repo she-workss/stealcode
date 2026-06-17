@@ -1,0 +1,20 @@
+[package]
+name = "gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", default-features = false }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", default-features = false }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", default-features = false, features = [
+    "font-kit",
+] }
+settings.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

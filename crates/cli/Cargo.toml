@@ -1,0 +1,51 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[package.metadata.winresource]
+FileDescription = "StealCode - AI-powered coding assistant"
+ProductName = "StealCode"
+OriginalFilename = "stealcode.exe"
+LegalCopyright = "Copyright © he-thinks 2026"
+
+[[bin]]
+name = "stealcode"
+path = "src/main.rs"
+
+[features]
+default = []
+all = ["desktop", "server", "web"]
+desktop = ["dep:gui"]
+server = ["dep:server"]
+web = []
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4.6", default-features = false, features = [
+    "color",
+    "derive",
+    "help",
+    "suggestions",
+    "usage",
+] }
+clap_complete = { version = "4.6", default-features = false }
+gui = { workspace = true, optional = true }
+mimalloc = { version = "0.1", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+server = { workspace = true, optional = true }
+settings.workspace = true
+telemetry.workspace = true
+tokio.workspace = true
+tower-http = { version = "0.7", features = ["fs", "trace"], optional = true }
+tracing.workspace = true
+tui.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = { version = "0.1", default-features = false }
+
+[lints]
+workspace = true

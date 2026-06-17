@@ -1,0 +1,16 @@
+[package]
+name = "telemetry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+paths.workspace = true
+tracing.workspace = true
+tracing-appender = { version = "0.2", default-features = false }
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

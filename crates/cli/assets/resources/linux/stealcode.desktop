@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=StealCode
+Comment=AI-powered coding assistant
+Exec=stealcode
+Icon=stealcode
+Type=Application
+Terminal=false
+Categories=Development;IDE;
+Keywords=ai;code;assistant;editor;

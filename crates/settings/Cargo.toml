@@ -1,0 +1,23 @@
+[package]
+name = "settings"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+paths.workspace = true
+termina.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with = { version = "3.21", default-features = false, features = [
+    "macros",
+    "std",
+] }
+tracing.workspace = true
+
+[lints]
+workspace = true

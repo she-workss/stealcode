@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Debug executable",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--profile=debugging",
+                    "--bin=${workspaceFolderBasename}"
+                ]
+            },
+            "args": [],
+            "env": {},
+            "preLaunchTask": "Build (Debugging)"
+        },
+    ]
+}

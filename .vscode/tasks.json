@@ -1,0 +1,26 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "group": "build",
+            "type": "shell",
+            "command": "cargo b",
+            "problemMatcher": "$rustc"
+        },
+        {
+            "label": "Build (Release)",
+            "group": "build",
+            "type": "shell",
+            "command": "cargo b -r",
+            "problemMatcher": "$rustc"
+        },
+        {
+            "label": "Build (Debugging)",
+            "group": "build",
+            "type": "shell",
+            "command": "cargo b --profile=debugging",
+            "problemMatcher": "$rustc"
+        }
+    ]
+}

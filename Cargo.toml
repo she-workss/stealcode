@@ -1,0 +1,141 @@
+[workspace]
+members = [
+    "crates/cli",
+    "crates/gui",
+    "crates/paths",
+    "crates/server",
+    "crates/settings",
+    "crates/telemetry",
+    "crates/tui",
+    "crates/utils",
+]
+default-members = [
+    "crates/cli",
+    "crates/paths",
+    "crates/settings",
+    "crates/telemetry",
+    "crates/tui",
+    "crates/utils",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Sinkevich Artyom <sinkevich.artem@inbox.ru>"]
+homepage = "https://github.com/he-thinks/stealcode"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = { version = "1", default-features = false }
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "matched-path",
+    "tokio",
+    "tracing",
+] }
+dirs = { version = "6", default-features = false }
+gui = { path = "crates/gui" }
+paths = { path = "crates/paths" }
+ratatui = { git = "https://github.com/ratatui/ratatui", features = ["termina"] }
+ratatui-termina = { git = "https://github.com/ratatui/ratatui" }
+termina = { version = "0.3", default-features = false }
+rustc-hash = { version = "2", default-features = false, features = ["std"] }
+serde = { version = "1", default-features = false, features = [
+    "derive",
+    "std",
+] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+server = { path = "crates/server" }
+settings = { path = "crates/settings" }
+telemetry = { path = "crates/telemetry" }
+tokio = { version = "1.52", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+    "signal",
+] }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "chrono",
+    "env-filter",
+    "fmt",
+    "tracing-log",
+] }
+tui = { path = "crates/tui" }
+utils = { path = "crates/utils" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+missing_debug_implementations = "warn"
+missing_docs = "allow"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+allow_attributes_without_reason = "allow"
+cargo_common_metadata = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+fn_params_excessive_bools = "allow"
+match_same_arms = "allow"
+many_single_char_names = "allow"
+module_inception = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+needless_pass_by_value = "allow"
+option_if_let_else = "allow"
+redundant_pub_crate = "allow"
+similar_names = "allow"
+single_call_fn = "allow"
+single_match_else = "allow"
+struct_excessive_bools = "allow"
+too_long_first_doc_paragraph = "allow"
+too_many_lines = "allow"
+type_complexity = "allow"
+
+[profile.release]
+opt-level = "s"
+# opt-level = 3
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+strip = true
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[profile.release-fast]
+inherits = "release"
+debug = "full"
+lto = false
+codegen-units = 16

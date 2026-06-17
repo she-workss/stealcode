@@ -1,0 +1,66 @@
+[alias]
+nt = "nextest run --all-features --all-targets --status-level fail --no-fail-fast"
+
+[build]
+incremental = true
+rustflags = [
+    "--cfg=tokio_unstable",
+    # "-Ctarget-cpu=native",
+    "-Zcache-proc-macros",
+    "-Zshare-generics=y",
+    "-Zthreads=0",
+    # "-Zlocation-detail=none",
+]
+
+[unstable]
+# build-std = ["std", "panic_abort"]
+# build-std-features = ["optimize_for_size"]
+checksum-freshness = true
+codegen-backend = true
+feature-unification = true
+no-embed-metadata = true
+profile-hint-mostly-unused = true
+
+[resolver]
+feature-unification = "workspace"
+
+[profile.dev]
+codegen-backend = "cranelift"
+
+[target.'cfg(target_os = "windows")']
+# linker = "rust-lld"
+rustflags = [
+    "--cfg=tokio_unstable",
+    "--cfg=windows_slim_errors",
+    "-Clink-arg=-fuse-ld=lld",
+    "-Ctarget-cpu=native",
+    "-Zcache-proc-macros",
+    "-Zshare-generics=y",
+    "-Zthreads=0",
+    # "-Zlocation-detail=none",
+]
+
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = [
+    "--cfg=tokio_unstable",
+    "-Clink-arg=-fuse-ld=/usr/bin/mold",
+    "-Ctarget-cpu=native",
+    "-Zcache-proc-macros",
+    "-Zshare-generics=y",
+    "-Zthreads=0",
+    # "-Zlocation-detail=none",
+]
+
+[target.x86_64-unknown-linux-musl]
+linker = "clang"
+rustflags = [
+    "--cfg=tokio_unstable",
+    "-Clink-arg=-fuse-ld=/usr/bin/mold",
+    "-Crelocation-model=static",
+    "-Ctarget-cpu=native",
+    "-Zcache-proc-macros",
+    "-Zshare-generics=y",
+    "-Zthreads=0",
+    # "-Zlocation-detail=none",
+]

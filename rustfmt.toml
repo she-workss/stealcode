@@ -1,0 +1,11 @@
+edition = "2024"
+
+max_width = 80
+
+wrap_comments = true
+use_field_init_shorthand = true
+reorder_impl_items = true
+normalize_comments = true
+blank_lines_upper_bound = 1
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
