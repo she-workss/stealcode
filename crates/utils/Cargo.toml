@@ -11,9 +11,7 @@ anyhow.workspace = true
 dirs.workspace = true
 dunce = { version = "1", default-features = false }
 globset = { version = "0.4", default-features = false }
-itertools = { version = "0.15", default-features = false, features = [
-    "use_std",
-] }
+itertools = "0.15"
 ref-cast = { version = "1", default-features = false }
 regex = { version = "1.12", default-features = false }
 serde.workspace = true

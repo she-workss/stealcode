@@ -9,7 +9,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 ratatui.workspace = true
-ratatui-termina.workspace = true
 settings.workspace = true
 
 [lints]

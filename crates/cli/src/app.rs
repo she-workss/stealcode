@@ -35,7 +35,7 @@ pub(crate) async fn run_app(
             if let Some(project) = args.project {
                 debug!("Start GUI in {}", project.display());
             } else {
-                gui::run_desktop(&settings)?;
+                gui::run_desktop(settings)?;
             }
         }
         Some(CliCommands::Db) => debug!("Database tools"),
@@ -54,7 +54,7 @@ pub(crate) async fn run_app(
             if let Some(project) = args.project {
                 debug!("Start server in {}", project.display());
             } else {
-                server::run_server(&settings).await?;
+                server::run_server(settings).await?;
             }
         }
         Some(CliCommands::Stats) => debug!("Show stats"),
@@ -68,6 +68,7 @@ pub(crate) async fn run_app(
                 debug!("Start Web");
             }
         }
+        #[cfg(feature = "tui")]
         None => {
             let _ = rustls::crypto::ring::default_provider()
                 .install_default()
@@ -77,9 +78,11 @@ pub(crate) async fn run_app(
             if let Some(project) = args.project {
                 debug!("Start TUI in {}", project.display());
             } else {
-                tui::run_tui(&settings)?;
+                tui::run_tui(settings)?;
             }
         }
+        #[cfg(not(feature = "tui"))]
+        None => {}
     }
     Ok(())
 }

@@ -3,8 +3,8 @@ use std::{
     fmt::{self, Display},
 };
 
+use ratatui::termina::event::{KeyCode, Modifiers as TerminaModifiers};
 use serde::{Deserialize, Serialize};
-use termina::event::{KeyCode, Modifiers as TerminaModifiers};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidKeystroke {
@@ -110,7 +110,7 @@ impl Keystroke {
     }
 
     #[must_use]
-    pub fn from_termina(event: &termina::event::KeyEvent) -> Self {
+    pub fn from_termina(event: &ratatui::termina::event::KeyEvent) -> Self {
         let m = event.modifiers;
         let modifiers = Modifiers {
             ctrl: m.contains(TerminaModifiers::CONTROL),
@@ -201,7 +201,7 @@ fn normalize_char_key(c: char, shift: bool) -> Cow<'static, str> {
 
 #[cfg(test)]
 mod tests {
-    use termina::event::{KeyEvent, KeyEventKind, KeyEventState};
+    use ratatui::termina::event::{KeyEvent, KeyEventKind, KeyEventState};
 
     use super::*;
 
@@ -288,7 +288,6 @@ mod tests {
 
     #[test]
     fn from_termina_ctrl_c() {
-        use termina::event::{KeyEvent, KeyEventKind, KeyEventState};
         let event = KeyEvent {
             code: KeyCode::Char('c'),
             modifiers: TerminaModifiers::CONTROL,
@@ -302,7 +301,6 @@ mod tests {
 
     #[test]
     fn from_termina_shift_a() {
-        use termina::event::{KeyEvent, KeyEventKind, KeyEventState};
         let event = KeyEvent {
             code: KeyCode::Char('A'),
             modifiers: TerminaModifiers::SHIFT,

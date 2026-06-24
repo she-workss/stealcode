@@ -9,6 +9,7 @@ rustflags = [
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
+    "-Znext-solver=globally",
     # "-Zlocation-detail=none",
 ]
 
@@ -37,6 +38,7 @@ rustflags = [
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
+    "-Znext-solver=globally",
     # "-Zlocation-detail=none",
 ]
 
@@ -49,6 +51,7 @@ rustflags = [
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
+    "-Znext-solver=globally",
     # "-Zlocation-detail=none",
 ]
 
@@ -62,5 +65,6 @@ rustflags = [
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
+    "-Znext-solver=globally",
     # "-Zlocation-detail=none",
 ]

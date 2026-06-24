@@ -17,21 +17,16 @@ name = "stealcode"
 path = "src/main.rs"
 
 [features]
-default = []
-all = ["desktop", "server", "web"]
+default = ["tui"]
+all = ["desktop", "server", "tui", "web"]
 desktop = ["dep:gui"]
 server = ["dep:server"]
+tui = ["dep:tui"]
 web = []
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "4.6", default-features = false, features = [
-    "color",
-    "derive",
-    "help",
-    "suggestions",
-    "usage",
-] }
+clap = { version = "4.6", default-features = false, features = ["color", "derive", "help", "suggestions", "usage"] }
 clap_complete = { version = "4.6", default-features = false }
 gui = { workspace = true, optional = true }
 mimalloc = { version = "0.1", default-features = false }
@@ -42,7 +37,7 @@ telemetry.workspace = true
 tokio.workspace = true
 tower-http = { version = "0.7", features = ["fs", "trace"], optional = true }
 tracing.workspace = true
-tui.workspace = true
+tui = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = { version = "0.1", default-features = false }

@@ -28,41 +28,20 @@ license = "MIT"
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-axum = { version = "0.8", default-features = false, features = [
-    "http1",
-    "json",
-    "matched-path",
-    "tokio",
-    "tracing",
-] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "tokio", "tracing"] }
 dirs = { version = "6", default-features = false }
 gui = { path = "crates/gui" }
 paths = { path = "crates/paths" }
-ratatui = { git = "https://github.com/ratatui/ratatui", features = ["termina"] }
-ratatui-termina = { git = "https://github.com/ratatui/ratatui" }
-termina = { version = "0.3", default-features = false }
-rustc-hash = { version = "2", default-features = false, features = ["std"] }
-serde = { version = "1", default-features = false, features = [
-    "derive",
-    "std",
-] }
-serde_json = { version = "1", default-features = false, features = ["std"] }
+ratatui = { version = "0.30", default-features = false, features = ["termina"] }
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 server = { path = "crates/server" }
 settings = { path = "crates/settings" }
 telemetry = { path = "crates/telemetry" }
-tokio = { version = "1.52", default-features = false, features = [
-    "macros",
-    "rt-multi-thread",
-    "signal",
-] }
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = { version = "0.1", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = [
-    "ansi",
-    "chrono",
-    "env-filter",
-    "fmt",
-    "tracing-log",
-] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "chrono", "env-filter", "tracing-log"] }
 tui = { path = "crates/tui" }
 utils = { path = "crates/utils" }
 
