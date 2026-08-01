@@ -93,7 +93,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: Install cargo-sort
-      uses: taiki-e/install-action@cargo-sort
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-sort
     - name: Check dependency tables
       run: cargo sort --workspace --grouped --check
 
