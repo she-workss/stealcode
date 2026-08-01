@@ -12,7 +12,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 # so this script works regardless of where the repo is checked out or which
 # machine (dev box or CI runner) it runs on.
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
-$Target = "$Architecture-pc-windows-gnu"
+$Target = "$Architecture-pc-windows-msvc"
 $CargoOutDir = Join-Path $RepoRoot "target\$Target\release"
 $StagingDir = Join-Path $RepoRoot "target\windows-staging\$Channel-$Architecture"
 $OutputDir = Join-Path $RepoRoot 'target'
@@ -43,7 +43,7 @@ function Build-Binaries {
 
 function Build-Installer {
     $issPath = Join-Path $StagingDir 'stealcode.iss'
-    $innoSetupPath = 'D:\Programs\Inno Setup 7\ISCC.exe'
+    $innoSetupPath = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
     # Windows Server 2022 runners have Inno Setup 6 preinstalled at this
     # path (see actions/runner-images Windows2022-Readme.md). Re-check that
     # doc if you switch runner images.
