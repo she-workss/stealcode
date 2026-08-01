@@ -43,6 +43,25 @@ static SOUND: &str = "message-new-instant";
 #[cfg(target_os = "windows")]
 static SOUND: &str = "Default";
 
+#[cfg(target_os = "windows")]
+fn show_notification() {
+    let _ = notify_rust::Notification::new()
+        .app_id(APP_USER_MODEL_ID)
+        .summary("StealCode")
+        .body("Hello from StealCode!")
+        .sound_name(SOUND)
+        .show();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_notification() {
+    let _ = notify_rust::Notification::new()
+        .summary("StealCode")
+        .body("Hello from StealCode!")
+        .sound_name(SOUND)
+        .show();
+}
+
 /// Background worker for "Check for updates now" / auto-update polling,
 /// used only to let the GUI exercise both the manual and automatic paths
 /// through `auto_update::check_now_blocking` for testing. Same
@@ -220,12 +239,7 @@ impl Render for StealcodeApp {
                 Button::new("show_notification_btn")
                     .label("Show notification")
                     .on_click(|_, _, _| {
-                        let _ = notify_rust::Notification::new()
-                            .app_id(APP_USER_MODEL_ID)
-                            .summary("StealCode")
-                            .body("Hello from StealCode!")
-                            .sound_name(SOUND)
-                            .show();
+                        show_notification();
                     }),
             )
             .child(div().flex().flex_wrap().gap_2().justify_center().children(
@@ -270,7 +284,7 @@ impl Render for StealcodeApp {
                             .justify_center()
                             .child(
                                 Button::new("check_update_btn")
-                                    .label("Check for updates now")
+                                    .label("Check for updates")
                                     .on_click(cx.listener(
                                         |this, _, _window, cx| {
                                             this.updates.check_now();
@@ -404,9 +418,9 @@ pub fn run_desktop(
         let exit_item = MenuItem::with_id("exit", "Exit", true, None);
         let _ = menu.append(&show_notif_item);
         let _ = menu.append(&exit_item);
-        let path =
-            "D:/Programming/stealcode/crates/cli/assets/icons/prod/icon.png";
-        let icon = load_icon(Path::new(path));
+        let icon_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../cli/assets/icons/prod/icon.png");
+        let icon = load_icon(&icon_path);
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("StealCode")
@@ -435,12 +449,7 @@ pub fn run_desktop(
                     if let Ok(event) = MenuEvent::receiver().try_recv() {
                         match event.id().as_ref() {
                             "show_notif" => {
-                                let _ = notify_rust::Notification::new()
-                                    .app_id(APP_USER_MODEL_ID)
-                                    .summary("StealCode")
-                                    .body("Hello from StealCode!")
-                                    .sound_name(SOUND)
-                                    .show();
+                                show_notification();
                             }
                             "exit" => {
                                 let _ = cx.update(|cx| {

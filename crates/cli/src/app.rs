@@ -104,12 +104,17 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
                 .await?
         }
         None => {
-            auto_update::fetch_release_for_channel(
+            let Some(release) = auto_update::fetch_release_for_channel(
                 &client,
                 &source,
                 release_channel::ReleaseChannel::current(),
             )
             .await?
+            else {
+                println!("Релизов пока нет - обновляться нечем.");
+                return Ok(());
+            };
+            release
         }
     };
 

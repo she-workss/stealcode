@@ -83,7 +83,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: always()
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -111,7 +111,7 @@ jobs:
         run: bash script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.version }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+          uses: actions/upload-artifact@v7
         with:
           name: stealcode-${{ runner.os }}-${{ matrix.arch }}
           path: |
@@ -128,7 +128,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

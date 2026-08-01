@@ -29,7 +29,7 @@ jobs:
           ref: main
 
       - name: Install cargo-edit
-        run: cargo install cargo-edit --locked
+        uses: taiki-e/install-action@cargo-edit
 
       - name: Bump version
         run: cargo set-version --workspace --bump ${{ inputs.bump }}

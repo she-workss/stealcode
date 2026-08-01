@@ -291,11 +291,12 @@ pub fn parse_releases_list_response(body: &[u8]) -> Result<Vec<ReleaseInfo>> {
 /// Fetches the single most recent, non-draft release regardless of
 /// prerelease status - needed for the nightly channel, since
 /// `GET /releases/latest` explicitly skips prereleases and would never
-/// surface a nightly build marked `prerelease: true` on GitHub.
+/// surface a nightly build marked `prerelease: true` on GitHub. Returns
+/// `Ok(None)` when the repository has no non-draft releases yet.
 pub async fn fetch_most_recent_release(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
-) -> Result<ReleaseInfo> {
+) -> Result<Option<ReleaseInfo>> {
     let mut request = client
         .get(source.releases_list_url())
         .header(USER_AGENT, USER_AGENT_VALUE)
@@ -319,20 +320,18 @@ pub async fn fetch_most_recent_release(
     );
 
     let releases = parse_releases_list_response(&body)?;
-    releases
-        .into_iter()
-        .find(|release| !release.draft)
-        .context("no non-draft releases found")
+    Ok(releases.into_iter().find(|release| !release.draft))
 }
 
 /// Dispatches to the right fetch strategy for the given channel: stable
 /// uses `/releases/latest` (which correctly ignores prereleases), nightly
 /// uses the full list (since it needs to see prerelease-flagged builds).
+/// Returns `Ok(None)` when no release exists for this channel yet.
 pub async fn fetch_release_for_channel(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
     channel: ReleaseChannel,
-) -> Result<ReleaseInfo> {
+) -> Result<Option<ReleaseInfo>> {
     match channel {
         ReleaseChannel::Stable => fetch_latest_release(client, source).await,
         ReleaseChannel::Nightly => {
@@ -341,16 +340,21 @@ pub async fn fetch_release_for_channel(
     }
 }
 
+/// `GET /releases/latest` returns 404 both when the repository has no
+/// releases at all and when every release is a draft or prerelease - the
+/// GitHub API's documented behavior. Treat that as "no update available"
+/// (`Ok(None)`) rather than an error.
 pub async fn fetch_latest_release(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
-) -> Result<ReleaseInfo> {
+) -> Result<Option<ReleaseInfo>> {
     fetch_release(client, source, &source.latest_release_url()).await
 }
 
 /// Fetches a specific tagged release, for `stealcode upgrade <version>`
 /// (the `target` field on `CliCommands::Upgrade`). `version` may be given
-/// with or without a leading `v`.
+/// with or without a leading `v`. Unlike `fetch_latest_release`, a missing
+/// release here is an error - the person asked for that exact version.
 pub async fn fetch_release_by_version(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
@@ -361,14 +365,21 @@ pub async fn fetch_release_by_version(
     } else {
         format!("v{version}")
     };
-    fetch_release(client, source, &source.release_by_tag_url(&tag)).await
+    fetch_release(client, source, &source.release_by_tag_url(&tag))
+        .await?
+        .with_context(|| {
+            format!(
+                "release {tag:?} not found - either the tag does not exist, \
+                 or the repository is private and no STEALCODE_GH_TOKEN was provided"
+            )
+        })
 }
 
 async fn fetch_release(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
     url: &str,
-) -> Result<ReleaseInfo> {
+) -> Result<Option<ReleaseInfo>> {
     let mut request = client
         .get(url)
         .header(USER_AGENT, USER_AGENT_VALUE)
@@ -385,12 +396,15 @@ async fn fetch_release(
         .bytes()
         .await
         .context("failed to read the release response body")?;
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
     anyhow::ensure!(
         status.is_success(),
         "GitHub releases API returned {status}: {}",
         String::from_utf8_lossy(&body)
     );
-    parse_release_response(&body)
+    parse_release_response(&body).map(Some)
 }
 
 pub async fn download_asset(
@@ -471,8 +485,12 @@ pub fn check_now_blocking(
     runtime.block_on(async move {
         let source = GithubReleaseSource::new(owner, repo, token);
         let client = reqwest::Client::new();
-        let release = fetch_latest_release(&client, &source).await?;
-        newer_version_available(&release, &current_version, channel)
+        match fetch_latest_release(&client, &source).await? {
+            Some(release) => {
+                newer_version_available(&release, &current_version, channel)
+            }
+            None => Ok(None),
+        }
     })
 }
 
