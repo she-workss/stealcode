@@ -23,11 +23,15 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.channel.outputs.channel }}
     steps:
       - id: resolve
         name: Resolve tag
         run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - id: version
+        name: Compute plain version (no leading v)
+        run: echo "version=$(echo '${{ steps.resolve.outputs.tag }}' | sed 's/^v//')" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -83,7 +87,15 @@ jobs:
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev
 
       - name: Bundle (Windows)
         if: runner.os == 'Windows'

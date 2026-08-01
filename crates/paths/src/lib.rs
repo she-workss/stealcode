@@ -273,7 +273,7 @@ pub fn database_dir() -> &'static PathBuf {
 /// Returns the path to the crashes directory, if it exists for the current
 /// platform.
 #[must_use]
-pub const fn crashes_dir() -> Option<&'static PathBuf> {
+pub fn crashes_dir() -> Option<&'static PathBuf> {
     cfg_select! {
         target_os = "macos" => {
             static CRASHES_DIR: OnceLock<PathBuf> = OnceLock::new();
