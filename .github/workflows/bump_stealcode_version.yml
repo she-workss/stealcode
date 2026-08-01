@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bump_version:
@@ -63,3 +64,18 @@ jobs:
           git tag "${{ steps.tag.outputs.tag }}"
           git push origin main
           git push origin "${{ steps.tag.outputs.tag }}"
+          # The tag push above does NOT trigger `release.yml` by itself:
+          # GitHub ignores push events performed with GITHUB_TOKEN (the
+          # documented "automatic token authentication" behavior).
+          # workflow_dispatch is the one exception that does start a run,
+          # so dispatch explicitly - on `main` rather than the just-created
+          # tag, to avoid racing GitHub's workflow indexer (HTTP 422).
+
+      - name: Trigger release build
+        run: |
+          gh workflow run release.yml \
+            --repo he-thinks/stealcode \
+            --ref main \
+            -f tag="${{ steps.tag.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
