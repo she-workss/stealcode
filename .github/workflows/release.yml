@@ -111,7 +111,7 @@ jobs:
         run: bash script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.version }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Upload artifact
-          uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7
         with:
           name: stealcode-${{ runner.os }}-${{ matrix.arch }}
           path: |
