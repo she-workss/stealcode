@@ -1,5 +1,5 @@
 use core::time::Duration;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use axum::{
     Extension, Router,
@@ -46,7 +46,10 @@ async fn shutdown_signal() {
     info!("starting graceful shutdown");
 }
 
-pub async fn run_server(settings: &Settings) -> anyhow::Result<()> {
+pub async fn run_server(
+    settings: &Settings,
+    _project: Option<&Path>,
+) -> anyhow::Result<()> {
     let port = settings
         .server
         .as_ref()

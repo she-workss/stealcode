@@ -1,3 +1,5 @@
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use anyhow::Context;
 use clap::Parser;
 
@@ -22,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let settings = settings::load_settings(&cwd);
     let needs_stdout = match args.command {
         #[cfg(feature = "desktop")]
-        Some(CliCommands::Desktop) => false,
+        Some(CliCommands::Desktop { .. }) => false,
         #[cfg(feature = "server")]
         Some(CliCommands::Serve) => false,
         #[cfg(feature = "web")]

@@ -1,0 +1,29 @@
+[package]
+name = "auto_update_helper"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[[bin]]
+name = "auto_update_helper"
+path = "src/auto_update_helper.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -1,0 +1,40 @@
+[package]
+name = "voice"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Windows/Linux x86_64
+mkl = ["candle-core/mkl", "candle-nn/mkl", "candle-transformers/mkl"]
+# macOS
+accelerate = [
+    "candle-core/accelerate",
+    "candle-nn/accelerate",
+    "candle-transformers/accelerate",
+]
+
+[dependencies]
+anyhow.workspace = true
+candle-core = { version = "0.11", default-features = false }
+candle-nn = { version = "0.11", default-features = false }
+candle-transformers = { version = "0.11", default-features = false }
+cpal = { version = "0.18", default-features = false }
+paths.workspace = true
+reqwest = { version = "0.13", default-features = false, features = [
+    "blocking",
+    "rustls",
+] }
+rubato = { version = "4.0", default-features = false }
+serde_json.workspace = true
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+tracing.workspace = true
+
+[dev-dependencies]
+hound = "3.5"
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "auto_update"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[lib]
+path = "src/auto_update.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+futures-util = "0.3"
+release_channel.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls", "json", "stream"] }
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

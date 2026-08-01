@@ -1,20 +1,28 @@
 [workspace]
 members = [
+    "crates/auto_update",
+    "crates/auto_update_helper",
     "crates/cli",
     "crates/gui",
     "crates/paths",
+    "crates/release_channel",
     "crates/server",
     "crates/settings",
+    "crates/sound",
     "crates/telemetry",
     "crates/tui",
     "crates/utils",
+    "crates/voice",
 ]
 default-members = [
+    "crates/auto_update",
     "crates/cli",
     "crates/paths",
+    "crates/release_channel",
     "crates/settings",
     "crates/telemetry",
     "crates/tui",
+    "crates/voice",
     "crates/utils",
 ]
 resolver = "3"
@@ -28,25 +36,52 @@ license = "MIT"
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "matched-path", "tokio", "tracing"] }
+auto_update = { path = "crates/auto_update" }
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "matched-path",
+    "tokio",
+    "tracing",
+] }
 dirs = { version = "6", default-features = false }
 gui = { path = "crates/gui" }
 paths = { path = "crates/paths" }
 ratatui = { version = "0.30", default-features = false, features = ["termina"] }
+release_channel = { path = "crates/release_channel" }
+reqwest = { version = "0.12", default-features = false }
 rustc-hash = "2"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 server = { path = "crates/server" }
 settings = { path = "crates/settings" }
+sound = { path = "crates/sound" }
 telemetry = { path = "crates/telemetry" }
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = { version = "0.1", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "chrono", "env-filter", "tracing-log"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "chrono",
+    "env-filter",
+    "tracing-log",
+] }
 tui = { path = "crates/tui" }
 utils = { path = "crates/utils" }
+voice = { path = "crates/voice" }
+windows = { version = "0.62", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+unsafe_code = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 missing_debug_implementations = "warn"
 missing_docs = "allow"

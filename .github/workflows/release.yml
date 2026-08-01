@@ -1,0 +1,127 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  create_draft_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: channel
+        name: Determine release channel
+        run: |
+          if [[ "${{ github.ref_name }}" == *-nightly ]]; then
+            echo "channel=nightly" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Generate release notes
+        run: ./script/draft-release-notes.sh "${{ github.ref_name }}" > release-notes.md
+      - name: Create draft release
+        run: ./script/create-draft-release.sh release-notes.md ${{ steps.channel.outputs.channel }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bundle:
+    needs: create_draft_release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            arch: aarch64
+            target: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+          - os: macos-13
+            arch: x86_64
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            arch: aarch64
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./script/bundle-windows.ps1 -Architecture ${{ matrix.arch }} -Version ${{ github.ref_name }} -Channel ${{ needs.create_draft_release.outputs.channel }}
+
+      - name: Bundle (macOS)
+        if: runner.os == 'macOS'
+        run: ./script/bundle-mac.sh ${{ matrix.arch }} ${{ github.ref_name }} ${{ needs.create_draft_release.outputs.channel }}
+
+      - name: Bundle (Linux)
+        if: runner.os == 'Linux'
+        run: ./script/bundle-linux.sh ${{ matrix.arch }} ${{ github.ref_name }} ${{ needs.create_draft_release.outputs.channel }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stealcode-${{ runner.os }}-${{ matrix.arch }}
+          path: |
+            target/StealCode-*.exe
+            target/StealCode-*.dmg
+            target/stealcode-linux-*.tar.gz
+          if-no-files-found: error
+
+  upload_release_assets:
+    needs:
+      - create_draft_release
+      - bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Upload to release
+        run: gh release upload "${{ github.ref_name }}" --repo he-thinks/stealcode artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate_release_assets:
+    needs: upload_release_assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate expected assets are present
+        run: |
+          EXPECTED='["StealCode-x86_64.exe", "StealCode-aarch64.exe", "StealCode-x86_64.dmg", "StealCode-aarch64.dmg", "stealcode-linux-x86_64.tar.gz", "stealcode-linux-aarch64.tar.gz"]'
+          ACTUAL=$(gh release view "${{ github.ref_name }}" --repo he-thinks/stealcode --json assets -q '[.assets[].name]')
+          MISSING=$(echo "$EXPECTED" | jq -r --argjson actual "$ACTUAL" '. - $actual | .[]')
+          if [ -n "$MISSING" ]; then
+            echo "Missing assets:"
+            echo "$MISSING"
+            exit 1
+          fi
+          echo "All expected assets present."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

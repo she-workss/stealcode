@@ -1,0 +1,11 @@
+[package]
+name = "release_channel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true

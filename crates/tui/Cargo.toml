@@ -8,8 +8,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+auto_update.workspace = true
+paths.workspace = true
 ratatui.workspace = true
+release_channel.workspace = true
+semver.workspace = true
 settings.workspace = true
+sound.workspace = true
+voice.workspace = true
 
 [lints]
 workspace = true

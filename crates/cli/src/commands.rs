@@ -1,3 +1,6 @@
+#[cfg(feature = "desktop")]
+use std::path::PathBuf;
+
 use clap::Subcommand;
 use clap_complete::Shell;
 
@@ -29,7 +32,10 @@ pub(crate) enum CliCommands {
 
     /// Start the native desktop GUI.
     #[cfg(feature = "desktop")]
-    Desktop,
+    Desktop {
+        /// Project directory to open. Defaults to the current directory.
+        project: Option<PathBuf>,
+    },
 
     /// Database tools.
     Db,

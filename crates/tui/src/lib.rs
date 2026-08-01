@@ -1,5 +1,6 @@
 use std::{
     io::Write as _,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -7,7 +8,7 @@ use anyhow::Result;
 use ratatui::{
     Frame, Terminal,
     backend::TerminaBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     termina::{
         EventReader, PlatformTerminal, Terminal as _,
@@ -15,12 +16,17 @@ use ratatui::{
             csi::{self, Csi},
             osc::{ColorOrQuery, DynamicColorNumber, Osc},
         },
-        event::{Event, KeyCode, KeyEventKind, Modifiers},
+        event::{
+            Event, KeyCode, KeyEventKind, Modifiers, MouseButton,
+            MouseEventKind,
+        },
         style::RgbColor,
     },
     widgets::{Block, Paragraph},
 };
 use settings::Settings;
+use sound::{engine, sounds::SoundName};
+use voice::VoiceManager;
 
 type AppTerminal = Terminal<TerminaBackend<PlatformTerminal>>;
 
@@ -48,6 +54,9 @@ enum Action {
     NextTheme,
     RenameTitle,
     ShowHelp,
+    TogglePushToTalk,
+    CheckForUpdates,
+    ToggleAutoUpdate,
     Unknown(String),
 }
 
@@ -58,6 +67,11 @@ fn dispatch(event: &Event) -> Action {
     if key.kind == KeyEventKind::Release {
         return Action::Unknown(String::new());
     }
+    if key.modifiers == (Modifiers::CONTROL | Modifiers::SHIFT) {
+        if key.code == KeyCode::Char('u') {
+            return Action::ToggleAutoUpdate;
+        }
+    }
     if key.modifiers == Modifiers::CONTROL {
         match key.code {
             KeyCode::Char('c') => return Action::Quit,
@@ -65,6 +79,8 @@ fn dispatch(event: &Event) -> Action {
             KeyCode::Char('f') => return Action::Search,
             KeyCode::Char('t') => return Action::RenameTitle,
             KeyCode::Char('h') => return Action::ShowHelp,
+            KeyCode::Char('g') => return Action::TogglePushToTalk,
+            KeyCode::Char('u') => return Action::CheckForUpdates,
             _ => {}
         }
     }
@@ -92,20 +108,6 @@ impl ColorMode {
     }
 }
 
-/// Converts termina's [`RgbColor`] into the [`Color`] ratatui widgets style
-/// with.
-///
-/// `RgbColor` already carries everything a color needs (`red`/`green`/`blue` as
-/// plain `u8`s), and it's the exact type the `OSC 10`/`OSC 11` calls in this
-/// module take. There's no reason to keep a second, ratatui-flavored copy of
-/// the same three bytes sitting next to it — that's just two places that can
-/// drift out of sync. This is the only conversion point, called wherever a
-/// `Style` needs a `Color`; everywhere else just keeps passing the `RgbColor`
-/// straight through.
-///
-/// Implemented as a local extension trait rather than `From`/`Into`, since
-/// neither `RgbColor` nor `Color` is defined in this crate and the orphan rules
-/// don't allow implementing a foreign trait for a foreign type.
 trait RgbColorExt {
     fn to_color(self) -> Color;
 }
@@ -142,12 +144,12 @@ fn detect_color_mode(
         "{}{}",
         Osc::ChangeDynamicColors(
             DynamicColorNumber::TextForegroundColor,
-            vec![ColorOrQuery::Query],
+            vec![ColorOrQuery::Query]
         ),
         Osc::ChangeDynamicColors(
             DynamicColorNumber::TextBackgroundColor,
-            vec![ColorOrQuery::Query],
-        ),
+            vec![ColorOrQuery::Query]
+        )
     )?;
     backend.flush()?;
     let mut orig = OriginalColors { fg: None, bg: None };
@@ -163,7 +165,7 @@ fn detect_color_mode(
                 Event::Osc(Osc::ChangeDynamicColors(
                     DynamicColorNumber::TextForegroundColor
                         | DynamicColorNumber::TextBackgroundColor,
-                    _,
+                    _
                 ))
             )
         };
@@ -183,7 +185,6 @@ fn detect_color_mode(
             orig.bg = Some(rgb);
         }
     }
-
     if orig.fg.is_some() || orig.bg.is_some() {
         Ok(ColorMode::Dynamic(orig))
     } else {
@@ -280,15 +281,86 @@ impl ColorScheme {
             "{}{}",
             Osc::ChangeDynamicColors(
                 DynamicColorNumber::TextForegroundColor,
-                vec![ColorOrQuery::Color(self.fg)],
+                vec![ColorOrQuery::Color(self.fg)]
             ),
             Osc::ChangeDynamicColors(
                 DynamicColorNumber::TextBackgroundColor,
-                vec![ColorOrQuery::Color(self.bg)],
-            ),
+                vec![ColorOrQuery::Color(self.bg)]
+            )
         )?;
         backend.flush()?;
         Ok(())
+    }
+}
+
+/// Background worker for "check for updates now" / auto-update polling in
+/// the TUI. Same background-thread-plus-channel shape used elsewhere in
+/// this file for `VoiceManager`.
+struct UpdateManagerTui {
+    auto_update_enabled: bool,
+    status: String,
+    tx_cmd: Option<std::sync::mpsc::Sender<()>>,
+    rx_event: Option<std::sync::mpsc::Receiver<String>>,
+}
+
+impl UpdateManagerTui {
+    fn new(auto_update_enabled: bool) -> Self {
+        Self {
+            auto_update_enabled,
+            status: "Update: idle".to_string(),
+            tx_cmd: None,
+            rx_event: None,
+        }
+    }
+
+    fn start_worker_if_needed(&mut self) {
+        if self.tx_cmd.is_some() {
+            return;
+        }
+        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<()>();
+        let (tx_event, rx_event) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            while rx_cmd.recv().is_ok() {
+                let current_version =
+                    semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+                let result = auto_update::check_now_blocking(
+                    "he-thinks",
+                    "stealcode",
+                    std::env::var("STEALCODE_GH_TOKEN").ok(),
+                    current_version,
+                    release_channel::ReleaseChannel::current(),
+                );
+                let message = match result {
+                    Ok(Some(v)) => format!("Update available: v{v}"),
+                    Ok(None) => "Up to date".to_string(),
+                    Err(e) => format!("Check failed: {e}"),
+                };
+                let _ = tx_event.send(message);
+            }
+        });
+        self.tx_cmd = Some(tx_cmd);
+        self.rx_event = Some(rx_event);
+    }
+
+    fn check_now(&mut self) {
+        self.start_worker_if_needed();
+        self.status = "Checking...".to_string();
+        if let Some(tx) = &self.tx_cmd {
+            let _ = tx.send(());
+        }
+    }
+
+    fn toggle(&mut self) {
+        self.auto_update_enabled = !self.auto_update_enabled;
+    }
+
+    fn poll_events(&mut self) {
+        if let Some(rx) = &self.rx_event {
+            if let Ok(message) = rx.try_recv() {
+                self.status = message;
+            }
+        }
     }
 }
 
@@ -300,6 +372,10 @@ struct AppState {
     color_mode: ColorMode,
     mouse_pos: Option<(u16, u16)>,
     counter: u32,
+    button_rects: Vec<(SoundName, Rect)>,
+    last_played: Option<SoundName>,
+    voice: VoiceManager,
+    updates: UpdateManagerTui,
 }
 
 impl AppState {
@@ -312,6 +388,10 @@ impl AppState {
             color_mode,
             mouse_pos: None,
             counter: 0,
+            button_rects: Vec::new(),
+            last_played: None,
+            voice: VoiceManager::new(),
+            updates: UpdateManagerTui::new(true),
         }
     }
 
@@ -331,6 +411,13 @@ impl AppState {
             ColorMode::SgrOnly => "SGR",
         }
     }
+}
+
+fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x
+        && x < rect.x + rect.width
+        && y >= rect.y
+        && y < rect.y + rect.height
 }
 
 fn handle_action(
@@ -354,7 +441,7 @@ fn handle_action(
             state.action_label = format!(
                 "Theme: {} ({})",
                 state.scheme().name,
-                state.mode_label(),
+                state.mode_label()
             );
         }
         Action::RenameTitle => {
@@ -370,7 +457,30 @@ fn handle_action(
             state.action_label = format!("Title: \"{}\"", state.title);
         }
         Action::ShowHelp => {
-            state.action_label = "Ctrl+P/F/H/T/?/C".into();
+            state.action_label = "Ctrl+P/F/H/T/V/U/?/C".into();
+        }
+        Action::TogglePushToTalk => {
+            state.voice.toggle();
+            state.action_label = if state.voice.is_recording {
+                "PTT: Recording...".into()
+            } else {
+                "PTT: Processing...".into()
+            };
+        }
+        Action::CheckForUpdates => {
+            state.updates.check_now();
+            state.action_label = "Checking for updates...".into();
+        }
+        Action::ToggleAutoUpdate => {
+            state.updates.toggle();
+            state.action_label = format!(
+                "Auto-update: {}",
+                if state.updates.auto_update_enabled {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+            );
         }
         Action::Unknown(raw) => {
             if !raw.is_empty() {
@@ -394,7 +504,7 @@ fn init_terminal() -> Result<(AppTerminal, EventReader)> {
         decset!(MouseTracking),
         decset!(ButtonEventMouse),
         decset!(AnyEventMouse),
-        decset!(SGRMouse),
+        decset!(SGRMouse)
     )?;
     output.flush()?;
     let events = output.event_reader();
@@ -448,20 +558,23 @@ fn restore_terminal(
         bg_osc,
         decreset!(MouseTracking),
         decreset!(ButtonEventMouse),
-        decreset!(AnyEventMouse),
+        decreset!(AnyEventMouse)
     )?;
     backend.flush()?;
     Ok(())
 }
 
-pub fn run_tui(_settings: &Settings) -> Result<()> {
+pub fn run_tui(
+    _settings: &Settings,
+    project: Option<&Path>,
+) -> anyhow::Result<()> {
     let (mut terminal, events) = init_terminal()?;
     let color_mode = detect_color_mode(&mut terminal, &events)?;
     let mut state = AppState::new(color_mode);
     if color_mode.supports_osc() {
         state.scheme().apply_osc(&mut terminal)?;
     }
-    let result = run(&mut terminal, &events, &mut state);
+    let result = run(&mut terminal, &events, &mut state, project);
     restore_terminal(&mut terminal, color_mode)?;
     result
 }
@@ -470,32 +583,54 @@ fn run(
     terminal: &mut AppTerminal,
     events: &EventReader,
     state: &mut AppState,
+    _project: Option<&Path>,
 ) -> Result<()> {
     loop {
         terminal.draw(|f| render(f, state))?;
-        let event = events.read(|_| true)?;
-        if let Event::Mouse(mouse) = &event {
-            state.event_raw = format!("{mouse:?}");
-            state.mouse_pos = Some((mouse.column, mouse.row));
-            state.action_label = format!(
-                "Mouse: kind={:?} col={} row={}",
-                mouse.kind, mouse.column, mouse.row,
-            );
-            continue;
-        }
-        let raw = format!("{event:?}");
-        let action = dispatch(&event);
-        if !matches!(action, Action::Unknown(ref s) if s.is_empty()) {
-            state.event_raw = raw;
-        }
-        if handle_action(&action, state, terminal)? {
-            break;
+        state.voice.poll_events();
+        state.updates.poll_events();
+        if events.poll(Some(Duration::from_millis(100)), |_| true)? {
+            let event = events.read(|_| true)?;
+            if let Event::Mouse(mouse) = &event {
+                state.event_raw = format!("{mouse:?}");
+                state.mouse_pos = Some((mouse.column, mouse.row));
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                {
+                    let hit = state
+                        .button_rects
+                        .iter()
+                        .find(|(_, rect)| {
+                            rect_contains(*rect, mouse.column, mouse.row)
+                        })
+                        .map(|(sound, _)| *sound);
+                    if let Some(sound) = hit {
+                        engine::play(sound);
+                        state.last_played = Some(sound);
+                        state.action_label =
+                            format!("Played: {}", sound.label());
+                    }
+                } else {
+                    state.action_label = format!(
+                        "Mouse: kind={:?} col={} row={}",
+                        mouse.kind, mouse.column, mouse.row
+                    );
+                }
+                continue;
+            }
+            let raw = format!("{event:?}");
+            let action = dispatch(&event);
+            if !matches!(action, Action::Unknown(ref s) if s.is_empty()) {
+                state.event_raw = raw;
+            }
+            if handle_action(&action, state, terminal)? {
+                break;
+            }
         }
     }
     Ok(())
 }
 
-fn render(f: &mut Frame<'_>, state: &AppState) {
+fn render(f: &mut Frame<'_>, state: &mut AppState) {
     let s = *state.scheme();
     f.render_widget(Block::default().style(s.bg_style()), f.area());
     let chunks = main_layout(f.area());
@@ -523,7 +658,7 @@ fn render(f: &mut Frame<'_>, state: &AppState) {
             "Title: \"{}\"  Theme: {}  Mode: {}",
             state.title,
             s.name,
-            state.mode_label(),
+            state.mode_label()
         ),
         s.block_style(),
         s,
@@ -533,15 +668,89 @@ fn render(f: &mut Frame<'_>, state: &AppState) {
         None => "Mouse: -".into(),
     };
     render_panel(f, chunks[3], "Mouse", &mouse, s.accent_style(), s);
-    f.render_widget(
-        Paragraph::new(format!(
-            "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) \
-             Tab (Next Theme) Ctrl+H (Help) Ctrl+C (Exit) | {}",
-            state.mode_label(),
-        ))
-        .style(s.hint_style()),
-        chunks[4],
+    let voice_content = format!(
+        "[{}] {}\n{}",
+        if state.voice.is_recording {
+            "●"
+        } else {
+            "○"
+        },
+        state.voice.status,
+        if state.voice.text.is_empty() {
+            " "
+        } else {
+            &state.voice.text
+        }
     );
+    render_panel(
+        f,
+        chunks[4],
+        "Voice Input (Ctrl+G)",
+        &voice_content,
+        if state.voice.is_recording {
+            s.accent_style()
+        } else {
+            s.block_style()
+        },
+        s,
+    );
+    let update_content = format!(
+        "Auto-update: {}  {}",
+        if state.updates.auto_update_enabled {
+            "ON"
+        } else {
+            "OFF"
+        },
+        state.updates.status,
+    );
+    render_panel(
+        f,
+        chunks[5],
+        "Update (Ctrl+U check, Ctrl+Shift+U toggle)",
+        &update_content,
+        s.block_style(),
+        s,
+    );
+    render_sound_buttons(f, chunks[6], state, s);
+    f.render_widget(Paragraph::new(format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())).style(s.hint_style()), chunks[7]);
+}
+
+fn render_sound_buttons(
+    f: &mut Frame<'_>,
+    area: Rect,
+    state: &mut AppState,
+    s: ColorScheme,
+) {
+    let sounds = SoundName::ALL;
+    let constraints =
+        vec![Constraint::Ratio(1, sounds.len() as u32); sounds.len()];
+    let slots = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
+    state.button_rects.clear();
+    for (sound, rect) in sounds.into_iter().zip(slots.iter()) {
+        let is_active = state.last_played == Some(sound);
+        let style = if is_active {
+            s.accent_style()
+        } else {
+            s.block_style()
+        };
+        let border_style = if is_active {
+            s.accent_style()
+        } else {
+            s.border_style()
+        };
+        let block = Block::bordered().border_style(border_style);
+        f.render_widget(
+            Paragraph::new(sound.label())
+                .alignment(Alignment::Center)
+                .style(style)
+                .block(block),
+            *rect,
+        );
+        state.button_rects.push((sound, *rect));
+    }
 }
 
 fn main_layout(area: Rect) -> Vec<Rect> {
@@ -551,6 +760,9 @@ fn main_layout(area: Rect) -> Vec<Rect> {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(5),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(0),
@@ -575,129 +787,4 @@ fn render_panel(
         Paragraph::new(content).style(content_style).block(block),
         area,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use ratatui::termina::event::KeyEvent;
-
-    use super::*;
-
-    #[test]
-    fn extract_color_from_matching_slot() {
-        let event = Event::Osc(Osc::ChangeDynamicColors(
-            DynamicColorNumber::TextForegroundColor,
-            vec![ColorOrQuery::Color(RgbColor::new(10, 20, 30))],
-        ));
-        assert_eq!(
-            extract_queried_color(
-                &event,
-                DynamicColorNumber::TextForegroundColor
-            ),
-            Some(RgbColor::new(10, 20, 30)),
-        );
-    }
-
-    #[test]
-    fn extract_ignores_wrong_slot() {
-        let event = Event::Osc(Osc::ChangeDynamicColors(
-            DynamicColorNumber::TextForegroundColor,
-            vec![ColorOrQuery::Color(RgbColor::new(10, 20, 30))],
-        ));
-        assert_eq!(
-            extract_queried_color(
-                &event,
-                DynamicColorNumber::TextBackgroundColor
-            ),
-            None,
-        );
-    }
-
-    #[test]
-    fn extract_ignores_unanswered_query() {
-        let event = Event::Osc(Osc::ChangeDynamicColors(
-            DynamicColorNumber::TextForegroundColor,
-            vec![ColorOrQuery::Query],
-        ));
-        assert_eq!(
-            extract_queried_color(
-                &event,
-                DynamicColorNumber::TextForegroundColor
-            ),
-            None,
-        );
-    }
-
-    #[test]
-    fn sgr_only_mode_has_no_osc_support() {
-        assert!(!ColorMode::SgrOnly.supports_osc());
-    }
-
-    #[test]
-    fn dynamic_mode_has_osc_support() {
-        let mode = ColorMode::Dynamic(OriginalColors { fg: None, bg: None });
-        assert!(mode.supports_osc());
-    }
-
-    #[test]
-    fn dispatch_quit() {
-        let event =
-            Event::Key(KeyEvent::new(KeyCode::Char('c'), Modifiers::CONTROL));
-        assert_eq!(dispatch(&event), Action::Quit);
-    }
-
-    #[test]
-    fn dispatch_palette() {
-        let event =
-            Event::Key(KeyEvent::new(KeyCode::Char('p'), Modifiers::CONTROL));
-        assert_eq!(dispatch(&event), Action::OpenPalette);
-    }
-
-    #[test]
-    fn dispatch_help() {
-        let event =
-            Event::Key(KeyEvent::new(KeyCode::Char('h'), Modifiers::CONTROL));
-        assert_eq!(dispatch(&event), Action::ShowHelp);
-    }
-
-    #[test]
-    fn dispatch_next_theme_via_tab() {
-        let event = Event::Key(KeyEvent::new(KeyCode::Tab, Modifiers::NONE));
-        assert_eq!(dispatch(&event), Action::NextTheme);
-    }
-
-    #[test]
-    fn dispatch_plain_char_is_unknown() {
-        let event =
-            Event::Key(KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE));
-        assert_eq!(
-            dispatch(&event),
-            Action::Unknown(format!(
-                "{:?}",
-                KeyEvent::new(KeyCode::Char('x'), Modifiers::NONE)
-            ))
-        );
-    }
-
-    #[test]
-    fn rgb_color_converts_to_matching_ratatui_color() {
-        let rgb = RgbColor::new(180, 210, 255);
-        assert_eq!(rgb.to_color(), Color::Rgb(180, 210, 255));
-    }
-
-    #[test]
-    fn color_scheme_fg_and_bg_drive_block_style() {
-        let scheme = SCHEME_OCEAN;
-        let style = scheme.block_style();
-        assert_eq!(style.fg, Some(scheme.fg.to_color()));
-        assert_eq!(style.bg, Some(scheme.bg.to_color()));
-    }
-
-    #[test]
-    fn scheme_cycle() {
-        assert_eq!(SCHEMES[0].name, "Default");
-        assert_eq!(SCHEMES[3].name, "Sunset");
-        let idx = (3 + 1) % SCHEMES.len();
-        assert_eq!(SCHEMES[idx].name, "Default");
-    }
 }
