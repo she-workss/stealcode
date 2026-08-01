@@ -41,9 +41,9 @@ jobs:
             echo "channel=stable" >> "$GITHUB_OUTPUT"
           fi
       - name: Generate release notes
-        run: ./script/draft-release-notes.sh "${{ steps.resolve.outputs.tag }}" > release-notes.md
+        run: bash script/draft-release-notes.sh "${{ steps.resolve.outputs.tag }}" > release-notes.md
       - name: Create draft release
-        run: ./script/create-draft-release.sh release-notes.md ${{ steps.channel.outputs.channel }}
+        run: bash script/create-draft-release.sh release-notes.md ${{ steps.channel.outputs.channel }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REF_NAME: ${{ steps.resolve.outputs.tag }}
@@ -88,11 +88,11 @@ jobs:
 
       - name: Bundle (macOS)
         if: runner.os == 'macOS'
-        run: ./script/bundle-mac.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
+        run: bash script/bundle-mac.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Bundle (Linux)
         if: runner.os == 'Linux'
-        run: ./script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
+        run: bash script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
