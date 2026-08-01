@@ -35,8 +35,14 @@ jobs:
         run: cargo set-version --workspace --bump ${{ inputs.bump }}
 
       - id: version
-        name: Compute plain version (no leading v)
-        run: echo "version=$(echo '${{ steps.resolve.outputs.tag }}' | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+        name: Read bumped version from workspace Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error::could not determine version after bump"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - id: tag
         name: Compute tag name
