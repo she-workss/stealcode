@@ -42,7 +42,7 @@ gui = { workspace = true, optional = true }
 mimalloc = { version = "0.1", default-features = false }
 paths.workspace = true
 release_channel.workspace = true
-reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+reqwest.workspace = true
 semver.workspace = true
 server = { workspace = true, optional = true }
 settings.workspace = true

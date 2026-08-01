@@ -16,6 +16,14 @@
 #endif
 
 #define NumericVersion Version
+
+#if Copy(NumericVersion, 1, 1) == "v"
+  #define NumericVersion Copy(NumericVersion, 2, Len(NumericVersion) - 1)
+#endif
+#if Pos('-', NumericVersion) > 0
+  #define NumericVersion Copy(NumericVersion, 1, Pos('-', NumericVersion) - 1)
+#endif
+
 #if Pos('-', Version) > 0
   #define NumericVersion Copy(Version, 1, Pos('-', Version) - 1)
 #elif Pos('+', Version) > 0

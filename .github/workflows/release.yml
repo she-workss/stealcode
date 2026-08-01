@@ -28,7 +28,7 @@ jobs:
       - id: resolve
         name: Resolve tag
         run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.tag }}
@@ -66,36 +66,40 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: aarch64
             target: aarch64-unknown-linux-gnu
-          - os: macos-13
-            arch: x86_64
-            target: x86_64-apple-darwin
           - os: macos-latest
             arch: aarch64
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.create_draft_release.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./script/bundle-windows.ps1 -Architecture ${{ matrix.arch }} -Version ${{ needs.create_draft_release.outputs.tag }} -Channel ${{ needs.create_draft_release.outputs.channel }}
+        run: ./script/bundle-windows.ps1 -Architecture ${{ matrix.arch }} -Version ${{ needs.create_draft_release.outputs.version }} -Channel ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Bundle (macOS)
         if: runner.os == 'macOS'
-        run: bash script/bundle-mac.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
+        run: bash script/bundle-mac.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.version }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Bundle (Linux)
         if: runner.os == 'Linux'
-        run: bash script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
+        run: bash script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.version }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: stealcode-${{ runner.os }}-${{ matrix.arch }}
           path: |
@@ -112,7 +116,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
