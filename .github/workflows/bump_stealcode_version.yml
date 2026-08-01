@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bump_version:
@@ -53,3 +54,12 @@ jobs:
           git tag "${{ steps.tag.outputs.tag }}"
           git push origin main
           git push origin "${{ steps.tag.outputs.tag }}"
+
+      - name: Trigger release build
+        run: |
+          gh workflow run release.yml \
+            --repo he-thinks/stealcode \
+            --ref "${{ steps.tag.outputs.tag }}" \
+            -f tag="${{ steps.tag.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

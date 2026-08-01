@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (must already exist), e.g. v0.2.0 or v0.2.0-nightly"
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,25 +22,31 @@ jobs:
     permissions:
       contents: write
     outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
       channel: ${{ steps.channel.outputs.channel }}
     steps:
+      - id: resolve
+        name: Resolve tag
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ steps.resolve.outputs.tag }}
       - id: channel
         name: Determine release channel
         run: |
-          if [[ "${{ github.ref_name }}" == *-nightly ]]; then
+          if [[ "${{ steps.resolve.outputs.tag }}" == *-nightly ]]; then
             echo "channel=nightly" >> "$GITHUB_OUTPUT"
           else
             echo "channel=stable" >> "$GITHUB_OUTPUT"
           fi
       - name: Generate release notes
-        run: ./script/draft-release-notes.sh "${{ github.ref_name }}" > release-notes.md
+        run: ./script/draft-release-notes.sh "${{ steps.resolve.outputs.tag }}" > release-notes.md
       - name: Create draft release
         run: ./script/create-draft-release.sh release-notes.md ${{ steps.channel.outputs.channel }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ steps.resolve.outputs.tag }}
 
   bundle:
     needs: create_draft_release
@@ -64,6 +75,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create_draft_release.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -71,15 +84,15 @@ jobs:
       - name: Bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./script/bundle-windows.ps1 -Architecture ${{ matrix.arch }} -Version ${{ github.ref_name }} -Channel ${{ needs.create_draft_release.outputs.channel }}
+        run: ./script/bundle-windows.ps1 -Architecture ${{ matrix.arch }} -Version ${{ needs.create_draft_release.outputs.tag }} -Channel ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Bundle (macOS)
         if: runner.os == 'macOS'
-        run: ./script/bundle-mac.sh ${{ matrix.arch }} ${{ github.ref_name }} ${{ needs.create_draft_release.outputs.channel }}
+        run: ./script/bundle-mac.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Bundle (Linux)
         if: runner.os == 'Linux'
-        run: ./script/bundle-linux.sh ${{ matrix.arch }} ${{ github.ref_name }} ${{ needs.create_draft_release.outputs.channel }}
+        run: ./script/bundle-linux.sh ${{ matrix.arch }} ${{ needs.create_draft_release.outputs.tag }} ${{ needs.create_draft_release.outputs.channel }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -104,18 +117,20 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Upload to release
-        run: gh release upload "${{ github.ref_name }}" --repo he-thinks/stealcode artifacts/*
+        run: gh release upload "${{ needs.create_draft_release.outputs.tag }}" --repo he-thinks/stealcode artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   validate_release_assets:
-    needs: upload_release_assets
+    needs:
+      - create_draft_release
+      - upload_release_assets
     runs-on: ubuntu-latest
     steps:
       - name: Validate expected assets are present
         run: |
           EXPECTED='["StealCode-x86_64.exe", "StealCode-aarch64.exe", "StealCode-x86_64.dmg", "StealCode-aarch64.dmg", "stealcode-linux-x86_64.tar.gz", "stealcode-linux-aarch64.tar.gz"]'
-          ACTUAL=$(gh release view "${{ github.ref_name }}" --repo he-thinks/stealcode --json assets -q '[.assets[].name]')
+          ACTUAL=$(gh release view "${{ needs.create_draft_release.outputs.tag }}" --repo he-thinks/stealcode --json assets -q '[.assets[].name]')
           MISSING=$(echo "$EXPECTED" | jq -r --argjson actual "$ACTUAL" '. - $actual | .[]')
           if [ -n "$MISSING" ]; then
             echo "Missing assets:"
