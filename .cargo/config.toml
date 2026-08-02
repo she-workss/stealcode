@@ -63,18 +63,7 @@ rustflags = [
     # "-Zlocation-detail=none",
 ]
 
-# macOS x86_64 is cross-compiled from arm64 `macos-latest` runners:
-# `-Ctarget-cpu=native` resolves to the host CPU and would produce
-# arm64-architected code for an x86_64 target, so omit it here.
-[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))']
-rustflags = [
-    "--cfg=tokio_unstable",
-    "-Zcache-proc-macros",
-    "-Zshare-generics=y",
-    "-Zthreads=0",
-    "-Znext-solver=globally",
-    # "-Zlocation-detail=none",
-]
+
 
 [target.x86_64-unknown-linux-musl]
 linker = "clang"
