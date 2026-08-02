@@ -26,6 +26,10 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Install mold
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mold
     - name: Check
       run: cargo clippy --workspace --all-targets --all-features
     - name: rustfmt
@@ -41,6 +45,10 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Install mold
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mold
     - name: cargo doc
       run: cargo doc --all-features --no-deps
     env:
@@ -57,6 +65,10 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Install mold
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mold
     - name: Run tests
       run: cargo nt
 
@@ -75,6 +87,10 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Install mold
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mold
     - name: Run doc tests
       run: cargo test --all-features --doc
 
