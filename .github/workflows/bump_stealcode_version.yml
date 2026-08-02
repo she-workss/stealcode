@@ -44,8 +44,18 @@ jobs:
               echo "::error::no stable tag yet; cannot derive base for a new release branch"
               exit 1
             fi
-            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag"
-            git checkout -b "${{ inputs.branch }}" "$stable_tag"
+            # The default GITHUB_TOKEN cannot push a *new* branch whose tree
+            # contains files under .github/workflows (GitHub's workflow-file
+            # protection). Creating the branch via the REST API bypasses that,
+            # and the subsequent bump push only touches Cargo files.
+            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag (via API)"
+            sha="$(git rev-parse "$stable_tag^{commit}")"
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/heads/${{ inputs.branch }}" \
+              -f sha="$sha" >/dev/null
+            git fetch origin "${{ inputs.branch }}"
+            git checkout "${{ inputs.branch }}"
           fi
 
       - name: Install cargo-edit
