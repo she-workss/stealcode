@@ -493,7 +493,7 @@ pub fn check_now_blocking(
     runtime.block_on(async move {
         let source = GithubReleaseSource::new(owner, repo, token);
         let client = reqwest::Client::new();
-        match fetch_latest_release(&client, &source).await? {
+        match fetch_release_for_channel(&client, &source, channel).await? {
             Some(release) => {
                 newer_version_available(&release, &current_version, channel)
             }
