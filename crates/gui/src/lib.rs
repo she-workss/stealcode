@@ -13,7 +13,7 @@ use gpui::{
     point, prelude::*, px, size,
 };
 use gpui_component::{
-    Root, StyledExt,
+    Disableable, Root, StyledExt,
     button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
@@ -64,15 +64,29 @@ fn show_notification() {
 
 /// Background worker for "Check for updates now" / auto-update polling,
 /// used only to let the GUI exercise both the manual and automatic paths
-/// through `auto_update::check_now_blocking` for testing. Same
-/// background-thread-plus-channel shape as `VoiceManager`, kept separate
-/// from it since the two have nothing in common besides that shape.
+/// through `auto_update` for testing. Same background-thread-plus-channel
+/// shape as `VoiceManager`, kept separate from it since the two have
+/// nothing in common besides that shape.
+#[derive(Debug)]
+enum UpdateCommand {
+    Check,
+    UpdateAndRestart,
+}
+
+#[derive(Debug)]
+enum UpdateEvent {
+    Status(String),
+    Checked(Option<semver::Version>),
+}
+
 #[derive(Debug)]
 struct UpdateManager {
     auto_update_enabled: bool,
     status: String,
-    tx_cmd: Option<Sender<()>>,
-    rx_event: Option<Receiver<String>>,
+    /// Version an update is available for, from the last successful check.
+    available_version: Option<semver::Version>,
+    tx_cmd: Option<Sender<UpdateCommand>>,
+    rx_event: Option<Receiver<UpdateEvent>>,
 }
 
 impl UpdateManager {
@@ -80,6 +94,7 @@ impl UpdateManager {
         Self {
             auto_update_enabled,
             status: Self::status_label(auto_update_enabled),
+            available_version: None,
             tx_cmd: None,
             rx_event: None,
         }
@@ -93,28 +108,71 @@ impl UpdateManager {
         if self.tx_cmd.is_some() {
             return;
         }
-        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<()>();
-        let (tx_event, rx_event) = std::sync::mpsc::channel::<String>();
+        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<UpdateCommand>();
+        let (tx_event, rx_event) = std::sync::mpsc::channel::<UpdateEvent>();
         std::thread::spawn(move || {
-            while rx_cmd.recv().is_ok() {
+            while let Ok(command) = rx_cmd.recv() {
                 let current_version =
                     semver::Version::parse(env!("CARGO_PKG_VERSION"))
                         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let result = auto_update::check_now_blocking(
-                    "he-thinks",
-                    "stealcode",
-                    std::env::var("STEALCODE_GH_TOKEN").ok(),
-                    current_version,
-                    release_channel::ReleaseChannel::current(),
-                );
-                let message = match result {
-                    Ok(Some(version)) => {
-                        format!("Update available: v{version}")
+                let owner = "he-thinks";
+                let repo = "stealcode";
+                let token = std::env::var("STEALCODE_GH_TOKEN").ok();
+                let channel = release_channel::ReleaseChannel::current();
+                match command {
+                    UpdateCommand::Check => {
+                        let result = auto_update::check_now_blocking(
+                            owner,
+                            repo,
+                            token,
+                            current_version,
+                            channel,
+                        );
+                        let event = match result {
+                            Ok(Some(version)) => {
+                                UpdateEvent::Checked(Some(version))
+                            }
+                            Ok(None) => UpdateEvent::Checked(None),
+                            Err(error) => UpdateEvent::Status(format!(
+                                "Check failed: {error}"
+                            )),
+                        };
+                        let _ = tx_event.send(event);
                     }
-                    Ok(None) => "Up to date".to_string(),
-                    Err(error) => format!("Check failed: {error}"),
-                };
-                let _ = tx_event.send(message);
+                    UpdateCommand::UpdateAndRestart => {
+                        let _ = tx_event.send(UpdateEvent::Status(
+                            "Downloading update...".to_string(),
+                        ));
+                        match auto_update::update_now_blocking(
+                            owner,
+                            repo,
+                            token,
+                            current_version,
+                            channel,
+                        ) {
+                            Ok(version) => {
+                                let _ = tx_event.send(UpdateEvent::Status(
+                                    format!(
+                                        "Update installed: v{version} \
+                                         - restarting"
+                                    ),
+                                ));
+                                if let Err(error) =
+                                    auto_update::restart_updated_app()
+                                {
+                                    let _ = tx_event.send(UpdateEvent::Status(
+                                        format!("Restart failed: {error}"),
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                let _ = tx_event.send(UpdateEvent::Status(
+                                    format!("Update failed: {error}"),
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         });
         self.tx_cmd = Some(tx_cmd);
@@ -125,7 +183,18 @@ impl UpdateManager {
         self.start_worker_if_needed();
         self.status = "Checking...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(());
+            let _ = tx.send(UpdateCommand::Check);
+        }
+    }
+
+    fn update_and_restart(&mut self) {
+        if self.available_version.is_none() {
+            return;
+        }
+        self.start_worker_if_needed();
+        self.status = "Downloading update...".to_string();
+        if let Some(tx) = &self.tx_cmd {
+            let _ = tx.send(UpdateCommand::UpdateAndRestart);
         }
     }
 
@@ -143,8 +212,19 @@ impl UpdateManager {
 
     fn poll_events(&mut self) {
         if let Some(rx) = &self.rx_event {
-            if let Ok(message) = rx.try_recv() {
-                self.status = message;
+            if let Ok(event) = rx.try_recv() {
+                match event {
+                    UpdateEvent::Status(status) => self.status = status,
+                    UpdateEvent::Checked(version) => {
+                        self.available_version = version.clone();
+                        self.status = match version {
+                            Some(version) => {
+                                format!("Update available: v{version}")
+                            }
+                            None => "Up to date".to_string(),
+                        };
+                    }
+                }
             }
         }
     }
@@ -293,6 +373,30 @@ impl Render for StealcodeApp {
                                     )),
                             )
                             .child(
+                                Button::new("update_restart_btn")
+                                    .label(
+                                        if let Some(version) =
+                                            &self.updates.available_version
+                                        {
+                                            format!(
+                                                "Update and restart (v{version})"
+                                            )
+                                        } else {
+                                            "Update and restart".to_string()
+                                        },
+                                    )
+                                    .disabled(
+                                        self.updates.available_version
+                                            .is_none(),
+                                    )
+                                    .on_click(cx.listener(
+                                        |this, _, _window, cx| {
+                                            this.updates.update_and_restart();
+                                            cx.notify();
+                                        },
+                                    )),
+                            )
+                            .child(
                                 Button::new("toggle_auto_update_btn")
                                     .label(
                                         if self.updates.auto_update_enabled {
@@ -396,6 +500,25 @@ pub fn run_desktop(
     #[cfg(target_os = "windows")]
     setup_windows_app_id();
     gpui_platform::application().run(move |cx| {
+        // If a silent update finished while we were running, spawn the
+        // helper to apply it as we exit. The subscription must stay alive
+        // for the hook to remain registered (same leak trick as the tray
+        // icon below). Renaming a running exe is legal on Windows, so the
+        // helper's retry loop rides out our shutdown.
+        #[cfg(target_os = "windows")]
+        std::mem::forget(cx.on_app_quit(|_| async move {
+            auto_update::finalize_auto_update_on_quit().await;
+        }));
+        // Remove stale update/install/old dirs from a crashed previous
+        // update, at startup (only empty dirs are removed - a genuinely
+        // broken leftover is left alone, see `cleanup_windows`).
+        #[cfg(target_os = "windows")]
+        cx.spawn(|_: &mut AsyncApp| async move {
+            if let Err(error) = auto_update::cleanup_windows().await {
+                error!("failed to clean up update dirs: {error}");
+            }
+        })
+        .detach();
         gpui_component::init(cx);
         cx.open_window(
             WindowOptions {

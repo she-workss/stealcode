@@ -57,6 +57,7 @@ enum Action {
     TogglePushToTalk,
     CheckForUpdates,
     ToggleAutoUpdate,
+    UpdateAndRestart,
     Unknown(String),
 }
 
@@ -70,6 +71,9 @@ fn dispatch(event: &Event) -> Action {
     if key.modifiers == (Modifiers::CONTROL | Modifiers::SHIFT) {
         if key.code == KeyCode::Char('u') {
             return Action::ToggleAutoUpdate;
+        }
+        if key.code == KeyCode::Char('r') {
+            return Action::UpdateAndRestart;
         }
     }
     if key.modifiers == Modifiers::CONTROL {
@@ -296,10 +300,15 @@ impl ColorScheme {
 /// Background worker for "check for updates now" / auto-update polling in
 /// the TUI. Same background-thread-plus-channel shape used elsewhere in
 /// this file for `VoiceManager`.
+enum UpdateCommand {
+    Check,
+    UpdateAndRestart,
+}
+
 struct UpdateManagerTui {
     auto_update_enabled: bool,
     status: String,
-    tx_cmd: Option<std::sync::mpsc::Sender<()>>,
+    tx_cmd: Option<std::sync::mpsc::Sender<UpdateCommand>>,
     rx_event: Option<std::sync::mpsc::Receiver<String>>,
 }
 
@@ -317,26 +326,66 @@ impl UpdateManagerTui {
         if self.tx_cmd.is_some() {
             return;
         }
-        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<()>();
+        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<UpdateCommand>();
         let (tx_event, rx_event) = std::sync::mpsc::channel::<String>();
         std::thread::spawn(move || {
-            while rx_cmd.recv().is_ok() {
+            while let Ok(command) = rx_cmd.recv() {
                 let current_version =
                     semver::Version::parse(env!("CARGO_PKG_VERSION"))
                         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let result = auto_update::check_now_blocking(
-                    "he-thinks",
-                    "stealcode",
-                    std::env::var("STEALCODE_GH_TOKEN").ok(),
-                    current_version,
-                    release_channel::ReleaseChannel::current(),
-                );
-                let message = match result {
-                    Ok(Some(v)) => format!("Update available: v{v}"),
-                    Ok(None) => "Up to date".to_string(),
-                    Err(e) => format!("Check failed: {e}"),
-                };
-                let _ = tx_event.send(message);
+                let owner = "he-thinks";
+                let repo = "stealcode";
+                let token = std::env::var("STEALCODE_GH_TOKEN").ok();
+                let channel = release_channel::ReleaseChannel::current();
+                match command {
+                    UpdateCommand::Check => {
+                        let message = match auto_update::check_now_blocking(
+                            owner,
+                            repo,
+                            token,
+                            current_version,
+                            channel,
+                        ) {
+                            Ok(Some(version)) => {
+                                format!("Update available: v{version}")
+                            }
+                            Ok(None) => "Up to date".to_string(),
+                            Err(error) => {
+                                format!("Check failed: {error}")
+                            }
+                        };
+                        let _ = tx_event.send(message);
+                    }
+                    UpdateCommand::UpdateAndRestart => {
+                        let _ =
+                            tx_event.send("Downloading update...".to_string());
+                        match auto_update::update_now_blocking(
+                            owner,
+                            repo,
+                            token,
+                            current_version,
+                            channel,
+                        ) {
+                            Ok(version) => {
+                                let _ = tx_event.send(format!(
+                                    "Update installed: v{version} \
+                                     - restarting"
+                                ));
+                                if let Err(error) =
+                                    auto_update::restart_updated_app()
+                                {
+                                    let _ = tx_event.send(format!(
+                                        "Restart failed: {error}"
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                let _ = tx_event
+                                    .send(format!("Update failed: {error}"));
+                            }
+                        }
+                    }
+                }
             }
         });
         self.tx_cmd = Some(tx_cmd);
@@ -347,7 +396,15 @@ impl UpdateManagerTui {
         self.start_worker_if_needed();
         self.status = "Checking...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(());
+            let _ = tx.send(UpdateCommand::Check);
+        }
+    }
+
+    fn update_and_restart(&mut self) {
+        self.start_worker_if_needed();
+        self.status = "Downloading update...".to_string();
+        if let Some(tx) = &self.tx_cmd {
+            let _ = tx.send(UpdateCommand::UpdateAndRestart);
         }
     }
 
@@ -482,6 +539,10 @@ fn handle_action(
                 }
             );
         }
+        Action::UpdateAndRestart => {
+            state.updates.update_and_restart();
+            state.action_label = "Updating and restarting...".into();
+        }
         Action::Unknown(raw) => {
             if !raw.is_empty() {
                 state.action_label = format!("Unknown: {raw}");
@@ -574,8 +635,19 @@ pub fn run_tui(
     if color_mode.supports_osc() {
         state.scheme().apply_osc(&mut terminal)?;
     }
+    // Remove stale update/install/old dirs from a crashed previous update,
+    // at startup (only empty dirs are removed, see `cleanup_windows`).
+    #[cfg(target_os = "windows")]
+    if let Err(error) = auto_update::cleanup_windows_blocking() {
+        eprintln!("failed to clean up update dirs: {error}");
+    }
     let result = run(&mut terminal, &events, &mut state, project);
     restore_terminal(&mut terminal, color_mode)?;
+    // If a silent update finished while we were running, spawn the helper
+    // to apply it as we exit (renaming a running exe is legal on Windows,
+    // so the helper's retry loop rides out our shutdown).
+    #[cfg(target_os = "windows")]
+    auto_update::finalize_auto_update_on_quit_blocking();
     result
 }
 
@@ -706,7 +778,7 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
     render_panel(
         f,
         chunks[5],
-        "Update (Ctrl+U check, Ctrl+Shift+U toggle)",
+        "Update (Ctrl+U check, Ctrl+Shift+U toggle, Ctrl+Shift+R update)",
         &update_content,
         s.block_style(),
         s,
