@@ -38,7 +38,7 @@ jobs:
           libayatana-appindicator3-dev \
           mold
     - name: Check
-      run: cargo clippy --workspace --all-targets --all-features
+      run: cargo clippy --workspace --all-targets --features cli/all
     - name: rustfmt
       run: cargo fmt --all --check
 
@@ -64,7 +64,7 @@ jobs:
           libayatana-appindicator3-dev \
           mold
     - name: cargo doc
-      run: cargo doc --all-features --no-deps
+      run: cargo doc --features cli/all --no-deps
     env:
       RUSTDOCFLAGS: "-D rustdoc::all -A rustdoc::private-doc-tests"
 
@@ -120,7 +120,7 @@ jobs:
           libayatana-appindicator3-dev \
           mold
     - name: Run doc tests
-      run: cargo test --all-features --doc
+      run: cargo test --features cli/all --doc
 
   deny-check:
     name: cargo-deny check

@@ -1,5 +1,5 @@
 [alias]
-nt = "nextest run --all-features --all-targets --status-level fail --no-fail-fast"
+nt = "nextest run --all-targets --features cli/all --status-level fail --no-fail-fast"
 
 [env]
 # Fix incorrect bindings generation with Cranelift on Windows:
