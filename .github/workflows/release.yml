@@ -166,7 +166,9 @@ jobs:
   # then -pre nightlies are flip to published automatically, while stable
   # releases stay drafts until a human publishes them manually.
   auto_publish:
-    needs: validate_release_assets
+    needs:
+      - create_release
+      - validate_release_assets
     runs-on: ubuntu-latest
     permissions:
       contents: write
