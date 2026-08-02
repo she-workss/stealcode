@@ -74,7 +74,7 @@ jobs:
       - name: Trigger release build
         run: |
           gh workflow run release.yml \
-            --repo he-thinks/stealcode \
+            --repo she-workss/stealcode \
             --ref main \
             -f tag="${{ steps.tag.outputs.tag }}"
         env:

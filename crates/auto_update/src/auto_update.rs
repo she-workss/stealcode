@@ -866,7 +866,7 @@ mod tests {
             .enumerate()
             .map(|(i, (name, url))| {
                 format!(
-                    r#"{{"id": {id}, "name": "{name}", "size": 1, "url": "https://api.github.com/repos/he-thinks/stealcode/releases/assets/{id}", "browser_download_url": "{url}"}}"#,
+                    r#"{{"id": {id}, "name": "{name}", "size": 1, "url": "https://api.github.com/repos/she-workss/stealcode/releases/assets/{id}", "browser_download_url": "{url}"}}"#,
                     id = i + 1
                 )
             })
@@ -957,10 +957,10 @@ mod tests {
 
     #[test]
     fn release_by_tag_url_normalizes_the_v_prefix() {
-        let source = GithubReleaseSource::new("he-thinks", "stealcode", None);
+        let source = GithubReleaseSource::new("she-workss", "stealcode", None);
         assert_eq!(
             source.release_by_tag_url("v1.2.3"),
-            "https://api.github.com/repos/he-thinks/stealcode/releases/tags/v1.2.3"
+            "https://api.github.com/repos/she-workss/stealcode/releases/tags/v1.2.3"
         );
     }
 

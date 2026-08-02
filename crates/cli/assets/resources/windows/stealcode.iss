@@ -46,7 +46,7 @@
 #endif
 
 #define MyAppPublisher "he-thinks"
-#define MyAppURL "https://github.com/he-thinks/stealcode"
+#define MyAppURL "https://github.com/she-workss/stealcode"
 #define MyAppExeName "stealcode.exe"
 
 [Setup]

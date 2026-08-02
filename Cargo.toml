@@ -31,7 +31,7 @@ resolver = "3"
 version = "0.12.2"
 edition = "2024"
 authors = ["Sinkevich Artyom <sinkevich.artem@inbox.ru>"]
-homepage = "https://github.com/he-thinks/stealcode"
+homepage = "https://github.com/she-workss/stealcode"
 license = "MIT"
 
 [workspace.dependencies]

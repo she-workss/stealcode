@@ -115,7 +115,7 @@ impl UpdateManager {
                 let current_version =
                     semver::Version::parse(env!("CARGO_PKG_VERSION"))
                         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let owner = "he-thinks";
+                let owner = "she-workss";
                 let repo = "stealcode";
                 let token = std::env::var("STEALCODE_GH_TOKEN").ok();
                 let channel = release_channel::ReleaseChannel::current();

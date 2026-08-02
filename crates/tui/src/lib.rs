@@ -68,14 +68,6 @@ fn dispatch(event: &Event) -> Action {
     if key.kind == KeyEventKind::Release {
         return Action::Unknown(String::new());
     }
-    if key.modifiers == (Modifiers::CONTROL | Modifiers::SHIFT) {
-        if key.code == KeyCode::Char('u') {
-            return Action::ToggleAutoUpdate;
-        }
-        if key.code == KeyCode::Char('r') {
-            return Action::UpdateAndRestart;
-        }
-    }
     if key.modifiers == Modifiers::CONTROL {
         match key.code {
             KeyCode::Char('c') => return Action::Quit,
@@ -85,6 +77,8 @@ fn dispatch(event: &Event) -> Action {
             KeyCode::Char('h') => return Action::ShowHelp,
             KeyCode::Char('g') => return Action::TogglePushToTalk,
             KeyCode::Char('u') => return Action::CheckForUpdates,
+            KeyCode::Char('a') => return Action::ToggleAutoUpdate,
+            KeyCode::Char('r') => return Action::UpdateAndRestart,
             _ => {}
         }
     }
@@ -333,7 +327,7 @@ impl UpdateManagerTui {
                 let current_version =
                     semver::Version::parse(env!("CARGO_PKG_VERSION"))
                         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let owner = "he-thinks";
+                let owner = "she-workss";
                 let repo = "stealcode";
                 let token = std::env::var("STEALCODE_GH_TOKEN").ok();
                 let channel = release_channel::ReleaseChannel::current();
@@ -778,7 +772,7 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
     render_panel(
         f,
         chunks[5],
-        "Update (Ctrl+U check, Ctrl+Shift+U toggle, Ctrl+Shift+R update)",
+        "Update (Ctrl+U check, Ctrl+A toggle, Ctrl+R update)",
         &update_content,
         s.block_style(),
         s,

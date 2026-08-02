@@ -16,7 +16,7 @@ if [ "$CHANNEL" = "nightly" ]; then
 fi
 
 gh release create "$TAG" \
-    --repo he-thinks/stealcode \
+    --repo she-workss/stealcode \
     --title "$TAG" \
     --notes-file "$NOTES_FILE" \
     --draft \

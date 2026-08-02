@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TAG="${1:?usage: draft-release-notes.sh <tag>}"
-REPO="${2:-he-thinks/stealcode}"
+REPO="${2:-she-workss/stealcode}"
 
 PRIOR_TAG="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
 

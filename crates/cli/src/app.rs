@@ -92,7 +92,7 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
         .context("CARGO_PKG_VERSION is not valid semver")?;
     let channel = release_channel::ReleaseChannel::current();
     let source = auto_update::GithubReleaseSource::new(
-        "he-thinks",
+        "she-workss",
         "stealcode",
         std::env::var("STEALCODE_GH_TOKEN").ok(),
     );

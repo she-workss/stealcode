@@ -136,7 +136,7 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Upload to release
-        run: gh release upload "${{ needs.create_draft_release.outputs.tag }}" --repo he-thinks/stealcode artifacts/*
+        run: gh release upload "${{ needs.create_draft_release.outputs.tag }}" --repo she-workss/stealcode artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -151,7 +151,7 @@ jobs:
       - name: Validate expected assets are present
         run: |
           EXPECTED='["StealCode-x86_64.exe", "StealCode-aarch64.exe", "StealCode-aarch64.dmg", "StealCode-x86_64.dmg", "stealcode-linux-x86_64.tar.gz", "stealcode-linux-aarch64.tar.gz"]'
-          ACTUAL=$(gh release view "${{ needs.create_draft_release.outputs.tag }}" --repo he-thinks/stealcode --json assets -q '[.assets[].name]')
+          ACTUAL=$(gh release view "${{ needs.create_draft_release.outputs.tag }}" --repo she-workss/stealcode --json assets -q '[.assets[].name]')
           MISSING=$(echo "$EXPECTED" | jq -r --argjson actual "$ACTUAL" '. - $actual | .[]')
           if [ -n "$MISSING" ]; then
             echo "Missing assets:"
