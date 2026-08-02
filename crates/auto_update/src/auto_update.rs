@@ -757,20 +757,60 @@ pub async fn install_release_windows(
 }
 
 /// Removes stale `updates\`/`install\`/`old\` directories left over from a
-/// crashed or interrupted update, at startup. `remove_dir` (not
-/// `remove_dir_all`): if the previous run finished normally these are
-/// already empty; a genuinely broken leftover is left alone rather than
-/// risking deleting something mid-update.
+/// crashed or interrupted update, at startup. `remove_dir_all` is used but
+/// every error is swallowed: a leftover `old\stealcode.exe` may still be the
+/// mapped image of a concurrently running instance, in which case removing it
+/// fails and it is simply rolled into next time.
 #[cfg(windows)]
 pub async fn cleanup_windows() -> Result<()> {
     let parent = std::env::current_exe()?
         .parent()
         .context("no parent dir for stealcode.exe")?
         .to_owned();
-    let _ = tokio::fs::remove_dir(parent.join("updates")).await;
-    let _ = tokio::fs::remove_dir(parent.join("install")).await;
-    let _ = tokio::fs::remove_dir(parent.join("old")).await;
+    let _ = tokio::fs::remove_dir_all(parent.join("updates")).await;
+    let _ = tokio::fs::remove_dir_all(parent.join("install")).await;
+    let _ = tokio::fs::remove_dir_all(parent.join("old")).await;
     Ok(())
+}
+
+/// Applies a staged update (one written by an earlier session via
+/// `install_release_windows`) when the current process is started *after*
+/// that staging finished. Used by the GUI and the TUI at startup: if
+/// `install\stealcode.exe` and `updates\versions.txt` both exist, the helper is
+/// spawned with `--launch true` so the swap happens and StealCode relaunches
+/// as the new version; the caller should then exit the current (stale)
+/// process. Returns true when the swap was handed off.
+#[cfg(windows)]
+pub fn apply_staged_update_on_startup() -> Result<bool> {
+    let exe = std::env::current_exe()?;
+    let app_dir = exe
+        .parent()
+        .context("no parent dir for stealcode.exe")?
+        .to_owned();
+    let flag_file = app_dir.join("updates").join("versions.txt");
+    let staged = app_dir.join("install").join("stealcode.exe");
+    if !flag_file.exists() || !staged.is_file() {
+        return Ok(false);
+    }
+    let helper = app_dir.join("tools").join("auto_update_helper.exe");
+    anyhow::ensure!(
+        helper.is_file(),
+        "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
+        helper.display()
+    );
+    std::process::Command::new(&helper)
+        .arg("--launch")
+        .arg("true")
+        .status()
+        .context("failed to spawn auto_update_helper.exe")?;
+    Ok(true)
+}
+
+/// Blocking variant of `apply_staged_update_on_startup` for the sync hosts
+/// (TUI event loop, GUI worker) that don't pull in tokio themselves.
+#[cfg(windows)]
+pub fn apply_staged_update_on_startup_blocking() -> Result<bool> {
+    block_on_sync_host(apply_staged_update_on_startup())
 }
 
 /// Called from the app's quit hook. If the background silent install

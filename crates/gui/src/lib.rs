@@ -504,6 +504,14 @@ pub fn run_desktop(
 ) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     setup_windows_app_id();
+    // If a previous session staged an update (e.g. via `stealcode upgrade`
+    // or an in-app update while another instance was running), apply it now:
+    // the helper swaps the binary in, relaunches StealCode, and this stale
+    // process exits.
+    #[cfg(target_os = "windows")]
+    if auto_update::apply_staged_update_on_startup()? {
+        std::process::exit(0);
+    }
     gpui_platform::application().run(move |cx| {
         // If a silent update finished while we were running, spawn the
         // helper to apply it as we exit. The subscription must stay alive

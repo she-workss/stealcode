@@ -629,6 +629,14 @@ pub fn run_tui(
     if color_mode.supports_osc() {
         state.scheme().apply_osc(&mut terminal)?;
     }
+    // If a previous session staged an update (e.g. via `stealcode upgrade`
+    // or an in-app update while another instance was running), apply it now:
+    // the helper swaps the binary in and relaunches this process as the new
+    // version; exit the stale instance.
+    #[cfg(target_os = "windows")]
+    if auto_update::apply_staged_update_on_startup_blocking()? {
+        return Ok(());
+    }
     // Remove stale update/install/old dirs from a crashed previous update,
     // at startup (only empty dirs are removed, see `cleanup_windows`).
     #[cfg(target_os = "windows")]
