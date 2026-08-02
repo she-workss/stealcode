@@ -44,21 +44,11 @@ jobs:
               echo "::error::no stable tag yet; cannot derive base for a new release branch"
               exit 1
             fi
-            # The default GITHUB_TOKEN cannot push a *new* branch whose tree
-            # contains files under .github/workflows (GitHub's workflow-file
-            # protection). Creating the branch via the REST API bypasses that,
-            # and the subsequent bump push only touches Cargo files.
-            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag (via API)"
-            sha="$(git rev-parse "$stable_tag^{commit}")"
-            gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/heads/${{ inputs.branch }}" \
-              -f sha="$sha" >/dev/null
-            git fetch origin "${{ inputs.branch }}"
-            git checkout "${{ inputs.branch }}"
+            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag"
+            git checkout -b "${{ inputs.branch }}" "$stable_tag"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Install cargo-edit
         uses: taiki-e/install-action@v2
@@ -91,6 +81,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # The commit bump only touches Cargo files, but the *first* push of a
+          # stable branch introduces .github/workflows content, which GitHub
+          # refuses to accept from the default GITHUB_TOKEN. RELEASE_TOKEN has
+          # the `workflow` scope, so route pushes through it.
+          git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add -A
           git commit -m "Bump StealCode to ${{ steps.tag.outputs.tag }}"
           git tag "${{ steps.tag.outputs.tag }}"
@@ -103,6 +98,8 @@ jobs:
           # so dispatch explicitly - on `main` (which always has the latest
           # release.yml) rather than the just-created tag, to avoid racing
           # GitHub's workflow indexer (HTTP 422).
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Trigger release build
         run: |
