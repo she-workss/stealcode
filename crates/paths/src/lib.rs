@@ -116,11 +116,9 @@ pub fn config_dir() -> &'static PathBuf {
         }
 
         cfg_select! {
-            target_os = "windows" => {
-                dirs::config_dir()
-                    .expect("failed to determine RoamingAppData directory")
-                    .join(APP_NAME)
-            }
+            target_os = "windows" => dirs::config_dir()
+                .expect("failed to determine RoamingAppData directory")
+                .join(APP_NAME),
             any(target_os = "linux", target_os = "freebsd") => {
                 let base_dir = if let Ok(flatpak_xdg_config) =
                     std::env::var("FLATPAK_XDG_CONFIG_HOME")
@@ -132,9 +130,7 @@ pub fn config_dir() -> &'static PathBuf {
                 };
                 base_dir.join(APP_NAME_LOWERCASE)
             }
-            _ => {
-                home_dir().join(".config").join(APP_NAME_LOWERCASE)
-            }
+            _ => home_dir().join(".config").join(APP_NAME_LOWERCASE),
         }
     })
 }
@@ -147,11 +143,9 @@ pub fn data_dir() -> &'static PathBuf {
         }
 
         cfg_select! {
-            target_os = "macos" => {
-                home_dir()
-                    .join("Library/Application Support")
-                    .join(APP_NAME)
-            }
+            target_os = "macos" => home_dir()
+                .join("Library/Application Support")
+                .join(APP_NAME),
             any(target_os = "linux", target_os = "freebsd") => {
                 let data_local_dir = if let Ok(flatpak_xdg_data) =
                     std::env::var("FLATPAK_XDG_DATA_HOME")
@@ -163,11 +157,9 @@ pub fn data_dir() -> &'static PathBuf {
                 };
                 data_local_dir.join(APP_NAME_LOWERCASE)
             }
-            target_os = "windows" => {
-                dirs::data_local_dir()
-                    .expect("failed to determine LocalAppData directory")
-                    .join(APP_NAME)
-            }
+            target_os = "windows" => dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join(APP_NAME),
             _ => {
                 config_dir().clone() // Fallback
             }
@@ -200,11 +192,9 @@ pub fn state_dir() -> &'static PathBuf {
                 };
                 base_dir.join(APP_NAME_LOWERCASE)
             }
-            _ => {
-                dirs::data_local_dir()
-                    .expect("failed to determine LocalAppData directory")
-                    .join(APP_NAME)
-            }
+            _ => dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join(APP_NAME),
         }
     })
 }
@@ -214,16 +204,12 @@ pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
     TEMP_DIR.get_or_init(|| {
         cfg_select! {
-            target_os = "macos" => {
-                dirs::cache_dir()
-                    .expect("failed to determine cachesDirectory directory")
-                    .join(APP_NAME)
-            }
-            target_os = "windows" => {
-                dirs::cache_dir()
-                    .expect("failed to determine LocalAppData directory")
-                    .join(APP_NAME)
-            }
+            target_os = "macos" => dirs::cache_dir()
+                .expect("failed to determine cachesDirectory directory")
+                .join(APP_NAME),
+            target_os = "windows" => dirs::cache_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join(APP_NAME),
             any(target_os = "linux", target_os = "freebsd") => {
                 let cache_dir = if let Ok(flatpak_xdg_cache) =
                     std::env::var("FLATPAK_XDG_CACHE_HOME")
@@ -235,9 +221,7 @@ pub fn temp_dir() -> &'static PathBuf {
                 };
                 cache_dir.join(APP_NAME_LOWERCASE)
             }
-            _ => {
-                home_dir().join(".cache").join(APP_NAME_LOWERCASE)
-            }
+            _ => home_dir().join(".cache").join(APP_NAME_LOWERCASE),
         }
     })
 }
@@ -281,9 +265,7 @@ pub fn crashes_dir() -> Option<&'static PathBuf> {
                 home_dir().join("Library/Logs/DiagnosticReports")
             }))
         }
-        _ => {
-            None
-        }
+        _ => None,
     }
 }
 

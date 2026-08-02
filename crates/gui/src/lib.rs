@@ -474,8 +474,7 @@ fn load_icon() -> tray_icon::Icon {
     // (source-tree) path the build ran on; `env!("CARGO_MANIFEST_DIR")`
     // bakes that build machine's path in, which is wrong for installed
     // binaries.
-    let image_bytes =
-        include_bytes!("../../cli/assets/icons/prod/icon.png");
+    let image_bytes = include_bytes!("../../cli/assets/icons/prod/icon.png");
     let (icon_rgba, icon_width, icon_height) = {
         let image = image::load_from_memory(image_bytes)
             .expect("Failed to decode embedded icon")
