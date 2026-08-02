@@ -14,6 +14,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # rustc nightly ICEs ("unexpected rigid alias in layout_of after
+  # normalization") on the new solver + cranelift rustflags applied to
+  # clippy/doc. Use just the stable-to-use subset for the CI-only build.
+  CARGO_ENCODED_RUSTFLAGS: "--cfg=tokio_unstable;--cfg=windows_slim_errors"
 
 jobs:
   check:
