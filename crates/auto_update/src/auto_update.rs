@@ -806,11 +806,12 @@ pub fn apply_staged_update_on_startup() -> Result<bool> {
     Ok(true)
 }
 
-/// Blocking variant of `apply_staged_update_on_startup` for the sync hosts
-/// (TUI event loop, GUI worker) that don't pull in tokio themselves.
+/// Blocking variant of `apply_staged_update_on_startup` - it is already
+/// fully synchronous (no tokio usage), defined solely to keep the same
+/// naming pattern as the other startup helpers.
 #[cfg(windows)]
 pub fn apply_staged_update_on_startup_blocking() -> Result<bool> {
-    block_on_sync_host(apply_staged_update_on_startup())
+    apply_staged_update_on_startup()
 }
 
 /// Called from the app's quit hook. If the background silent install
