@@ -288,6 +288,15 @@ pub fn parse_releases_list_response(body: &[u8]) -> Result<Vec<ReleaseInfo>> {
         .context("failed to parse GitHub releases list JSON")
 }
 
+/// Selects the most recent non-draft **prerelease** from a release list,
+/// mirroring what `/releases/latest` would have returned had it not skipped
+/// prereleases. Used by the nightly channel.
+fn most_recent_prerelease(releases: Vec<ReleaseInfo>) -> Option<ReleaseInfo> {
+    releases
+        .into_iter()
+        .find(|release| !release.draft && release.prerelease)
+}
+
 /// Fetches the single most recent, non-draft release **marked as a
 /// prerelease** - needed for the nightly channel, since `GET /releases/latest`
 /// explicitly skips prereleases and would never surface a nightly build tagged
@@ -319,10 +328,7 @@ pub async fn fetch_most_recent_release(
         String::from_utf8_lossy(&body)
     );
 
-    let releases = parse_releases_list_response(&body)?;
-    Ok(releases
-        .into_iter()
-        .find(|release| !release.draft && release.prerelease))
+    Ok(most_recent_prerelease(parse_releases_list_response(&body)?))
 }
 
 /// Dispatches to the right fetch strategy for the given channel: stable
@@ -930,6 +936,30 @@ mod tests {
         let release = parse_release_response(body.as_bytes()).unwrap();
         assert_eq!(release.version().unwrap(), Version::new(0, 3, 1));
         assert_eq!(release.assets.len(), 1);
+    }
+
+    #[test]
+    fn parses_the_nightly_pre_suffix_as_a_prerelease_version() {
+        let body = sample_release_json("v0.13.0-pre", true, &[]);
+        let release = parse_release_response(body.as_bytes()).unwrap();
+        let version = release.version().unwrap();
+        assert_eq!(version.major, 0);
+        assert_eq!(version.minor, 13);
+        assert_eq!(version.patch, 0);
+        assert!(!version.pre.is_empty());
+    }
+
+    #[test]
+    fn most_recent_prerelease_skips_stable_and_drafts() {
+        let stable = sample_release_json("v0.13.0", false, &[]);
+        let draft_pre = r#"{"tag_name": "v0.13.1-pre", "draft": true, "prerelease": true, "assets": []}"#;
+        let nightly = sample_release_json("v0.13.2-pre", true, &[]);
+        let releases = parse_releases_list_response(
+            format!("[{stable},{draft_pre},{nightly}]").as_bytes(),
+        )
+        .unwrap();
+        let picked = most_recent_prerelease(releases).unwrap();
+        assert_eq!(picked.tag_name, "v0.13.2-pre");
     }
 
     #[test]
