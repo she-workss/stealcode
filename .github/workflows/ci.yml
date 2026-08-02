@@ -26,10 +26,17 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install mold
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y mold
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev \
+          mold
     - name: Check
       run: cargo clippy --workspace --all-targets --all-features
     - name: rustfmt
@@ -45,10 +52,17 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install mold
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y mold
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev \
+          mold
     - name: cargo doc
       run: cargo doc --all-features --no-deps
     env:
@@ -65,10 +79,17 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install mold
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y mold
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev \
+          mold
     - name: Run tests
       run: cargo nt
 
@@ -87,10 +108,17 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install mold
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y mold
+        sudo apt-get install -y \
+          libasound2-dev \
+          libssl-dev \
+          pkg-config \
+          libgtk-3-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev \
+          mold
     - name: Run doc tests
       run: cargo test --all-features --doc
 

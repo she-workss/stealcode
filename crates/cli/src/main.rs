@@ -37,6 +37,11 @@ async fn main() -> anyhow::Result<()> {
         &settings.telemetry.file_path,
         needs_stdout,
     );
+    tracing::info!(
+        "StealCode {} starting, logs at {}",
+        env!("CARGO_PKG_VERSION"),
+        paths::log_file().display()
+    );
     app::run_app(args, &settings).await?;
     Ok(())
 }

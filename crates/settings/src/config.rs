@@ -158,7 +158,9 @@ pub struct TelemetrySettings {
 impl Default for TelemetrySettings {
     fn default() -> Self {
         Self {
-            level: String::from("info"),
+            // Default to `debug` so that the app's own `debug!` events (most
+            // of the codebase logs at `debug`) actually land in stealcode.log.
+            level: String::from("debug"),
             file_path: String::from("stealcode.log"),
         }
     }

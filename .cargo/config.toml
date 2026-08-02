@@ -10,7 +10,6 @@ AWS_LC_SYS_NO_U1_BINDINGS = "1"
 incremental = true
 rustflags = [
     "--cfg=tokio_unstable",
-    "-Ctarget-cpu=native",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
@@ -41,7 +40,6 @@ codegen-backend = "cranelift"
 rustflags = [
     "--cfg=windows_slim_errors",
     "--cfg=tokio_unstable",
-    "-Ctarget-cpu=native",
     "-Clink-arg=-fuse-ld=lld",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
@@ -55,7 +53,6 @@ linker = "clang"
 rustflags = [
     "--cfg=tokio_unstable",
     "-Clink-arg=-fuse-ld=mold",
-    "-Ctarget-cpu=native",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
@@ -70,7 +67,6 @@ linker = "clang"
 rustflags = [
     "--cfg=tokio_unstable",
     "-Clink-arg=-fuse-ld=mold",
-    "-Ctarget-cpu=native",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
