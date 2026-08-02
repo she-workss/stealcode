@@ -57,6 +57,8 @@ jobs:
             git fetch origin "${{ inputs.branch }}"
             git checkout "${{ inputs.branch }}"
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install cargo-edit
         uses: taiki-e/install-action@v2
