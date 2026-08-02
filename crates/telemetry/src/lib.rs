@@ -1,3 +1,5 @@
+//! Telemetry for StealCode: file- and stdout-based `tracing` logging setup.
+
 use std::{fs::OpenOptions, io, path::Path};
 
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};

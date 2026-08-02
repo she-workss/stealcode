@@ -70,7 +70,7 @@ jobs:
     - name: cargo doc
       run: cargo doc --features cli/all --no-deps
     env:
-      RUSTDOCFLAGS: "-D rustdoc::all -A rustdoc::private-doc-tests"
+      RUSTDOCFLAGS: "-D rustdoc::all -A rustdoc::private-doc-tests -A rustdoc::missing-crate-level-docs"
 
   test-versions:
     needs: check

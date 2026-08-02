@@ -554,7 +554,7 @@ impl std::fmt::Display for NormalizeError {
 ///
 /// </div>
 ///
-/// [`path::absolute`](absolute) is an alternative that preserves `..`.
+/// [`std::path::absolute`] is an alternative that preserves `..`.
 /// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the
 /// filesystem.
 pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
@@ -663,7 +663,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use utils::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -694,7 +694,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use utils::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
