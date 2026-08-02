@@ -1,0 +1,46 @@
+name: release_nightly
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: changes
+        name: Check for commits since the latest -pre tag
+        run: |
+          latest=$(git tag -l 'v*-pre' | sort -V | tail -n1 || true)
+          if [ -z "$latest" ]; then
+            echo "commits=1" >> "$GITHUB_OUTPUT"
+          else
+            count=$(git rev-list "$latest"..HEAD --count 2>/dev/null || echo 1)
+            echo "commits=$count" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip when no new commits
+        if: steps.changes.outputs.commits == 0
+        run: echo "No new commits since the latest -pre tag; nothing to build." && exit 0
+
+      - name: Dispatch nightly bump
+        run: |
+          gh workflow run bump_stealcode_version.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f bump=patch \
+            -f channel=nightly
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
