@@ -50,7 +50,7 @@ jobs:
         name: Compute tag name
         run: |
           if [ "${{ inputs.channel }}" = "nightly" ]; then
-            echo "tag=v${{ steps.version.outputs.version }}-nightly" >> "$GITHUB_OUTPUT"
+            echo "tag=v${{ steps.version.outputs.version }}-pre" >> "$GITHUB_OUTPUT"
           else
             echo "tag=v${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
           fi

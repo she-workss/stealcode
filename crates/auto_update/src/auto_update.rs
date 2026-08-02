@@ -288,11 +288,11 @@ pub fn parse_releases_list_response(body: &[u8]) -> Result<Vec<ReleaseInfo>> {
         .context("failed to parse GitHub releases list JSON")
 }
 
-/// Fetches the single most recent, non-draft release regardless of
-/// prerelease status - needed for the nightly channel, since
-/// `GET /releases/latest` explicitly skips prereleases and would never
-/// surface a nightly build marked `prerelease: true` on GitHub. Returns
-/// `Ok(None)` when the repository has no non-draft releases yet.
+/// Fetches the single most recent, non-draft release **marked as a
+/// prerelease** - needed for the nightly channel, since `GET /releases/latest`
+/// explicitly skips prereleases and would never surface a nightly build tagged
+/// `-pre` on GitHub. Returns `Ok(None)` when the repository has no non-draft
+/// prerelease yet.
 pub async fn fetch_most_recent_release(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
@@ -320,13 +320,15 @@ pub async fn fetch_most_recent_release(
     );
 
     let releases = parse_releases_list_response(&body)?;
-    Ok(releases.into_iter().find(|release| !release.draft))
+    Ok(releases
+        .into_iter()
+        .find(|release| !release.draft && release.prerelease))
 }
 
 /// Dispatches to the right fetch strategy for the given channel: stable
 /// uses `/releases/latest` (which correctly ignores prereleases), nightly
-/// uses the full list (since it needs to see prerelease-flagged builds).
-/// Returns `Ok(None)` when no release exists for this channel yet.
+/// uses the full list (since it needs to see prerelease-flagged `-pre`
+/// builds). Returns `Ok(None)` when no release exists for this channel yet.
 pub async fn fetch_release_for_channel(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
