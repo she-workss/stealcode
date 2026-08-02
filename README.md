@@ -1,1 +1,1 @@
-# StealCode application
+# StealCode
