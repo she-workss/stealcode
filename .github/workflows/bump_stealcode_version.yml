@@ -84,7 +84,10 @@ jobs:
           # The commit bump only touches Cargo files, but the *first* push of a
           # stable branch introduces .github/workflows content, which GitHub
           # refuses to accept from the default GITHUB_TOKEN. RELEASE_TOKEN has
-          # the `workflow` scope, so route pushes through it.
+          # the `workflow` scope, so route pushes through it. actions/checkout
+          # also injects a GITHUB_TOKEN-based http.extraheader that would
+          # shadow the token embedded in the URL, so strip it first.
+          git config --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add -A
           git commit -m "Bump StealCode to ${{ steps.tag.outputs.tag }}"
