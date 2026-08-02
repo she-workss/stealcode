@@ -27,7 +27,7 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: clippy, rustfmt, rustc-codegen-cranelift-preview
-    - uses: Swatinem/rust-cache@v2
+- uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Install build dependencies
@@ -83,6 +83,10 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
     - name: Install build dependencies
       run: |
         sudo apt-get update
