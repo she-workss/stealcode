@@ -23,52 +23,52 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: clippy, rustfmt, rustc-codegen-cranelift-preview
-- uses: Swatinem/rust-cache@v2
-      with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libssl-dev \
-          pkg-config \
-          libgtk-3-dev \
-          libxdo-dev \
-          libayatana-appindicator3-dev \
-          mold
-    - name: Check
-      run: cargo clippy --workspace --all-targets --features cli/all
-    - name: rustfmt
-      run: cargo fmt --all --check
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt, rustc-codegen-cranelift-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            mold
+      - name: Check
+        run: cargo clippy --workspace --all-targets --features cli/all
+      - name: rustfmt
+        run: cargo fmt --all --check
 
   check-docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: rustc-codegen-cranelift-preview
-    - uses: Swatinem/rust-cache@v2
-      with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libssl-dev \
-          pkg-config \
-          libgtk-3-dev \
-          libxdo-dev \
-          libayatana-appindicator3-dev \
-          mold
-    - name: cargo doc
-      run: cargo doc --features cli/all --no-deps
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            mold
+      - name: cargo doc
+        run: cargo doc --features cli/all --no-deps
     env:
       RUSTDOCFLAGS: "-D rustdoc::all -A rustdoc::private-doc-tests -A rustdoc::missing-crate-level-docs"
 
@@ -76,30 +76,30 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: rustc-codegen-cranelift-preview
-    - uses: Swatinem/rust-cache@v2
-      with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-nextest
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libssl-dev \
-          pkg-config \
-          libgtk-3-dev \
-          libxdo-dev \
-          libayatana-appindicator3-dev \
-          mold
-    - name: Run tests
-      run: cargo nt
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            mold
+      - name: Run tests
+        run: cargo nt
 
   # (04.10.2025) Note: Doctests are currently not supported because of
   # limitations in stable Rust. For now, run doctests in a separate step with
@@ -109,26 +109,26 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: rustc-codegen-cranelift-preview
-    - uses: Swatinem/rust-cache@v2
-      with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libssl-dev \
-          pkg-config \
-          libgtk-3-dev \
-          libxdo-dev \
-          libayatana-appindicator3-dev \
-          mold
-    - name: Run doc tests
-      run: cargo test --features cli/all --doc
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-codegen-cranelift-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libssl-dev \
+            pkg-config \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            mold
+      - name: Run doc tests
+        run: cargo test --features cli/all --doc
 
   deny-check:
     name: cargo-deny check
@@ -149,13 +149,13 @@ jobs:
   dependencies-are-sorted:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - name: Install cargo-sort
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-sort
-    - name: Check dependency tables
-      run: cargo sort --workspace --grouped --check
+      - uses: actions/checkout@v5
+      - name: Install cargo-sort
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-sort
+      - name: Check dependency tables
+        run: cargo sort --workspace --grouped --check
 
   typos:
     name: Spellcheck with Typos
