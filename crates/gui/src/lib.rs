@@ -469,10 +469,16 @@ fn open_app_window(
     }
 }
 
-fn load_icon(path: &Path) -> tray_icon::Icon {
+fn load_icon() -> tray_icon::Icon {
+    // The icon is compiled into the binary so it doesn't depend on the
+    // (source-tree) path the build ran on; `env!("CARGO_MANIFEST_DIR")`
+    // bakes that build machine's path in, which is wrong for installed
+    // binaries.
+    let image_bytes =
+        include_bytes!("../../cli/assets/icons/prod/icon.png");
     let (icon_rgba, icon_width, icon_height) = {
-        let image = image::open(path)
-            .expect("Failed to open icon path")
+        let image = image::load_from_memory(image_bytes)
+            .expect("Failed to decode embedded icon")
             .into_rgba8();
         let (width, height) = image.dimensions();
         let rgba = image.into_raw();
@@ -541,9 +547,7 @@ pub fn run_desktop(
         let exit_item = MenuItem::with_id("exit", "Exit", true, None);
         let _ = menu.append(&show_notif_item);
         let _ = menu.append(&exit_item);
-        let icon_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../cli/assets/icons/prod/icon.png");
-        let icon = load_icon(&icon_path);
+        let icon = load_icon();
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("StealCode")
