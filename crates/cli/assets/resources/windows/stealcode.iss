@@ -34,7 +34,7 @@
 #endif
 
 #if Channel == "nightly"
-  #define AppId "{{{E44A5546-BEA9-43F6-AD18-39A7452712B5}}"
+  #define AppId "{{E44A5546-BEA9-43F6-AD18-39A7452712B5}"
   #define MyAppName "StealCode Nightly"
   #define AppUserId "he-thinks.StealCode.Nightly"
   #define DirSuffix " Nightly"
