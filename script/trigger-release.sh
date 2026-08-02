@@ -15,12 +15,14 @@ case "$CHANNEL" in
 
   stable|"")
     BUMP="${BUMP:-patch}"
-    echo "Bumping $BUMP version on main and building a stable release"
+    version="$(./script/get-released-version.sh stable "$REPO")"
+    branch="v$(echo "$version" | awk -F. '{print $1"."$2}').x"
+    echo "Bumping $BUMP version on stable branch $branch (based on released v$version)"
     gh workflow run bump_stealcode_version.yml \
       --repo "$REPO" \
-      --ref main \
       -f bump="$BUMP" \
-      -f channel=stable
+      -f channel=stable \
+      -f branch="$branch"
     ;;
 
   *)

@@ -13,6 +13,10 @@ on:
         type: choice
         options: [stable, nightly]
         default: stable
+      branch:
+        description: "Branch to bump and tag on (e.g. v0.14.x; main for nightly)"
+        type: string
+        default: main
 
 permissions:
   contents: write
@@ -26,7 +30,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: main
+          fetch-depth: 0
+
+      - name: Checkout or create release branch
+        run: |
+          if git branch -r | grep -q "origin/${{ inputs.branch }}"; then
+            echo "Branch ${{ inputs.branch }} already exists, checking it out"
+            git checkout "${{ inputs.branch }}"
+            git pull --ff-only origin "${{ inputs.branch }}"
+          else
+            stable_tag="$(git tag -l 'v*' | grep -v -- '-pre' | sort -V | tail -n1)"
+            if [ -z "$stable_tag" ]; then
+              echo "::error::no stable tag yet; cannot derive base for a new release branch"
+              exit 1
+            fi
+            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag"
+            git checkout -b "${{ inputs.branch }}" "$stable_tag"
+          fi
 
       - name: Install cargo-edit
         uses: taiki-e/install-action@v2
@@ -62,14 +82,15 @@ jobs:
           git add -A
           git commit -m "Bump StealCode to ${{ steps.tag.outputs.tag }}"
           git tag "${{ steps.tag.outputs.tag }}"
-          git push origin main
+          git push origin "${{ inputs.branch }}"
           git push origin "${{ steps.tag.outputs.tag }}"
           # The tag push above does NOT trigger `release.yml` by itself:
           # GitHub ignores push events performed with GITHUB_TOKEN (the
           # documented "automatic token authentication" behavior).
           # workflow_dispatch is the one exception that does start a run,
-          # so dispatch explicitly - on `main` rather than the just-created
-          # tag, to avoid racing GitHub's workflow indexer (HTTP 422).
+          # so dispatch explicitly - on `main` (which always has the latest
+          # release.yml) rather than the just-created tag, to avoid racing
+          # GitHub's workflow indexer (HTTP 422).
 
       - name: Trigger release build
         run: |
