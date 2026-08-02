@@ -494,6 +494,99 @@ pub fn check_now_blocking(
     })
 }
 
+/// Blocking "download and install now" for the same non-tokio callers as
+/// `check_now_blocking` (the GUI's background worker, the TUI's event
+/// loop). Runs the full update flow: fetch the latest release for the
+/// channel, download the matching asset, then stage it per platform - on
+/// Windows the silent installer writes into `install\` (the swap happens
+/// later via the helper), on Linux/macOS the new binary is applied in
+/// place. Returns the new version on success. Does not restart the app -
+/// call `restart_updated_app` afterwards.
+pub fn update_now_blocking(
+    owner: &str,
+    repo: &str,
+    token: Option<String>,
+    current_version: Version,
+    channel: ReleaseChannel,
+) -> Result<Version> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to start update runtime")?;
+    runtime.block_on(async move {
+        let source = GithubReleaseSource::new(owner, repo, token);
+        let client = reqwest::Client::new();
+        let release = fetch_release_for_channel(&client, &source, channel)
+            .await?
+            .context("no release available for this channel")?;
+        let new_version = newer_version_available(
+            &release,
+            &current_version,
+            channel,
+        )?
+        .context("no update available")?;
+
+        let (platform, arch) = current_platform_arch()?;
+        let asset_name = expected_asset_name(platform, arch);
+        let asset = find_asset_by_name(&release, &asset_name)?;
+        let download_dir = std::env::temp_dir().join("stealcode");
+        let downloaded_path = download_dir.join(&asset.name);
+        download_asset(&client, &source, asset, &downloaded_path).await?;
+
+        #[cfg(target_os = "linux")]
+        {
+            let current_exe = std::env::current_exe()
+                .context("failed to determine current executable path")?;
+            apply_linux_update(&downloaded_path, &current_exe)?;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let app_dir = std::env::current_exe()
+                .context("failed to determine current executable path")?
+                .ancestors()
+                .nth(2) // Contents/MacOS/stealcode -> Contents -> StealCode.app
+                .context(
+                    "could not locate StealCode.app from the running executable",
+                )?
+                .to_path_buf();
+            apply_macos_update(&downloaded_path, &app_dir)?;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let helper_path = install_release_windows(&downloaded_path).await?;
+            anyhow::ensure!(
+                helper_path.is_file(),
+                "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
+                helper_path.display()
+            );
+        }
+
+        Ok(new_version)
+    })
+}
+
+/// Relaunches StealCode after a successful `update_now_blocking` and exits
+/// the current process. On Windows the binary swap is done by
+/// `auto_update_helper.exe --launch true` (see `restart_and_update`); on
+/// Unix the new binary is already in place, so the current executable is
+/// simply re-executed. Never returns on success.
+pub fn restart_updated_app() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        restart_and_update()
+    }
+    #[cfg(unix)]
+    {
+        let exe = std::env::current_exe()?;
+        std::process::Command::new(&exe)
+            .spawn()
+            .context("failed to relaunch StealCode")?;
+        std::process::exit(0);
+    }
+}
+
 // ---------------------------------------------------------------------
 // Linux / macOS: no helper process needed - rename() over a running exe is
 // allowed. macOS mounts the dmg via `hdiutil`; Linux extracts the tar.gz.
@@ -705,6 +798,43 @@ pub async fn finalize_auto_update_on_quit() {
     }
 }
 
+/// Runs a future to completion on a dedicated thread with its own
+/// single-threaded tokio runtime. The sync hosts that call the `_blocking`
+/// wrappers may themselves be running inside another tokio runtime (the
+/// CLI's `#[tokio::main]` drives the TUI), where creating a runtime or
+/// `block_on`-ing on the current thread panics with "Cannot start a
+/// runtime from within a runtime" - a fresh thread has no such context.
+#[cfg(target_os = "windows")]
+fn block_on_sync_host<F, R>(future: F) -> R
+where
+    F: std::future::Future<Output = R> + Send + 'static,
+    R: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to start update runtime thread");
+        let result = runtime.block_on(future);
+        let _ = tx.send(result);
+    });
+    rx.recv().expect("update runtime thread panicked")
+}
+
+/// Blocking variant of `finalize_auto_update_on_quit` for hosts with a
+/// blocking event loop (the TUI) that don't pull in tokio themselves.
+#[cfg(target_os = "windows")]
+pub fn finalize_auto_update_on_quit_blocking() {
+    block_on_sync_host(finalize_auto_update_on_quit());
+}
+
+/// Blocking variant of `cleanup_windows` for the same sync hosts.
+#[cfg(target_os = "windows")]
+pub fn cleanup_windows_blocking() -> Result<()> {
+    block_on_sync_host(cleanup_windows())
+}
+
 /// Called when the person explicitly clicks "Restart to update" while
 /// StealCode is running: relaunches via the helper (which then launches the
 /// new binary itself), instead of quietly deferring to the next quit. Never
@@ -835,7 +965,24 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(target_os = "windows")]
+    fn blocking_wrappers_work_inside_a_runtime_too() {
+        // Regression test: the CLI drives the TUI under `#[tokio::main]`,
+        // so the `_blocking` wrappers must not create a runtime or
+        // `block_on` from the runtime's own thread (that panics with
+        // "Cannot start a runtime from within a runtime"). They run on a
+        // dedicated thread with their own runtime instead.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert!(cleanup_windows_blocking().is_ok());
+            finalize_auto_update_on_quit_blocking();
+        });
+    }
+
+    #[test]
     fn atomic_swap_survives_the_target_being_currently_executing() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("stealcode");
