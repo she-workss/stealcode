@@ -94,21 +94,7 @@ jobs:
           git tag "${{ steps.tag.outputs.tag }}"
           git push origin "${{ inputs.branch }}"
           git push origin "${{ steps.tag.outputs.tag }}"
-          # The tag push above does NOT trigger `release.yml` by itself:
-          # GitHub ignores push events performed with GITHUB_TOKEN (the
-          # documented "automatic token authentication" behavior).
-          # workflow_dispatch is the one exception that does start a run,
-          # so dispatch explicitly - on `main` (which always has the latest
-          # release.yml) rather than the just-created tag, to avoid racing
-          # GitHub's workflow indexer (HTTP 422).
+          # A push made with RELEASE_TOKEN DOES trigger `release.yml` via its
+          # `push: tags: v*` trigger, so no explicit dispatch is needed.
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-
-      - name: Trigger release build
-        run: |
-          gh workflow run release.yml \
-            --repo she-workss/stealcode \
-            --ref main \
-            -f tag="${{ steps.tag.outputs.tag }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
