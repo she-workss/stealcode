@@ -136,10 +136,95 @@ Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\StealCode{#DirS
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\StealCode{#DirSuffix}\shell\02desktop\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" desktop ""%V"""; Tasks: addcontextmenu
 
 [Code]
+var
+  RemoveSettingsCheckBox, RemoveLogsCheckBox: TNewCheckBox;
+  RemoveSettingsChecked, RemoveLogsChecked: Boolean;
+
 function WizardNotSilent(): Boolean;
 begin
   Result := not WizardSilent();
 end;
+
+procedure InitializeUninstallProgressForm();
+var
+  UninstallPage: TNewNotebookPage;
+  UninstallButton: TNewButton;
+  OriginalPageNameLabel, OriginalPageDescriptionLabel: string;
+  OriginalCancelButtonEnabled: Boolean;
+  OriginalCancelButtonModalResult: Integer;
+  ctrl: TWinControl;
+begin
+  RemoveSettingsChecked := True;
+  RemoveLogsChecked := True;
+
+  if UninstallSilent then
+    exit;
+
+  ctrl := UninstallProgressForm.CancelButton;
+  UninstallButton := TNewButton.Create(UninstallProgressForm);
+  UninstallButton.Parent := UninstallProgressForm;
+  UninstallButton.Left := ctrl.Left - ctrl.Width - ScaleX(10);
+  UninstallButton.Top := ctrl.Top;
+  UninstallButton.Width := ctrl.Width;
+  UninstallButton.Height := ctrl.Height;
+  UninstallButton.TabOrder := ctrl.TabOrder;
+  UninstallButton.Caption := ExpandConstant('{cm:UninstallButtonCaption}');
+  UninstallButton.ModalResult := mrOK;
+  UninstallProgressForm.CancelButton.TabOrder := UninstallButton.TabOrder + 1;
+
+  UninstallPage := TNewNotebookPage.Create(UninstallProgressForm);
+  UninstallPage.Notebook := UninstallProgressForm.InnerNotebook;
+  UninstallPage.Parent := UninstallProgressForm.InnerNotebook;
+  UninstallPage.Align := alClient;
+  UninstallProgressForm.InnerNotebook.ActivePage := UninstallPage;
+
+  ctrl := UninstallProgressForm.StatusLabel;
+
+  RemoveSettingsCheckBox := TNewCheckBox.Create(UninstallProgressForm);
+  RemoveSettingsCheckBox.Parent := UninstallPage;
+  RemoveSettingsCheckBox.Top := ctrl.Top;
+  RemoveSettingsCheckBox.Left := ctrl.Left;
+  RemoveSettingsCheckBox.Width := ctrl.Width;
+  RemoveSettingsCheckBox.Height := ScaleY(23);
+  RemoveSettingsCheckBox.Caption := ExpandConstant('{cm:UninstallRemoveSettings}');
+  RemoveSettingsCheckBox.Checked := True;
+  RemoveSettingsCheckBox.TabStop := False;
+
+  RemoveLogsCheckBox := TNewCheckBox.Create(UninstallProgressForm);
+  RemoveLogsCheckBox.Parent := UninstallPage;
+  RemoveLogsCheckBox.Top := RemoveSettingsCheckBox.Top + RemoveSettingsCheckBox.Height + ScaleY(14);
+  RemoveLogsCheckBox.Left := ctrl.Left;
+  RemoveLogsCheckBox.Width := ctrl.Width;
+  RemoveLogsCheckBox.Height := ScaleY(23);
+  RemoveLogsCheckBox.Caption := ExpandConstant('{cm:UninstallRemoveLogs}');
+  RemoveLogsCheckBox.Checked := True;
+  RemoveLogsCheckBox.TabStop := False;
+
+  OriginalPageNameLabel := UninstallProgressForm.PageNameLabel.Caption;
+  OriginalPageDescriptionLabel := UninstallProgressForm.PageDescriptionLabel.Caption;
+  OriginalCancelButtonEnabled := UninstallProgressForm.CancelButton.Enabled;
+  OriginalCancelButtonModalResult := UninstallProgressForm.CancelButton.ModalResult;
+
+  UninstallProgressForm.PageNameLabel.Caption := ExpandConstant('{cm:UninstallDataPageName}');
+  UninstallProgressForm.PageDescriptionLabel.Caption := ExpandConstant('{cm:UninstallDataPageDescription}');
+  UninstallProgressForm.CancelButton.Enabled := True;
+  UninstallProgressForm.CancelButton.ModalResult := mrCancel;
+  UninstallProgressForm.ActiveControl := UninstallButton;
+
+  if UninstallProgressForm.ShowModal = mrCancel then
+    Abort;
+
+  RemoveSettingsChecked := RemoveSettingsCheckBox.Checked;
+  RemoveLogsChecked := RemoveLogsCheckBox.Checked;
+
+  UninstallButton.Visible := False;
+  UninstallProgressForm.PageNameLabel.Caption := OriginalPageNameLabel;
+  UninstallProgressForm.PageDescriptionLabel.Caption := OriginalPageDescriptionLabel;
+  UninstallProgressForm.CancelButton.Enabled := OriginalCancelButtonEnabled;
+  UninstallProgressForm.CancelButton.ModalResult := OriginalCancelButtonModalResult;
+  UninstallProgressForm.InnerNotebook.ActivePage := UninstallProgressForm.InstallingPage;
+end;
+
 
 
 function SwitchHasValue(Name: string; Value: string): Boolean;
@@ -227,6 +312,13 @@ var
 begin
   if CurUninstallStep <> usUninstall then
     exit;
+  DelTree(ExpandConstant('{app}\updates'), True, True, True);
+  DelTree(ExpandConstant('{app}\install'), True, True, True);
+  DelTree(ExpandConstant('{app}\old'), True, True, True);
+  if RemoveSettingsChecked then
+    DelTree(ExpandConstant('{userappdata}\StealCode'), True, True, True);
+  if RemoveLogsChecked then
+    DelTree(ExpandConstant('{localappdata}\StealCode'), True, True, True);
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', Path) then
     exit;
   InstallDir := ExpandConstant('{app}');

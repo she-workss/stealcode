@@ -22,7 +22,6 @@ default-members = [
     "crates/settings",
     "crates/telemetry",
     "crates/tui",
-    "crates/voice",
     "crates/utils",
 ]
 resolver = "3"

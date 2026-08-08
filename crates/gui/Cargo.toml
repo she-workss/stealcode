@@ -25,7 +25,10 @@ settings.workspace = true
 sound.workspace = true
 tracing.workspace = true
 tray-icon = { version = "0.24", default-features = false, features = ["gtk", "libxdo"] }
-voice.workspace = true
+voice = { workspace = true, optional = true }
+
+[features]
+voice = ["dep:voice"]
 
 [lints]
 workspace = true

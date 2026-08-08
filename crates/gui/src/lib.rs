@@ -8,15 +8,18 @@ use std::{
 };
 
 use gpui::{
-    App, AsyncApp, Bounds, Context, Entity, IntoElement, Render, SharedString,
+    App, AsyncApp, Bounds, Context, IntoElement, Render, SharedString,
     TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div,
     point, prelude::*, px, size,
 };
+#[cfg(feature = "voice")]
+use gpui::Entity;
 use gpui_component::{
     Disableable, Root, StyledExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputState},
 };
+#[cfg(feature = "voice")]
+use gpui_component::input::{Input, InputState};
 use settings::Settings;
 use sound::sounds::SoundName;
 use tracing::error;
@@ -24,6 +27,7 @@ use tray_icon::{
     TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem},
 };
+#[cfg(feature = "voice")]
 use voice::VoiceManager;
 
 const APP_USER_MODEL_ID: &str = "he-thinks.StealCode";
@@ -32,6 +36,7 @@ const APP_USER_MODEL_ID: &str = "he-thinks.StealCode";
 /// updates and asks the view to redraw. Mirrors the TUI's per-loop-iteration
 /// `state.voice.poll_events()` call, just adapted to GPUI's async model
 /// instead of a blocking terminal event loop.
+#[cfg(feature = "voice")]
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[cfg(target_os = "macos")]
@@ -232,18 +237,21 @@ impl UpdateManager {
 
 #[derive(Debug)]
 struct StealcodeApp {
+    #[cfg(feature = "voice")]
     voice: VoiceManager,
     /// Backing state for the read-only transcript textarea. Its buffer is
     /// written to from the polling task below via `set_value` whenever
     /// `VoiceManager::text` changes - there's no per-render override for
     /// `Input` the way some other gpui-component widgets have (e.g.
     /// `Clipboard::value`), so this is the only way to keep it in sync.
+    #[cfg(feature = "voice")]
     voice_input: Entity<InputState>,
     updates: UpdateManager,
 }
 
 impl StealcodeApp {
     fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+        #[cfg(feature = "voice")]
         let voice_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .multi_line(true)
@@ -263,6 +271,7 @@ impl StealcodeApp {
         // needed specifically because `InputState::set_value` requires a
         // `&mut Window`, not just a `Context` - plain `cx.spawn` only
         // hands back an `AsyncApp`, which has no window attached.
+        #[cfg(feature = "voice")]
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(VOICE_POLL_INTERVAL).await;
@@ -288,7 +297,9 @@ impl StealcodeApp {
         updates.status = "Auto-update: ON".to_string();
 
         Self {
+            #[cfg(feature = "voice")]
             voice: VoiceManager::new(),
+            #[cfg(feature = "voice")]
             voice_input,
             updates,
         }
@@ -301,7 +312,9 @@ impl Render for StealcodeApp {
         _: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        #[cfg(feature = "voice")]
         let is_recording = self.voice.is_recording;
+        #[cfg(feature = "voice")]
         let toggle_label = if is_recording {
             "Stop voice recognition"
         } else {
@@ -329,29 +342,34 @@ impl Render for StealcodeApp {
                         .on_click(move |_, _, _| sound::engine::play(sound))
                 }),
             ))
-            .child(
+            .child({
+                #[cfg(feature = "voice")]
+                {
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .w(px(420.))
+                        .child(
+                            Button::new("voice_toggle_btn")
+                                .label(toggle_label)
+                                .when(is_recording, |btn| btn.danger())
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.voice.toggle();
+                                    cx.notify();
+                                })),
+                        )
+                        .child(SharedString::from(self.voice.status.clone()))
+                        .child(
+                            // Content is kept in sync by the polling task's
+                            // `set_value` call above, not here - `Input` has no
+                            // per-render value override, unlike some other
+                            // gpui-component widgets (e.g. `Clipboard::value`).
+                            Input::new(&self.voice_input),
+                        )
+                }
+                #[cfg(not(feature = "voice"))]
                 div()
-                    .v_flex()
-                    .gap_2()
-                    .w(px(420.))
-                    .child(
-                        Button::new("voice_toggle_btn")
-                            .label(toggle_label)
-                            .when(is_recording, |btn| btn.danger())
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.voice.toggle();
-                                cx.notify();
-                            })),
-                    )
-                    .child(SharedString::from(self.voice.status.clone()))
-                    .child(
-                        // Content is kept in sync by the polling task's
-                        // `set_value` call above, not here - `Input` has no
-                        // per-render value override, unlike some other
-                        // gpui-component widgets (e.g. `Clipboard::value`).
-                        Input::new(&self.voice_input),
-                    ),
-            )
+            })
             .child(
                 div()
                     .v_flex()

@@ -26,6 +26,7 @@ use ratatui::{
 };
 use settings::Settings;
 use sound::{engine, sounds::SoundName};
+#[cfg(feature = "voice")]
 use voice::VoiceManager;
 
 type AppTerminal = Terminal<TerminaBackend<PlatformTerminal>>;
@@ -425,6 +426,7 @@ struct AppState {
     counter: u32,
     button_rects: Vec<(SoundName, Rect)>,
     last_played: Option<SoundName>,
+    #[cfg(feature = "voice")]
     voice: VoiceManager,
     updates: UpdateManagerTui,
 }
@@ -441,6 +443,7 @@ impl AppState {
             counter: 0,
             button_rects: Vec::new(),
             last_played: None,
+            #[cfg(feature = "voice")]
             voice: VoiceManager::new(),
             updates: UpdateManagerTui::new(true),
         }
@@ -511,12 +514,15 @@ fn handle_action(
             state.action_label = "Ctrl+P/F/H/T/V/U/?/C".into();
         }
         Action::TogglePushToTalk => {
-            state.voice.toggle();
-            state.action_label = if state.voice.is_recording {
-                "PTT: Recording...".into()
-            } else {
-                "PTT: Processing...".into()
-            };
+            #[cfg(feature = "voice")]
+            {
+                state.voice.toggle();
+                state.action_label = if state.voice.is_recording {
+                    "PTT: Recording...".into()
+                } else {
+                    "PTT: Processing...".into()
+                };
+            }
         }
         Action::CheckForUpdates => {
             state.updates.check_now();
@@ -661,6 +667,7 @@ fn run(
 ) -> Result<()> {
     loop {
         terminal.draw(|f| render(f, state))?;
+        #[cfg(feature = "voice")]
         state.voice.poll_events();
         state.updates.poll_events();
         if events.poll(Some(Duration::from_millis(100)), |_| true)? {
@@ -742,32 +749,35 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
         None => "Mouse: -".into(),
     };
     render_panel(f, chunks[3], "Mouse", &mouse, s.accent_style(), s);
-    let voice_content = format!(
-        "[{}] {}\n{}",
-        if state.voice.is_recording {
-            "●"
-        } else {
-            "○"
-        },
-        state.voice.status,
-        if state.voice.text.is_empty() {
-            " "
-        } else {
-            &state.voice.text
-        }
-    );
-    render_panel(
-        f,
-        chunks[4],
-        "Voice Input (Ctrl+G)",
-        &voice_content,
-        if state.voice.is_recording {
-            s.accent_style()
-        } else {
-            s.block_style()
-        },
-        s,
-    );
+    #[cfg(feature = "voice")]
+    {
+        let voice_content = format!(
+            "[{}] {}\n{}",
+            if state.voice.is_recording {
+                "●"
+            } else {
+                "○"
+            },
+            state.voice.status,
+            if state.voice.text.is_empty() {
+                " "
+            } else {
+                &state.voice.text
+            }
+        );
+        render_panel(
+            f,
+            chunks[4],
+            "Voice Input (Ctrl+G)",
+            &voice_content,
+            if state.voice.is_recording {
+                s.accent_style()
+            } else {
+                s.block_style()
+            },
+            s,
+        );
+    }
     let update_content = format!(
         "Auto-update: {}  {}",
         if state.updates.auto_update_enabled {
@@ -786,7 +796,12 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
         s,
     );
     render_sound_buttons(f, chunks[6], state, s);
-    f.render_widget(Paragraph::new(format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())).style(s.hint_style()), chunks[7]);
+    let hint = if cfg!(feature = "voice") {
+        format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())
+    } else {
+        format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())
+    };
+    f.render_widget(Paragraph::new(hint).style(s.hint_style()), chunks[7]);
 }
 
 fn render_sound_buttons(

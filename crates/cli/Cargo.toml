@@ -21,10 +21,11 @@ path = "src/main.rs"
 
 [features]
 default = ["tui"]
-all = ["desktop", "server", "tui", "web"]
+all = ["desktop", "server", "tui", "voice", "web"]
 desktop = ["dep:gui"]
 server = ["dep:server"]
 tui = ["dep:tui"]
+voice = ["dep:voice", "tui?/voice", "gui?/voice"]
 web = []
 
 [dependencies]
@@ -51,6 +52,7 @@ tokio.workspace = true
 tower-http = { version = "0.7", features = ["fs", "trace"], optional = true }
 tracing.workspace = true
 tui = { workspace = true, optional = true }
+voice = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }
