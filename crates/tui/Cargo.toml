@@ -6,6 +6,9 @@ authors.workspace = true
 homepage.workspace = true
 license.workspace = true
 
+[features]
+voice = ["dep:voice"]
+
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
@@ -16,9 +19,6 @@ semver.workspace = true
 settings.workspace = true
 sound.workspace = true
 voice = { workspace = true, optional = true }
-
-[features]
-voice = ["dep:voice"]
 
 [lints]
 workspace = true

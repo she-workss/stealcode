@@ -9,6 +9,9 @@ license.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[features]
+voice = ["dep:voice"]
+
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
@@ -26,9 +29,6 @@ sound.workspace = true
 tracing.workspace = true
 tray-icon = { version = "0.24", default-features = false, features = ["gtk", "libxdo"] }
 voice = { workspace = true, optional = true }
-
-[features]
-voice = ["dep:voice"]
 
 [lints]
 workspace = true
