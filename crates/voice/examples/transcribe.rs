@@ -7,20 +7,15 @@ use candle_transformers::models::whisper::{self as mwhisper};
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
-        println!(
-            "Использование: cargo run --example transcribe -- <путь_к_файлу.wav>"
-        );
+        println!("Usage: cargo run --example transcribe -- <input.wav>");
         std::process::exit(1);
     }
     let path = &args[1];
-
-    println!("Загрузка WAV файла: {}", path);
+    println!("Load WAV: {}", path);
     let mut reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
     let sample_rate = spec.sample_rate;
     let channels = spec.channels;
-
-    // Читаем сэмплы и приводим к f32 (от -1.0 до 1.0)
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => {
             reader.samples::<f32>().filter_map(|s| s.ok()).collect()
@@ -31,17 +26,13 @@ fn main() -> Result<()> {
             .map(|s| s as f32 / 32768.0)
             .collect(),
     };
-
-    // Конвертация в Mono
     let mono: Vec<f32> = if channels == 2 {
         samples.chunks(2).map(|c| (c[0] + c[1]) / 2.0).collect()
     } else {
         samples
     };
-
-    // Ресемплинг в 16kHz (если файл в другом формате)
     let pcm_16k = if sample_rate != 16000 {
-        println!("Ресемплинг с {} Hz до 16000 Hz...", sample_rate);
+        println!("Resample from {} Hz to 16000 Hz...", sample_rate);
         let ratio = 16000.0 / sample_rate as f32;
         let out_len = (mono.len() as f32 * ratio) as usize;
         let mut resampled = Vec::with_capacity(out_len);
@@ -56,15 +47,12 @@ fn main() -> Result<()> {
     } else {
         mono
     };
-
-    println!("Загрузка модели...");
-    let (tx, _rx) = channel(); // Фейковый канал для статусов
+    println!("Load model...");
+    let (tx, _rx) = channel();
     let model_cache_dir = paths::data_dir().join("models").join("whisper");
     std::fs::create_dir_all(&model_cache_dir)?;
-
     let mut lm = voice::load_model(&model_cache_dir, &tx)?;
-
-    println!("Обработка аудио...");
+    println!("Audio processing...");
     let mel =
         mwhisper::audio::pcm_to_mel(&lm.config, &pcm_16k, &lm.mel_filters);
     let mel_len = mel.len();
@@ -73,13 +61,9 @@ fn main() -> Result<()> {
         (1, lm.config.num_mel_bins, mel_len / lm.config.num_mel_bins),
         &lm.device,
     )?;
-
-    println!("Распознавание речи...");
+    println!("Speech recognition...\n");
     let text = lm.decoder.decode(&mel)?;
-
-    println!("\n--- Результат распознавания ---");
+    println!("Result:");
     println!("{}", text);
-    println!("------------------------------");
-
     Ok(())
 }

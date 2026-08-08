@@ -7,19 +7,19 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "voice")]
+use gpui::Entity;
 use gpui::{
     App, AsyncApp, Bounds, Context, IntoElement, Render, SharedString,
     TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div,
     point, prelude::*, px, size,
 };
 #[cfg(feature = "voice")]
-use gpui::Entity;
+use gpui_component::input::{Input, InputState};
 use gpui_component::{
     Disableable, Root, StyledExt,
     button::{Button, ButtonVariants},
 };
-#[cfg(feature = "voice")]
-use gpui_component::input::{Input, InputState};
 use settings::Settings;
 use sound::sounds::SoundName;
 use tracing::error;

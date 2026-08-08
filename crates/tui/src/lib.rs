@@ -797,9 +797,15 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
     );
     render_sound_buttons(f, chunks[6], state, s);
     let hint = if cfg!(feature = "voice") {
-        format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())
+        format!(
+            "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}",
+            state.mode_label()
+        )
     } else {
-        format!("Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}", state.mode_label())
+        format!(
+            "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}",
+            state.mode_label()
+        )
     };
     f.render_widget(Paragraph::new(hint).style(s.hint_style()), chunks[7]);
 }

@@ -117,6 +117,7 @@ impl VoiceManager {
     }
 }
 
+#[derive(Debug)]
 pub struct Decoder {
     model: mwhisper::quantized_model::Whisper,
     tokenizer: Tokenizer,
@@ -282,6 +283,7 @@ fn download_file(url: &str, path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct LoadedModel {
     pub decoder: Decoder,
     pub config: Config,
@@ -296,9 +298,8 @@ pub fn load_model(
     let model_id = "oxide-lab/whisper-base-GGUF".to_string();
     let weights_path = model_cache_dir.join("whisper-base-q8_0.gguf");
     if !weights_path.exists() {
-        let _ = tx_event.send(VoiceEvent::Status(
-            "Скачивание весов (~46 МБ)...".to_string(),
-        ));
+        let _ = tx_event
+            .send(VoiceEvent::Status("Download weights...".to_string()));
         let url = format!(
             "https://huggingface.co/{}/resolve/main/whisper-base-q8_0.gguf",
             model_id
