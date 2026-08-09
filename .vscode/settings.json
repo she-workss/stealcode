@@ -57,6 +57,7 @@
         "libasound",
         "localappdata",
         "lowpass",
+        "matrixmultiply",
         "mdns",
         "mimalloc",
         "nextest",

@@ -1,69 +1,77 @@
-use std::sync::mpsc::channel;
+//! Offline transcription of a 16 kHz mono WAV via the nemotron port.
+//!
+//! Usage: cargo run -p voice --example transcribe -- <model.gguf> <audio.wav>
 
-use anyhow::Result;
-use candle_core::Tensor;
-use candle_transformers::models::whisper::{self as mwhisper};
+use std::path::Path;
+
+use anyhow::{Context, Result};
 
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: cargo run --example transcribe -- <input.wav>");
-        std::process::exit(1);
-    }
-    let path = &args[1];
-    println!("Load WAV: {}", path);
-    let mut reader = hound::WavReader::open(path)?;
+    let mut args = std::env::args().skip(1);
+    let model_path = args.next().unwrap_or_else(|| {
+        voice::default_model_path().to_string_lossy().into_owned()
+    });
+    let wav_path = args
+        .next()
+        .with_context(|| "usage: transcribe <model.gguf> <audio.wav>")?;
+
+    let mut model = voice::nemotron::Nemotron::load(Path::new(&model_path))?;
+
+    let mut reader = hound::WavReader::open(&wav_path)?;
     let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let channels = spec.channels;
-    let samples: Vec<f32> = match spec.sample_format {
+    if spec.channels != 1 {
+        anyhow::bail!("expected mono, got {} ch", spec.channels);
+    }
+    let pcm: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => {
-            reader.samples::<f32>().filter_map(|s| s.ok()).collect()
+            reader.samples::<f32>().collect::<Result<_, _>>()?
         }
-        hound::SampleFormat::Int => reader
-            .samples::<i16>()
-            .filter_map(|s| s.ok())
-            .map(|s| s as f32 / 32768.0)
-            .collect(),
+        hound::SampleFormat::Int => {
+            let scale = match spec.bits_per_sample {
+                8 => 1.0 / (i8::MAX as f32),
+                16 => 1.0 / (i16::MAX as f32),
+                24 | 32 => 1.0 / (i32::MAX as f32),
+                b => anyhow::bail!("unsupported bits_per_sample {b}"),
+            };
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect::<Result<_, _>>()?
+        }
     };
-    let mono: Vec<f32> = if channels == 2 {
-        samples.chunks(2).map(|c| (c[0] + c[1]) / 2.0).collect()
-    } else {
-        samples
-    };
-    let pcm_16k = if sample_rate != 16000 {
-        println!("Resample from {} Hz to 16000 Hz...", sample_rate);
-        let ratio = 16000.0 / sample_rate as f32;
-        let out_len = (mono.len() as f32 * ratio) as usize;
+    let pcm = if spec.sample_rate != 16000 {
+        eprintln!("resampling {} Hz -> 16 kHz", spec.sample_rate);
+        let ratio = 16000.0 / spec.sample_rate as f32;
+        let out_len = (pcm.len() as f32 * ratio) as usize;
         let mut resampled = Vec::with_capacity(out_len);
         for i in 0..out_len {
             let src_idx = i as f32 / ratio;
             let idx0 = src_idx.floor() as usize;
-            let idx1 = (idx0 + 1).min(mono.len() - 1);
+            let idx1 = (idx0 + 1).min(pcm.len() - 1);
             let frac = src_idx - idx0 as f32;
-            resampled.push(mono[idx0] * (1.0 - frac) + mono[idx1] * frac);
+            resampled.push(pcm[idx0] * (1.0 - frac) + pcm[idx1] * frac);
         }
         resampled
     } else {
-        mono
+        pcm
     };
-    println!("Load model...");
-    let (tx, _rx) = channel();
-    let model_cache_dir = paths::data_dir().join("models").join("whisper");
-    std::fs::create_dir_all(&model_cache_dir)?;
-    let mut lm = voice::load_model(&model_cache_dir, &tx)?;
-    println!("Audio processing...");
-    let mel =
-        mwhisper::audio::pcm_to_mel(&lm.config, &pcm_16k, &lm.mel_filters);
-    let mel_len = mel.len();
-    let mel = Tensor::from_vec(
-        mel,
-        (1, lm.config.num_mel_bins, mel_len / lm.config.num_mel_bins),
-        &lm.device,
-    )?;
-    println!("Speech recognition...\n");
-    let text = lm.decoder.decode(&mel)?;
-    println!("Result:");
+    eprintln!(
+        "{} samples ({:.2} s), {} mel frames",
+        pcm.len(),
+        pcm.len() as f64 / 16000.0,
+        model.frontend.n_frames(pcm.len())
+    );
+
+    let t0 = std::time::Instant::now();
+    let raw = model.transcribe_raw(&pcm, None)?;
+    let ids: Vec<u32> = raw.iter().map(|t| t.id).collect();
+    let text = model.tokenizer.decode_transcript(&ids, true);
+    let elapsed = t0.elapsed();
+    eprintln!(
+        "transcribe {:.2}s аудио: {elapsed:?} ({:.2}x realtime)",
+        pcm.len() as f64 / 16000.0,
+        pcm.len() as f64 / 16000.0 / elapsed.as_secs_f64()
+    );
     println!("{}", text);
     Ok(())
 }
