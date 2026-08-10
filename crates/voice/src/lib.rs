@@ -1,5 +1,8 @@
 pub mod nemotron;
 
+#[cfg(feature = "gpu")]
+pub mod gpu;
+
 use std::{
     sync::{
         Arc, Mutex,

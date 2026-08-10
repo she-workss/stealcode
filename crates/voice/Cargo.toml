@@ -6,6 +6,10 @@ authors.workspace = true
 homepage.workspace = true
 license.workspace = true
 
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:pollster"]
+
 [dependencies]
 anyhow.workspace = true
 cpal = { version = "0.18", default-features = false }
@@ -14,8 +18,18 @@ matrixmultiply = { version = "0.3", default-features = false, features = [
     "threading",
 ] }
 memmap2 = { version = "0.9", default-features = false }
-rayon = { version = "1.12", default-features = false }
+paths.workspace = true
+pollster = { version = "0.4", default-features = false, optional = true }
+rayon = { version = "1", default-features = false }
+reqwest.workspace = true
 tracing.workspace = true
+wgpu = { version = "30", default-features = false, features = [
+    "dx12",
+    "metal",
+    "vulkan",
+    "gles",
+    "wgsl",
+], optional = true }
 
 [dev-dependencies]
 hound = { version = "3.5", default-features = false }
