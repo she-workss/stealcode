@@ -20,6 +20,7 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result, bail};
+use memmap2::Mmap;
 
 const GGUF_MAGIC: u32 = 0x4655_4747;
 
@@ -103,7 +104,7 @@ pub struct TensorMeta {
 pub struct Gguf {
     pub kv: HashMap<String, GgufValue>,
     pub tensors: Vec<TensorMeta>,
-    bytes: Vec<u8>,
+    bytes: Mmap,
     data_start: usize,
 }
 
@@ -195,15 +196,30 @@ impl<'a> Reader<'a> {
 }
 
 impl Gguf {
+    /// Memory-map the file (read-only); tensor data is sliced out of the
+    /// mapping lazily, so loading costs no extra 1.4 GB heap copy and the
+    /// peak RAM stays near the weights' own footprint.
     pub fn open(path: &Path) -> Result<Self> {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("read GGUF {}", path.display()))?;
-        Self::parse(bytes)
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("open GGUF {}", path.display()))?;
+        // SAFETY: the mapping is read-only and no other code mutates the
+        // file while it is open.
+        let bytes = unsafe { Mmap::map(&file) }
+            .with_context(|| format!("mmap GGUF {}", path.display()))?;
+        let (kv, tensors, data_start) = Self::parse(&bytes)?;
+        Ok(Self {
+            kv,
+            tensors,
+            bytes,
+            data_start,
+        })
     }
 
-    fn parse(bytes: Vec<u8>) -> Result<Self> {
+    fn parse(
+        slice: &[u8],
+    ) -> Result<(HashMap<String, GgufValue>, Vec<TensorMeta>, usize)> {
         let mut r = Reader {
-            bytes: &bytes,
+            bytes: slice,
             pos: 0,
         };
         let magic = r.u32()?;
@@ -251,12 +267,7 @@ impl Gguf {
         }
 
         let data_start = (r.pos + 31) & !31;
-        Ok(Self {
-            kv,
-            tensors,
-            bytes,
-            data_start,
-        })
+        Ok((kv, tensors, data_start))
     }
 
     pub fn tensor(&self, name: &str) -> Option<&TensorMeta> {

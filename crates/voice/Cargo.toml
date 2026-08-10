@@ -9,14 +9,18 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 cpal = { version = "0.18", default-features = false }
-matrixmultiply = { version = "0.3", features = ["threading"] }
+matrixmultiply = { version = "0.3", default-features = false, features = [
+    "avx512",
+    "threading",
+] }
+memmap2 = { version = "0.9", default-features = false }
 paths.workspace = true
-rayon = "1"
+rayon = { version = "1", default-features = false }
 reqwest.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-hound = "3.5"
+hound = { version = "3.5", default-features = false }
 
 [lints]
 workspace = true

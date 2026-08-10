@@ -22,6 +22,12 @@ rustflags = [
 [profile.dev.package.pulp]
 codegen-backend = "llvm"
 
+# voice's AVX2 kernels use intrinsics Cranelift doesn't implement
+# (`psign.b`, `permps`), which trap at runtime in dev builds. Build it
+# with LLVM so dev examples/apps actually run.
+[profile.dev.package.voice]
+codegen-backend = "llvm"
+
 [unstable]
 # build-std = ["std", "panic_abort"]
 # build-std-features = ["optimize_for_size"]

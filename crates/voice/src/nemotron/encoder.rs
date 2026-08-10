@@ -695,42 +695,48 @@ impl Encoder {
         }
         timing::tick("scores");
         dmp("enc_scores.bin", &scores);
-        // softmax over k + weighted sum of v (только по полосе).
+        // softmax over k + weighted sum of v (только по полосе). Each
+        // row (qq) works on its own disjoint slices, so the in-place exp
+        // cache below stays safe under rayon.
         let mut attn_out = vec![0.0f32; t * d];
-        let compute_attn = |qq: usize, row: &mut [f32]| {
+        let softmax_row = |qq: usize, srow: &mut [f32], row: &mut [f32]| {
             let (k_min, k_max) = band(qq);
             for h in 0..n_heads {
                 let hd = h * head_dim;
                 let mut maxv = f32::NEG_INFINITY;
                 for kk in k_min..k_max {
-                    maxv = maxv.max(scores[(qq * t + kk) * n_heads + h]);
+                    maxv = maxv.max(srow[kk * n_heads + h]);
                 }
                 let mut sum = 0.0f32;
                 for kk in k_min..k_max {
-                    sum += (scores[(qq * t + kk) * n_heads + h] - maxv).exp();
+                    let e = (srow[kk * n_heads + h] - maxv).exp();
+                    srow[kk * n_heads + h] = e;
+                    sum += e;
                 }
                 let inv = 1.0 / sum;
                 for dd in 0..head_dim {
                     let mut acc = 0.0f32;
                     for kk in k_min..k_max {
-                        let wgt = ((scores[(qq * t + kk) * n_heads + h]
-                            - maxv)
-                            .exp())
-                            * inv;
-                        acc += wgt * v[kk * d + hd + dd];
+                        acc +=
+                            srow[kk * n_heads + h] * inv * v[kk * d + hd + dd];
                     }
                     row[hd + dd] = acc;
                 }
             }
         };
         if t >= 8 {
-            attn_out
-                .par_chunks_mut(d)
+            scores
+                .par_chunks_mut(t * n_heads)
+                .zip(attn_out.par_chunks_mut(d))
                 .enumerate()
-                .for_each(|(qq, row)| compute_attn(qq, row));
+                .for_each(|(qq, (srow, row))| softmax_row(qq, srow, row));
         } else {
             for qq in 0..t {
-                compute_attn(qq, &mut attn_out[qq * d..]);
+                softmax_row(
+                    qq,
+                    &mut scores[qq * t * n_heads..(qq + 1) * t * n_heads],
+                    &mut attn_out[qq * d..(qq + 1) * d],
+                );
             }
         }
         timing::tick("softmax_v");
@@ -819,10 +825,10 @@ impl Encoder {
 
 /// Transpose [rows, cols] time-major -> [cols, rows] row-major.
 fn transpose(x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; rows * cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            out[c * rows + r] = x[r * cols + c];
+    let mut out = Vec::with_capacity(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            out.push(x[r * cols + c]);
         }
     }
     out
@@ -839,10 +845,10 @@ fn transpose_into(
     out: &mut Vec<f32>,
 ) -> Vec<f32> {
     out.clear();
-    out.resize(rows * cols, 0.0);
-    for r in 0..rows {
-        for c in 0..cols {
-            out[c * rows + r] = x[r * cols + c];
+    out.reserve(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            out.push(x[r * cols + c]);
         }
     }
     std::mem::take(out)

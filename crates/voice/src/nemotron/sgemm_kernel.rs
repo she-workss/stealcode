@@ -137,10 +137,9 @@ unsafe fn sgemm_kernel8_avx2(
         let mut acc = [_mm256_setzero_ps(); 8];
         for kk8 in 0..k8 {
             let kk = kk8 * 8;
-            let arow = &a[kk..kk + 8];
             let mut a8 = [_mm256_setzero_ps(); 8];
             for i in 0..8 {
-                a8[i] = _mm256_loadu_ps(arow.get_unchecked(i * k));
+                a8[i] = _mm256_loadu_ps(a.get_unchecked(i * k + kk));
             }
             let mut b8 = [_mm256_setzero_ps(); 8];
             for j in 0..8 {

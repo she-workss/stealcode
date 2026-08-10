@@ -9,6 +9,7 @@ pub mod config;
 pub mod decoder;
 pub mod encoder;
 pub mod gguf;
+pub mod live;
 pub mod preprocess;
 pub mod sgemm_kernel;
 pub mod streaming;

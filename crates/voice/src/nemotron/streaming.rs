@@ -61,6 +61,8 @@ pub struct StreamingEncoder {
     pos_p: Vec<Vec<f32>>,
     /// Shared Q8 dequantization scratch.
     scratch: Vec<f32>,
+    /// Reusable transpose scratch (see `transpose_into`).
+    trans: Vec<f32>,
     /// Absolute encoder-frame index of the first element in every cache.
     base: usize,
     /// Total frames in the caches.
@@ -82,6 +84,7 @@ impl StreamingEncoder {
             kv_lo: 0,
             pos_p: Vec::new(),
             scratch: Vec::new(),
+            trans: Vec::new(),
             base: 0,
             total: 0,
             d: 0,
@@ -285,6 +288,7 @@ impl StreamingEncoder {
                 k_hi,
                 pos_lo,
                 &mut self.scratch,
+                &mut self.trans,
                 b == 0,
                 &mut acc,
             )?;
@@ -396,6 +400,7 @@ fn block_new(
     k_hi: usize,
     pos_lo: isize,
     scratch: &mut Vec<f32>,
+    trans: &mut Vec<f32>,
     dump0: bool,
     acc: &mut Vec<(&'static str, std::time::Duration)>,
 ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
@@ -432,10 +437,10 @@ fn block_new(
         );
     }
     acc.push(("ln_ff1", t_a.elapsed()));
-    let xt = transpose(&y, c, d);
+    let xt = transpose_into(&y, c, d, trans);
     let mut h = Vec::new();
     let t0x = Instant::now();
-    b.ff1_lin1.forward_t(scratch, &xt, c, &mut h);
+    b.ff1_lin1.forward_t(scratch, xt, c, &mut h);
     acc.push(("ff1_lin1", t0x.elapsed()));
     for v in &mut h {
         *v = *v * (1.0 + (-*v).exp()).recip(); // silu
@@ -445,7 +450,7 @@ fn block_new(
     b.ff1_lin2.forward_t(scratch, &h, c, &mut f);
     acc.push(("ff1_lin2", t0x.elapsed()));
     let t_a = Instant::now();
-    let f = transpose(&f, d, c);
+    let f = transpose_into(&f, d, c, trans);
     for i in 0..c * d {
         y[i] = input[rel(s) * d + i] + 0.5 * f[i];
     }
@@ -465,17 +470,17 @@ fn block_new(
             .forward(&y[j * d..(j + 1) * d], &mut ln_new[j * d..(j + 1) * d]);
     }
     acc.push(("ln_att", t_a.elapsed()));
-    let ln_new_t = transpose(&ln_new, c, d);
+    let ln_new_t = transpose_into(&ln_new, c, d, trans);
     let mut k_new = Vec::new();
     let mut v_new = Vec::new();
     let t_a = Instant::now();
-    b.attn_k.forward_t(scratch, &ln_new_t, c, &mut k_new);
-    b.attn_v.forward_t(scratch, &ln_new_t, c, &mut v_new);
+    b.attn_k.forward_t(scratch, ln_new_t, c, &mut k_new);
+    b.attn_v.forward_t(scratch, ln_new_t, c, &mut v_new);
     let k_new = transpose(&k_new, d, c);
     let v_new = transpose(&v_new, d, c);
-    let lnst = transpose(&ln_new, c, d);
+    let lnst = transpose_into(&ln_new, c, d, trans);
     let mut q_new = Vec::new();
-    b.attn_q.forward_t(scratch, &lnst, c, &mut q_new);
+    b.attn_q.forward_t(scratch, lnst, c, &mut q_new);
     let q_new = transpose(&q_new, d, c);
     acc.push(("qkv", t_a.elapsed()));
     dmp0("senc_b0_ln", &ln_new);
@@ -524,13 +529,16 @@ fn block_new(
     dmp0("senc_b0_scores", &scores);
     acc.push(("scores", t_a.elapsed()));
 
-    // softmax over the band + weighted sum of v.
+    // softmax over the band + weighted sum of v. Each row (qi) works on
+    // its own disjoint slices, so the in-place exp cache below stays
+    // safe under rayon.
     let mut attn_out = vec![0.0f32; c * d];
     let t_a = Instant::now();
-    attn_out
-        .par_chunks_mut(d)
+    scores
+        .par_chunks_mut(band * n_heads)
+        .zip(attn_out.par_chunks_mut(d))
         .enumerate()
-        .for_each(|(qi, row)| {
+        .for_each(|(qi, (srow, row))| {
             let qq = s + qi;
             let q_chunk = qq / chunk;
             let k_min = q_chunk.saturating_sub(left_chunks) * chunk;
@@ -540,12 +548,13 @@ fn block_new(
                 let hd = h * head_dim;
                 let mut maxv = f32::NEG_INFINITY;
                 for kk in k0..k1 {
-                    maxv = maxv.max(scores[(qi * band + kk) * n_heads + h]);
+                    maxv = maxv.max(srow[kk * n_heads + h]);
                 }
                 let mut sum = 0.0f32;
                 for kk in k0..k1 {
-                    sum +=
-                        (scores[(qi * band + kk) * n_heads + h] - maxv).exp();
+                    let e = (srow[kk * n_heads + h] - maxv).exp();
+                    srow[kk * n_heads + h] = e;
+                    sum += e;
                 }
                 let inv = 1.0 / sum;
                 for dd in 0..head_dim {
@@ -557,22 +566,18 @@ fn block_new(
                         } else {
                             &v_new[(fr - s) * d + hd + dd]
                         };
-                        let wgt = ((scores[(qi * band + kk) * n_heads + h]
-                            - maxv)
-                            .exp())
-                            * inv;
-                        acc += wgt * vv;
+                        acc += srow[kk * n_heads + h] * inv * vv;
                     }
                     row[hd + dd] = acc;
                 }
             }
         });
     acc.push(("softmax", t_a.elapsed()));
-    let at = transpose(&attn_out, c, d);
+    let at = transpose_into(&attn_out, c, d, trans);
     let mut o = Vec::new();
     let t_a = Instant::now();
-    b.attn_out.forward_t(scratch, &at, c, &mut o);
-    let o = transpose(&o, d, c);
+    b.attn_out.forward_t(scratch, at, c, &mut o);
+    let o = transpose_into(&o, d, c, trans);
     for i in 0..c * d {
         y[i] += o[i];
     }
@@ -603,10 +608,10 @@ fn block_new(
             &mut lnc[(old_glu + j) * d..(old_glu + j + 1) * d],
         );
     }
-    let lt = transpose(&lnc, n_glu, d);
+    let lt = transpose_into(&lnc, n_glu, d, trans);
     let mut h2 = Vec::new();
-    b.pw1.forward_t(scratch, &lt, n_glu, &mut h2);
-    let h2 = transpose(&h2, 2 * d, n_glu);
+    b.pw1.forward_t(scratch, lt, n_glu, &mut h2);
+    let h2 = transpose_into(&h2, 2 * d, n_glu, trans);
     let mut glu = vec![0.0f32; n_glu * d];
     for tt in 0..n_glu {
         for i in 0..d {
@@ -628,10 +633,10 @@ fn block_new(
             o2[j * d + i] = ln2[i] * (1.0 + (-ln2[i]).exp()).recip(); // silu
         }
     }
-    let ot = transpose(&o2, c, d);
+    let ot = transpose_into(&o2, c, d, trans);
     let mut o2t = Vec::new();
-    b.pw2.forward_t(scratch, &ot, c, &mut o2t);
-    let o2 = transpose(&o2t, d, c);
+    b.pw2.forward_t(scratch, ot, c, &mut o2t);
+    let o2 = transpose_into(&o2t, d, c, trans);
     for i in 0..c * d {
         y[i] += o2[i];
     }
@@ -645,10 +650,10 @@ fn block_new(
             .forward(&y[j * d..(j + 1) * d], &mut y2[j * d..(j + 1) * d]);
     }
     acc.push(("ln_ff2", t_a.elapsed()));
-    let xt2 = transpose(&y2, c, d);
+    let xt2 = transpose_into(&y2, c, d, trans);
     let mut h3 = Vec::new();
     let t_a = Instant::now();
-    b.ff2_lin1.forward_t(scratch, &xt2, c, &mut h3);
+    b.ff2_lin1.forward_t(scratch, xt2, c, &mut h3);
     acc.push(("ff2_lin1", t_a.elapsed()));
     for v in &mut h3 {
         *v = *v * (1.0 + (-*v).exp()).recip(); // silu
@@ -657,7 +662,7 @@ fn block_new(
     let t_a = Instant::now();
     b.ff2_lin2.forward_t(scratch, &h3, c, &mut f3);
     acc.push(("ff2_lin2", t_a.elapsed()));
-    let f3 = transpose(&f3, d, c);
+    let f3 = transpose_into(&f3, d, c, trans);
     for i in 0..c * d {
         y2[i] = y[i] + 0.5 * f3[i];
     }
@@ -675,11 +680,28 @@ fn block_new(
 
 /// Transpose [rows, cols] time-major -> [cols, rows] row-major.
 fn transpose(x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; rows * cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            out[c * rows + r] = x[r * cols + c];
+    let mut out = Vec::with_capacity(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            out.push(x[r * cols + c]);
         }
     }
     out
+}
+
+/// Same as [`transpose`] but into a reusable scratch buffer.
+fn transpose_into<'a>(
+    x: &[f32],
+    rows: usize,
+    cols: usize,
+    trans: &'a mut Vec<f32>,
+) -> &'a mut Vec<f32> {
+    trans.clear();
+    trans.reserve(rows * cols);
+    for c in 0..cols {
+        for r in 0..rows {
+            trans.push(x[r * cols + c]);
+        }
+    }
+    trans
 }

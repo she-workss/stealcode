@@ -59,6 +59,7 @@
         "lowpass",
         "matrixmultiply",
         "mdns",
+        "memmap",
         "mimalloc",
         "nextest",
         "nontrapping",

@@ -15,8 +15,6 @@ const TICK: Duration = Duration::from_millis(200);
 const MIN_PARTIAL_SECS: f32 = 0.8;
 /// Минимальная пауза между промежуточными распознаваниями.
 const PARTIAL_INTERVAL: Duration = Duration::from_millis(1500);
-/// Окно скользящего хвоста для частичных распознаваний длинных записей.
-const PARTIAL_WINDOW_SECS: f32 = 8.0;
 
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -176,6 +174,10 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
     let mut stream: Option<cpal::Stream> = None;
     let mut last_partial = Instant::now();
     let mut ready_announced = false;
+    // Сколько интерливованных сэмплов уже передано транскрайберу.
+    // Стриминговый транскрайбер накапливает всё аудио, поэтому каждое
+    // задание несёт только новые сэмплы (без пере-энкодинга хвоста).
+    let mut sent_samples: usize = 0;
     loop {
         let cmd = if stream.is_some() {
             rx_cmd.recv_timeout(TICK)
@@ -189,6 +191,7 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
             Ok(VoiceCommand::Start) => {
                 if stream.is_none() {
                     audio_buffer.lock().unwrap().clear();
+                    sent_samples = 0;
                     let buf_clone = Arc::clone(&audio_buffer);
                     let stream_result = match supported_config.sample_format() {
                         cpal::SampleFormat::F32 => audio_device
@@ -226,9 +229,14 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
                 drop(stream.take());
                 let raw_audio = audio_buffer.lock().unwrap().clone();
                 if !raw_audio.is_empty() {
-                    let pcm_16k =
-                        to_mono_16k(&raw_audio, channels, sample_rate);
-                    if tx_job.send(TranscribeJob::Final(pcm_16k)).is_ok() {
+                    // Транскрайбер уже получил всё до sent_samples; передаём
+                    // только неотправленный хвост, затем flush.
+                    let new_pcm_16k = to_mono_16k(
+                        &raw_audio[sent_samples.min(raw_audio.len())..],
+                        channels,
+                        sample_rate,
+                    );
+                    if tx_job.send(TranscribeJob::Final(new_pcm_16k)).is_ok() {
                         // Ждём финальную транскрипцию, затем освобождаем
                         // модель (RAM падает к базовому уровню). Следующая
                         // запись снова загрузит модель (статус покажет
@@ -251,23 +259,26 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
                     && secs >= MIN_PARTIAL_SECS
                     && last_partial.elapsed() >= PARTIAL_INTERVAL
                 {
-                    let raw_audio = audio_buffer.lock().unwrap().clone();
-                    // На длинных записях распознаём только хвост (последние N
-                    // секунд).
-                    let start = if secs > PARTIAL_WINDOW_SECS {
-                        ((secs - PARTIAL_WINDOW_SECS)
-                            * sample_rate as f32
-                            * channels as f32) as usize
-                    } else {
-                        0
-                    };
-                    let pcm_16k =
-                        to_mono_16k(&raw_audio[start..], channels, sample_rate);
-                    // sync_channel(1): try_send падает, пока транскриптор занят
-                    // (1 задание в полёте/буфере) — пропускаем обновление.
-                    if tx_job.try_send(TranscribeJob::Partial(pcm_16k)).is_ok()
-                    {
-                        last_partial = Instant::now();
+                    let mut raw = audio_buffer.lock().unwrap();
+                    if raw.len() > sent_samples {
+                        // Шлём только новые сэмплы; стриминговый энкодер
+                        // до-кодирует их инкрементально.
+                        let pcm_16k = to_mono_16k(
+                            &raw[sent_samples..],
+                            channels,
+                            sample_rate,
+                        );
+                        // sync_channel(1): try_send падает, пока транскриптор
+                        // занят (1 задание в полёте/буфере) — пропускаем
+                        // обновление и ничего не теряем: sent_samples не
+                        // двигаем, хвост уйдёт следующим разом или на Stop.
+                        if tx_job
+                            .try_send(TranscribeJob::Partial(pcm_16k))
+                            .is_ok()
+                        {
+                            sent_samples = raw.len();
+                            last_partial = Instant::now();
+                        }
                     }
                 }
             }
@@ -283,65 +294,100 @@ fn transcribe_worker(
     model_ready: Arc<AtomicBool>,
 ) {
     let mut model: Option<nemotron::Nemotron> = None;
+    // Стриминговый транскрайбер держит состояние инкрементального
+    // энкодинга/декодинга отдельно от модели, поэтому оба живут рядом.
+    let mut live: Option<nemotron::live::LiveTranscriber> = None;
     while let Ok(job) = rx_job.recv() {
         match job {
             TranscribeJob::Unload => {
+                live = None;
                 model = None;
                 model_ready.store(false, Ordering::Relaxed);
                 info!("model unloaded (RAM released)");
-                continue;
             }
             TranscribeJob::Warmup => {
                 // Прогрев: загружаем модель (если её ещё нет) и ждём
                 // следующего задания.
                 if model.is_none() {
                     model = load_into(&tx_event, &model_ready);
-                    if model.is_none() {
-                        continue;
-                    }
                 }
-                continue;
             }
-            _ => {}
-        }
-        // Ленивая (пере)загрузка: первая транскрипция и каждая после
-        // Unload снова грузят модель.
-        if model.is_none() {
-            model = load_into(&tx_event, &model_ready);
-            if model.is_none() {
-                continue;
-            }
-        }
-        let Some(m) = model.as_mut() else { return };
-        let (pcm, final_job) = match job {
-            TranscribeJob::Partial(pcm) => (pcm, false),
-            TranscribeJob::Final(pcm) => (pcm, true),
-            TranscribeJob::Warmup | TranscribeJob::Unload => {
-                unreachable!("handled above")
-            }
-        };
-        let t_decode = Instant::now();
-        match m.transcribe(&pcm, None) {
-            Ok(tr) => {
-                info!(
-                    "Decode voice message (final={}): {:?}",
-                    final_job,
-                    t_decode.elapsed()
+            TranscribeJob::Partial(pcm) => {
+                process_stream(
+                    &mut model,
+                    &mut live,
+                    &tx_event,
+                    &model_ready,
+                    &pcm,
+                    false,
                 );
-                let event = if final_job {
-                    VoiceEvent::Transcribed(tr.text)
-                } else {
-                    VoiceEvent::Partial(tr.text)
-                };
-                let _ = tx_event.send(event);
             }
+            TranscribeJob::Final(pcm) => {
+                process_stream(
+                    &mut model,
+                    &mut live,
+                    &tx_event,
+                    &model_ready,
+                    &pcm,
+                    true,
+                );
+                let _ = tx_done.send(());
+            }
+        }
+    }
+}
+
+/// Прогоняет новые сэмплы через стриминговый транскрайбер (лениво
+/// грузит модель и создаёт состояние потока) и публикует событие.
+/// `final_job` — до-кодировать хвост и выдать финальный текст.
+fn process_stream(
+    model: &mut Option<nemotron::Nemotron>,
+    live: &mut Option<nemotron::live::LiveTranscriber>,
+    tx_event: &Sender<VoiceEvent>,
+    model_ready: &Arc<AtomicBool>,
+    pcm: &[f32],
+    final_job: bool,
+) {
+    if model.is_none() {
+        *model = load_into(tx_event, model_ready);
+    }
+    let Some(m) = model.as_mut() else { return };
+    if live.is_none() {
+        let prompt_id = match m.resolve_prompt_id(None) {
+            Ok(pid) => pid,
             Err(e) => {
                 let _ = tx_event
-                    .send(VoiceEvent::Error(format!("Decode error: {:?}", e)));
+                    .send(VoiceEvent::Error(format!("Prompt resolve: {e:?}")));
+                return;
             }
-        }
+        };
+        *live = Some(nemotron::live::LiveTranscriber::new(m, prompt_id));
+    }
+    let Some(tr) = live.as_mut() else { return };
+    let t_decode = Instant::now();
+    let result = (|| -> anyhow::Result<String> {
+        tr.push(m, pcm)?;
         if final_job {
-            let _ = tx_done.send(());
+            tr.flush(m)?;
+        }
+        Ok(tr.text(m))
+    })();
+    match result {
+        Ok(text) => {
+            info!(
+                "Decode voice message (final={final_job}): {:?}",
+                t_decode.elapsed()
+            );
+            let event = if final_job {
+                VoiceEvent::Transcribed(text)
+            } else {
+                VoiceEvent::Partial(text)
+            };
+            let _ = tx_event.send(event);
+        }
+        Err(e) => {
+            let _ = tx_event
+                .send(VoiceEvent::Error(format!("Decode error: {e:?}")));
         }
     }
 }
