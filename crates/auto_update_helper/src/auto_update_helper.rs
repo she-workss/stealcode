@@ -30,6 +30,7 @@ mod windows_impl {
     use std::borrow::Cow;
 
     use anyhow::{Context, Result};
+    use tracing::info;
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, GetMessageW, MB_ICONERROR, MB_SYSTEMMODAL, MSG,
         MessageBoxW,
@@ -49,26 +50,22 @@ mod windows_impl {
             .to_path_buf();
         let app_dir =
             helper_dir.parent().context("no parent dir")?.to_path_buf();
-
-        tracing::info!("======= Starting StealCode update =======");
+        info!("Starting StealCode update");
         let args = parse_args(std::env::args().skip(1));
         let hwnd =
             dialog::create_dialog_window(updater::jobs().len())?.0 as isize;
-
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let result = updater::perform_update(&app_dir, args.launch);
             tx.send(result).ok();
             dialog::notify_terminate(hwnd);
         });
-
         unsafe {
             let mut message = MSG::default();
             while GetMessageW(&mut message, None, 0, 0).as_bool() {
                 DispatchMessageW(&message);
             }
         }
-
         if let Ok(Err(error)) = rx.try_recv() {
             return Err(error);
         }

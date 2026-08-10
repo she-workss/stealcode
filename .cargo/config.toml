@@ -42,7 +42,7 @@ feature-unification = "workspace"
 [profile.dev]
 codegen-backend = "cranelift"
 
-[target.'cfg(target_os = "windows")']
+[target.'cfg(windows)']
 rustflags = [
     "--cfg=windows_slim_errors",
     "--cfg=tokio_unstable",

@@ -1,6 +1,5 @@
 //! A minimal Win32 progress window shown while `auto_update_helper` swaps
-//! files. Same general shape as Zed's dialog (a plain WNDCLASS with a
-//! progress bar control), written independently for StealCode.
+//! files. A plain WNDCLASS with a progress bar control.
 
 use anyhow::{Context, Result};
 use windows::{
@@ -29,7 +28,7 @@ pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
 static mut PROGRESS_BAR: HWND = HWND(std::ptr::null_mut());
 
-pub fn create_dialog_window(total_steps: usize) -> Result<HWND> {
+pub(crate) fn create_dialog_window(total_steps: usize) -> Result<HWND> {
     unsafe {
         let class_name = windows::core::w!("StealCode-Update-Dialog");
         let module =
@@ -41,12 +40,10 @@ pub fn create_dialog_window(total_steps: usize) -> Result<HWND> {
             ..Default::default()
         };
         RegisterClassW(&wc);
-
         let mut rect = RECT::default();
         GetWindowRect(GetDesktopWindow(), &mut rect)
             .context("unable to get desktop rect")?;
         let (width, height) = (400, 120);
-
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
@@ -62,7 +59,6 @@ pub fn create_dialog_window(total_steps: usize) -> Result<HWND> {
             None,
         )
         .context("unable to create dialog window")?;
-
         let progress_bar = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             PROGRESS_CLASS,
@@ -86,7 +82,6 @@ pub fn create_dialog_window(total_steps: usize) -> Result<HWND> {
         );
         SendMessageW(progress_bar, PBM_SETSTEP, Some(WPARAM(10)), None);
         PROGRESS_BAR = progress_bar;
-
         Ok(hwnd)
     }
 }

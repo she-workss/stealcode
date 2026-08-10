@@ -13,7 +13,10 @@ ratatui.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_with = "3.21"
+serde_with = { version = "3.22", default-features = false, features = [
+    "std",
+    "macros",
+] }
 tracing.workspace = true
 
 [lints]

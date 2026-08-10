@@ -1,11 +1,4 @@
-//! Job-based, rollback-capable file swap - the same shape Zed uses in its
-//! `auto_update_helper::updater`, written independently for StealCode.
-//!
-//! No Restart Manager here: Zed needs it because
-//! `explorer_command_injector.dll` is a COM shell extension that Explorer keeps
-//! loaded. StealCode's context menu is plain registry `command` strings -
-//! nothing but our own process ever has `stealcode.exe` open, so a short retry
-//! loop is enough to ride out the last moments of our own shutdown.
+//! Job-based, rollback-capable file swap.
 
 use std::{
     path::Path,
@@ -67,10 +60,6 @@ impl Job {
     }
 }
 
-/// StealCode only manages one file, so this list is much shorter than
-/// Zed's (which also juggles `bin\zed.exe`, `conpty.dll`, `OpenConsole.exe`
-/// for x64/arm64). Extend this if StealCode ever ships more than one
-/// binary into the install directory.
 #[must_use]
 pub fn jobs() -> Vec<Job> {
     vec![
@@ -94,7 +83,6 @@ pub fn perform_update_with_timeout(
 ) -> Result<()> {
     let jobs = jobs();
     let mut last_successful: Option<usize> = None;
-
     'outer: for (index, job) in jobs.iter().enumerate() {
         let start = Instant::now();
         loop {
@@ -116,7 +104,6 @@ pub fn perform_update_with_timeout(
             }
         }
     }
-
     if last_successful != Some(jobs.len() - 1) {
         if let Some(last) = last_successful {
             for job in jobs[..=last].iter().rev() {
@@ -129,7 +116,6 @@ pub fn perform_update_with_timeout(
         }
         anyhow::bail!("update failed, rolled back");
     }
-
     if launch {
         let _ =
             std::process::Command::new(app_dir.join("stealcode.exe")).spawn();
@@ -158,10 +144,8 @@ mod tests {
         std::fs::write(app_dir.join("install/stealcode.exe"), b"new-version")
             .unwrap();
         std::fs::create_dir_all(app_dir.join("updates")).unwrap();
-
         perform_update_with_timeout(app_dir, false, FAST_TIMEOUT)
             .expect("update should succeed");
-
         assert_eq!(
             std::fs::read(app_dir.join("stealcode.exe")).unwrap(),
             b"new-version"
@@ -177,11 +161,9 @@ mod tests {
         let app_dir = dir.path();
         std::fs::write(app_dir.join("stealcode.exe"), b"old-version").unwrap();
         // Deliberately no install\stealcode.exe: job 3 (move
-        // install\stealcode.exe -> stealcode.exe) will fail every retry
-        // and time out.
-
+        // install\stealcode.exe -> stealcode.exe) will fail every retry and
+        // time out.
         let result = perform_update_with_timeout(app_dir, false, FAST_TIMEOUT);
-
         assert!(result.is_err());
         // Job 1 (backing up stealcode.exe to old\) must have been rolled back.
         assert!(app_dir.join("stealcode.exe").exists());
@@ -200,7 +182,6 @@ mod tests {
         std::fs::create_dir_all(app_dir.join("install")).unwrap();
         std::fs::write(app_dir.join("install/stealcode.exe"), b"new").unwrap();
         std::fs::create_dir_all(app_dir.join("updates")).unwrap();
-
         // `stealcode.exe` after the swap is just a text file, not a real
         // executable, so if this incorrectly tried to launch it, `spawn()`
         // would either fail silently (ignored via `let _ =`) or launch

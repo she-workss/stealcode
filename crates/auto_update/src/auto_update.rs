@@ -1,22 +1,5 @@
-//! StealCode's self-updater, structured like Zed's `auto_update` crate
-//! (single-file `src/auto_update.rs`, paired with a separate
-//! `auto_update_helper` binary for the Windows-only file swap).
-//!
-//! This is an independent implementation written for StealCode, not a copy
-//! of Zed's GPL-3.0-licensed `crates/auto_update` - the architecture is the
-//! same idea (which isn't copyrightable), the code is StealCode's own, kept
-//! under the workspace's MIT license.
-//!
-//! Differences from Zed worth knowing about:
-//! - StealCode ships one executable, no COM shell extension DLL, no appx
-//!   package - so `auto_update_helper` doesn't need Windows Restart Manager.
-//!   Nothing but our own process ever holds a lock on `stealcode.exe`.
-//! - On Linux, Zed distributes a whole `zed.app/` folder under `~/.local` and
-//!   `rsync`s over it. StealCode ships a single binary that's just somewhere on
-//!   PATH, so a plain `tar.gz` + atomic rename is enough - there's no folder to
-//!   mirror.
-//! - Release channel awareness (stable vs nightly) lives in the separate
-//!   `release_channel` crate, matching Zed's split.
+//! StealCode's self-updater, paired with a separate `auto_update_helper` binary
+//! for the Windows-only file swap).
 
 use std::{
     env,
@@ -33,14 +16,8 @@ use tokio::io::AsyncWriteExt;
 
 const USER_AGENT_VALUE: &str = "stealcode-auto-update";
 
-// ---------------------------------------------------------------------
-// Settings: whether background polling is enabled at all. Manual checks
-// always work regardless of this. See `settings::Settings::auto_update`.
-// ---------------------------------------------------------------------
-
-/// Whether an update check was triggered by background polling or by the
-/// person explicitly asking ("Check for updates now"). Mirrors Zed's
-/// `UpdateCheckType`.
+/// Whether an update check was triggered by background polling or by the person
+/// explicitly asking ("Check for updates now").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateCheckType {
     Automatic,
@@ -54,8 +31,7 @@ impl UpdateCheckType {
     }
 }
 
-/// Reads the `auto_update` setting (default `true`), matching Zed's
-/// `content.auto_update: Option<bool>`.
+/// Reads the `auto_update` setting (default `true`).
 #[must_use]
 pub fn auto_update_setting_enabled(settings: &settings::Settings) -> bool {
     settings.auto_update.unwrap_or(true)
@@ -84,10 +60,6 @@ pub enum UpdateStatus {
         message: String,
     },
 }
-
-// ---------------------------------------------------------------------
-// GitHub release metadata + asset matching
-// ---------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReleaseAsset {
@@ -176,7 +148,7 @@ fn platform_arch_for(os: &str, arch: &str) -> Result<(Platform, Arch)> {
 }
 
 /// `StealCode-{arch}.exe` / `StealCode-{arch}.dmg` /
-/// `stealcode-linux-{arch}.tar.gz`, matching Zed's naming. Keep in sync with
+/// `stealcode-linux-{arch}.tar.gz`. Keep in sync with
 /// `.github/workflows/release.yml`.
 #[must_use]
 pub fn expected_asset_name(platform: Platform, arch: Arch) -> String {
@@ -224,10 +196,6 @@ pub fn newer_version_available(
     Ok(is_update_available(current, &candidate).then_some(candidate))
 }
 
-// ---------------------------------------------------------------------
-// GitHub networking
-// ---------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct GithubReleaseSource {
     pub owner: String,
@@ -254,6 +222,7 @@ impl GithubReleaseSource {
     }
 
     #[cfg(test)]
+    #[allow(unused)]
     fn with_api_base(mut self, api_base: impl Into<String>) -> Self {
         self.api_base = api_base.into();
         self
@@ -327,7 +296,6 @@ pub async fn fetch_most_recent_release(
         "GitHub releases API returned {status}: {}",
         String::from_utf8_lossy(&body)
     );
-
     Ok(most_recent_prerelease(parse_releases_list_response(&body)?))
 }
 
@@ -663,7 +631,6 @@ pub fn apply_macos_update(
     let mount_point = tempdir_next_to(installed_app_dir)
         .unwrap_or_else(|_| std::env::temp_dir().join("stealcode-dmg-mount"));
     std::fs::create_dir_all(&mount_point)?;
-
     let attach = std::process::Command::new("hdiutil")
         .arg("attach")
         .arg(dmg_path)
@@ -678,7 +645,6 @@ pub fn apply_macos_update(
         "hdiutil attach failed: {}",
         String::from_utf8_lossy(&attach.stderr)
     );
-
     let result = (|| -> Result<()> {
         let source_app = mount_point.join("StealCode.app");
         anyhow::ensure!(
@@ -699,7 +665,6 @@ pub fn apply_macos_update(
         );
         Ok(())
     })();
-
     let _ = std::process::Command::new("hdiutil")
         .arg("detach")
         .arg(&mount_point)
@@ -724,13 +689,6 @@ fn tempdir_next_to(path: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
-
-// ---------------------------------------------------------------------
-// Windows: stage the installer into a shadow `install\` directory while
-// StealCode keeps running, in the background - same trick Zed uses, minus
-// Restart Manager (nothing locks our files except our own process, since
-// StealCode has no context-menu DLL).
-// ---------------------------------------------------------------------
 
 /// Runs the downloaded installer silently with `/update=true`, which
 /// `stealcode.iss` interprets as "install into `{app}\install\` instead of
@@ -1030,10 +988,10 @@ mod tests {
 
     #[test]
     fn release_by_tag_url_normalizes_the_v_prefix() {
-        let source = GithubReleaseSource::new("she-workss", "stealcode", None);
+        let source = GithubReleaseSource::new("he-thinks", "stealcode", None);
         assert_eq!(
             source.release_by_tag_url("v1.2.3"),
-            "https://api.github.com/repos/she-workss/stealcode/releases/tags/v1.2.3"
+            "https://api.github.com/repos/he-thinks/stealcode/releases/tags/v1.2.3"
         );
     }
 

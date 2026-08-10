@@ -17,7 +17,7 @@ anyhow.workspace = true
 auto_update.workspace = true
 gpui = { git = "https://github.com/zed-industries/zed", default-features = false }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", default-features = false }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+gpui_platform = { git = "https://github.com/zed-industries/zed", default-features = false, features = [
     "font-kit",
 ] }
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -27,7 +27,10 @@ semver.workspace = true
 settings.workspace = true
 sound.workspace = true
 tracing.workspace = true
-tray-icon = { version = "0.24", default-features = false, features = ["gtk", "libxdo"] }
+tray-icon = { version = "0.24", default-features = false, features = [
+    "gtk",
+    "libxdo",
+] }
 voice = { workspace = true, optional = true }
 
 [lints]

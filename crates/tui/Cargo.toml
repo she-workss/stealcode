@@ -12,7 +12,6 @@ voice = ["dep:voice"]
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
-paths.workspace = true
 ratatui.workspace = true
 release_channel.workspace = true
 semver.workspace = true

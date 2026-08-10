@@ -14,9 +14,7 @@ matrixmultiply = { version = "0.3", default-features = false, features = [
     "threading",
 ] }
 memmap2 = { version = "0.9", default-features = false }
-paths.workspace = true
-rayon = { version = "1", default-features = false }
-reqwest.workspace = true
+rayon = { version = "1.12", default-features = false }
 tracing.workspace = true
 
 [dev-dependencies]

@@ -49,7 +49,7 @@ server = { workspace = true, optional = true }
 settings.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
-tower-http = { version = "0.7", features = ["fs", "trace"], optional = true }
+tower-http = { workspace = true, optional = true }
 tracing.workspace = true
 tui = { workspace = true, optional = true }
 voice = { workspace = true, optional = true }
