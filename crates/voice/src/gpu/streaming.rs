@@ -4,20 +4,26 @@
 //! per-frame caches (`pre`, per-block outputs, pre-FF2 activations, band
 //! K/V) and the same chunk-aligned attention band, so the output for any
 //! frame equals the offline GPU encode. The heavy per-block work (GEMMs,
-//! LayerNorms, streaming attention, dw conv) runs on the GPU via the
-//! standalone kernels; pre_encode and the tiny prompt MLP stay on the
-//! CPU (convs + 2-layer MLP are small). Caches are host-side for now —
-//! moving them to persistent GPU buffers is a later optimization.
+//! LayerNorms, streaming attention, dw conv) runs on the GPU: all of a
+//! block's dispatches are recorded into one [`ComputeBatch`] and submitted
+//! together, keeping intermediate activations on the GPU. pre_encode and
+//! the tiny prompt MLP stay on the CPU (convs + 2-layer MLP are small).
+//! Caches are host-side for now — moving them to persistent GPU buffers is
+//! a later optimization.
 
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use super::context::GpuContext;
-use super::kernels::{
-    AttnStreamKernel, DwConvKernel, ElementwiseKernel, LayerNormKernel, Q8Gemm,
+use super::{
+    batch::ComputeBatch,
+    context::GpuContext,
+    kernels::{
+        AttnStreamKernel, DwConvKernel, ElementwiseKernel, LayerNormKernel,
+        Q8Gemm, bytemuck_safe, bytes_to_f32,
+    },
+    model::{GpuBlock, GpuModel},
 };
-use super::model::{GpuBlock, GpuModel};
 use crate::nemotron::encoder::Encoder;
 
 /// Kernel handles shared by every block.
@@ -110,10 +116,9 @@ impl GpuStreamingEncoder {
                 self.total
             );
         }
-        let last = self
-            .blocks
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("gpu streaming encoder: no blocks"))?;
+        let last = self.blocks.last().ok_or_else(|| {
+            anyhow::anyhow!("gpu streaming encoder: no blocks")
+        })?;
         Ok(&last[(from - self.base) * self.d..(to - self.base) * self.d])
     }
 
@@ -235,6 +240,7 @@ impl GpuStreamingEncoder {
         self.kv_lo = k_lo;
 
         // ---- blocks ----
+        let mut batch = ComputeBatch::new(&self.model.ctx);
         let mut out_new: Vec<f32> = Vec::new();
         for b in 0..n_layers {
             let input: &[f32] = if b == 0 {
@@ -244,6 +250,7 @@ impl GpuStreamingEncoder {
             };
             let (no, nco, k_new, v_new) = block_new(
                 &mut self.kern,
+                &mut batch,
                 &self.model,
                 &self.model.blocks[b],
                 d,
@@ -315,10 +322,14 @@ impl GpuStreamingEncoder {
 /// (absolute indices) on the GPU. `input` is the block's input cache
 /// (frames `[base, t_new)`, old + new), `pre_conv_in` the block's cached
 /// pre-FF2 activations, `k_v_in`/`v_v_in` the block's cached K/V for band
-/// frames `[kv_lo, s)`. Returns `(out, nco, k_new, v_new)`.
+/// frames `[kv_lo, s)`. All dispatches are recorded into `batch` and
+/// submitted once; the persistent results (`out`, `nco`, `k_new`,
+/// `v_new`) are downloaded after the submit. Returns `(out, nco,
+/// k_new, v_new)`.
 #[allow(clippy::too_many_arguments)]
 fn block_new(
     kern: &mut BlockKernels,
+    batch: &mut ComputeBatch,
     m: &GpuModel,
     b: &GpuBlock,
     d: usize,
@@ -342,18 +353,37 @@ fn block_new(
     let conv_lo = s.saturating_sub(conv_left);
     let old_glu = s - conv_lo; // [conv_lo, s) from the cache
     let n_glu = t_new - conv_lo;
+    let act = (c * d * 4) as u64;
+    let glu_act = (n_glu * d * 4) as u64;
+    let dff = b.ff1_lin1.packed.rows;
+    let dff_size = (c * dff * 4) as u64;
+    let pw1_size = (n_glu * b.pw1.packed.rows * 4) as u64;
+    let band = k_hi - k_lo;
+    let band_size = (band * d * 4) as u64;
+    let c_bytes = (c * d * 4) as u64;
+    let old_bytes = (old_glu * d * 4) as u64;
 
     // ---- macaron FF1 over the new frames ----
-    let input_new = &input[rel(s) * d..rel(s) * d + c * d];
-    let ln = kern.ln.forward(
-        input_new,
+    let input_new = batch.alloc(act);
+    batch.write(
+        &input_new,
+        bytemuck_safe(&input[rel(s) * d..rel(s) * d + c * d]),
+    );
+    let ln = batch.alloc(act);
+    kern.ln.record(
+        batch,
+        &input_new,
+        0,
         &b.norm_ff1.w,
         &b.norm_ff1.b,
         c,
         d,
         b.norm_ff1.eps,
+        &ln,
     );
-    let mut h = kern.gemm.gemm(
+    let h = batch.alloc(dff_size);
+    kern.gemm.record(
+        batch,
         &b.ff1_lin1.packed,
         &b.ff1_lin1.q,
         &b.ff1_lin1.s,
@@ -361,22 +391,42 @@ fn block_new(
         &ln,
         c,
         b.ff1_lin1.k,
+        &h,
     );
-    h = kern.ew.silu(&h);
-    let f = kern.gemm.gemm(
+    let hs = batch.alloc(dff_size);
+    kern.ew.record_silu(batch, &h, &hs, c * dff);
+    let f = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.ff1_lin2.packed,
         &b.ff1_lin2.q,
         &b.ff1_lin2.s,
         b.ff1_lin2.bias.as_ref(),
-        &h,
+        &hs,
         c,
         b.ff1_lin2.k,
+        &f,
     );
-    let mut y = kern.ew.add_mul(input_new, &f, 0.5);
+    let y = batch.alloc(act);
+    kern.ew
+        .record_add_mul(batch, &input_new, &f, &y, c * d, 0.5);
 
     // ---- rel-pos MHSA over the band ----
-    let ln = kern.ln.forward(&y, &b.norm_att.w, &b.norm_att.b, c, d, b.norm_att.eps);
-    let k_new = kern.gemm.gemm(
+    let ln = batch.alloc(act);
+    kern.ln.record(
+        batch,
+        &y,
+        0,
+        &b.norm_att.w,
+        &b.norm_att.b,
+        c,
+        d,
+        b.norm_att.eps,
+        &ln,
+    );
+    let k_new = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.attn_k.packed,
         &b.attn_k.q,
         &b.attn_k.s,
@@ -384,8 +434,11 @@ fn block_new(
         &ln,
         c,
         b.attn_k.k,
+        &k_new,
     );
-    let v_new = kern.gemm.gemm(
+    let v_new = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.attn_v.packed,
         &b.attn_v.q,
         &b.attn_v.s,
@@ -393,8 +446,11 @@ fn block_new(
         &ln,
         c,
         b.attn_v.k,
+        &v_new,
     );
-    let q_new = kern.gemm.gemm(
+    let q_new = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.attn_q.packed,
         &b.attn_q.q,
         &b.attn_q.s,
@@ -402,15 +458,19 @@ fn block_new(
         &ln,
         c,
         b.attn_q.k,
+        &q_new,
     );
-    let band = k_hi - k_lo;
-    let mut kv = Vec::with_capacity(band * d);
-    kv.extend_from_slice(k_v_in);
-    kv.extend_from_slice(&k_new);
-    let mut vv = Vec::with_capacity(band * d);
-    vv.extend_from_slice(v_v_in);
-    vv.extend_from_slice(&v_new);
-    let attn_out = kern.attn.forward(
+    // Combined band on the GPU: cached frames via host upload, new frames
+    // copied from the scratch results above.
+    let kv = batch.alloc(band_size);
+    batch.write(&kv, bytemuck_safe(k_v_in));
+    batch.copy(&k_new, 0, &kv, (k_v_in.len() * 4) as u64, c_bytes);
+    let vv = batch.alloc(band_size);
+    batch.write(&vv, bytemuck_safe(v_v_in));
+    batch.copy(&v_new, 0, &vv, (v_v_in.len() * 4) as u64, c_bytes);
+    let attn_out = batch.alloc(act);
+    kern.attn.record(
+        batch,
         &q_new,
         &kv,
         &vv,
@@ -428,8 +488,11 @@ fn block_new(
         left_chunks,
         k_hi,
         3,
+        &attn_out,
     );
-    let o = kern.gemm.gemm(
+    let o = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.attn_out.packed,
         &b.attn_out.q,
         &b.attn_out.s,
@@ -437,24 +500,39 @@ fn block_new(
         &attn_out,
         c,
         b.attn_out.k,
+        &o,
     );
-    y = kern.ew.add_mul(&y, &o, 1.0);
+    let y2 = batch.alloc(act);
+    kern.ew.record_add_mul(batch, &y, &o, &y2, c * d, 1.0);
+
+    // Save the pre-FF2 activation (nco) before it is overwritten.
+    let nco_b = batch.alloc(act);
+    batch.copy(&y2, 0, &nco_b, 0, act);
 
     // ---- conv module ----
-    let nco = y.clone();
-    let mut lnc_in = vec![0.0f32; n_glu * d];
-    lnc_in[..old_glu * d]
-        .copy_from_slice(&pre_conv_in[rel(conv_lo) * d..rel(conv_lo) * d + old_glu * d]);
-    lnc_in[old_glu * d..].copy_from_slice(&y);
-    let lnc = kern.ln.forward(
+    let lnc_in = batch.alloc(glu_act);
+    batch.write(
         &lnc_in,
+        bytemuck_safe(
+            &pre_conv_in[rel(conv_lo) * d..rel(conv_lo) * d + old_glu * d],
+        ),
+    );
+    batch.copy(&y2, 0, &lnc_in, old_bytes, act);
+    let lnc = batch.alloc(glu_act);
+    kern.ln.record(
+        batch,
+        &lnc_in,
+        0,
         &b.norm_conv.w,
         &b.norm_conv.b,
         n_glu,
         d,
         b.norm_conv.eps,
+        &lnc,
     );
-    let h3 = kern.gemm.gemm(
+    let h3 = batch.alloc(pw1_size);
+    kern.gemm.record(
+        batch,
         &b.pw1.packed,
         &b.pw1.q,
         &b.pw1.s,
@@ -462,21 +540,30 @@ fn block_new(
         &lnc,
         n_glu,
         b.pw1.k,
+        &h3,
     );
-    let glu = kern.ew.glu(&h3, d);
-    let conv = kern
-        .dw
-        .forward(&glu, &b.dw, n_glu, d, b.dw_kh, b.dw_pad_left);
-    let ln2 = kern.ln.forward(
-        &conv[old_glu * d..],
+    let glu = batch.alloc(glu_act);
+    kern.ew.record_glu(batch, &h3, &glu, n_glu * d, d);
+    let conv = batch.alloc(glu_act);
+    kern.dw
+        .record(batch, &glu, &b.dw, n_glu, d, b.dw_kh, b.dw_pad_left, &conv);
+    let ln2 = batch.alloc(act);
+    kern.ln.record(
+        batch,
+        &conv,
+        old_bytes,
         &b.conv_ln.w,
         &b.conv_ln.b,
         c,
         d,
         b.conv_ln.eps,
+        &ln2,
     );
-    let conv2 = kern.ew.silu(&ln2);
-    let o2 = kern.gemm.gemm(
+    let conv2 = batch.alloc(act);
+    kern.ew.record_silu(batch, &ln2, &conv2, c * d);
+    let o2 = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.pw2.packed,
         &b.pw2.q,
         &b.pw2.s,
@@ -484,12 +571,27 @@ fn block_new(
         &conv2,
         c,
         b.pw2.k,
+        &o2,
     );
-    y = kern.ew.add_mul(&y, &o2, 1.0);
+    let y3 = batch.alloc(act);
+    kern.ew.record_add_mul(batch, &y2, &o2, &y3, c * d, 1.0);
 
     // ---- macaron FF2 ----
-    let ln = kern.ln.forward(&y, &b.norm_ff2.w, &b.norm_ff2.b, c, d, b.norm_ff2.eps);
-    let mut h5 = kern.gemm.gemm(
+    let ln = batch.alloc(act);
+    kern.ln.record(
+        batch,
+        &y3,
+        0,
+        &b.norm_ff2.w,
+        &b.norm_ff2.b,
+        c,
+        d,
+        b.norm_ff2.eps,
+        &ln,
+    );
+    let h5 = batch.alloc(dff_size);
+    kern.gemm.record(
+        batch,
         &b.ff2_lin1.packed,
         &b.ff2_lin1.q,
         &b.ff2_lin1.s,
@@ -497,28 +599,45 @@ fn block_new(
         &ln,
         c,
         b.ff2_lin1.k,
+        &h5,
     );
-    h5 = kern.ew.silu(&h5);
-    let f2 = kern.gemm.gemm(
+    let h5s = batch.alloc(dff_size);
+    kern.ew.record_silu(batch, &h5, &h5s, c * dff);
+    let f2 = batch.alloc(act);
+    kern.gemm.record(
+        batch,
         &b.ff2_lin2.packed,
         &b.ff2_lin2.q,
         &b.ff2_lin2.s,
         b.ff2_lin2.bias.as_ref(),
-        &h5,
+        &h5s,
         c,
         b.ff2_lin2.k,
+        &f2,
     );
-    let y2 = kern.ew.add_mul(&y, &f2, 0.5);
+    let y4 = batch.alloc(act);
+    kern.ew.record_add_mul(batch, &y3, &f2, &y4, c * d, 0.5);
 
     // ---- final per-block LN ----
-    let out = kern.ln.forward(
-        &y2,
+    let out = batch.alloc(act);
+    kern.ln.record(
+        batch,
+        &y4,
+        0,
         &b.norm_out.w,
         &b.norm_out.b,
         c,
         d,
         b.norm_out.eps,
+        &out,
     );
+
+    // Submit once, then pull back the small persistent results.
+    batch.submit();
+    let out = bytes_to_f32(&m.ctx.download(&out, act), c * d);
+    let nco = bytes_to_f32(&m.ctx.download(&nco_b, act), c * d);
+    let k_new = bytes_to_f32(&m.ctx.download(&k_new, act), c * d);
+    let v_new = bytes_to_f32(&m.ctx.download(&v_new, act), c * d);
     (out, nco, k_new, v_new)
 }
 
@@ -533,12 +652,49 @@ fn transpose(x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     out
 }
 
+impl crate::nemotron::streaming::StreamEncoder for GpuStreamingEncoder {
+    fn encode_new(
+        &mut self,
+        enc: &mut Encoder,
+        mel: &[f32],
+        n_mels: usize,
+        t0: usize,
+        t1: usize,
+        prompt_id: Option<u32>,
+    ) -> anyhow::Result<()> {
+        GpuStreamingEncoder::encode_new(self, enc, mel, n_mels, t0, t1, prompt_id)
+    }
+    fn frames(&self, from: usize, to: usize) -> anyhow::Result<&[f32]> {
+        GpuStreamingEncoder::frames(self, from, to)
+    }
+    fn total(&self) -> usize {
+        self.total
+    }
+}
+
+/// Try to build a GPU streaming encoder for `enc`, uploading the weights
+/// to the device. Returns `Ok(None)` when no GPU is available, so the
+/// caller can transparently fall back to the CPU encoder; `Err` is
+/// reserved for the case where a GPU exists but initialization fails.
+pub fn try_build(
+    enc: &Encoder,
+) -> anyhow::Result<Option<Box<dyn crate::nemotron::streaming::StreamEncoder>>> {
+    let Some(ctx) = super::context::GpuContext::init() else {
+        return Ok(None);
+    };
+    let ctx = Arc::new(ctx);
+    let model = super::model::GpuModel::from_encoder(&ctx, enc)?;
+    let senc = GpuStreamingEncoder::new(&ctx, model)?;
+    Ok(Some(Box::new(senc)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu::GpuContext;
-    use crate::nemotron::streaming::StreamingEncoder;
-    use crate::nemotron::Nemotron;
+    use crate::{
+        gpu::GpuContext,
+        nemotron::{Nemotron, streaming::StreamingEncoder},
+    };
 
     #[test]
     fn gpu_streaming_matches_gpu_offline() {
@@ -552,7 +708,8 @@ mod tests {
         let n_mels = cpu.encoder.cfg.feat_in;
         let ctx = GpuContext::init().expect("no GPU adapter");
         let ctx = Arc::new(ctx);
-        let model = GpuModel::from_encoder(&ctx, &cpu.encoder).expect("upload weights");
+        let model =
+            GpuModel::from_encoder(&ctx, &cpu.encoder).expect("upload weights");
         let mut seed = 0x1234_abcd_5678_ef01u64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
@@ -561,27 +718,32 @@ mod tests {
             (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
         };
         let n_batches = 3;
-        let mel: Vec<f32> = (0..n_batches * 64 * n_mels).map(|_| rnd_f()).collect();
+        let mel: Vec<f32> =
+            (0..n_batches * 64 * n_mels).map(|_| rnd_f()).collect();
 
         // Offline GPU encode of the whole audio, then take frames [0, 24).
-        let mut genc = crate::gpu::encoder::GpuEncoder::new(&ctx).expect("gpu encoder");
-        let x = cpu.encoder.pre_encode_forward(&mel, mel.len() / n_mels, n_mels);
+        let mut genc =
+            crate::gpu::encoder::GpuEncoder::new(&ctx).expect("gpu encoder");
+        let x =
+            cpu.encoder
+                .pre_encode_forward(&mel, mel.len() / n_mels, n_mels);
         let t_enc = x.len() / d;
         let pe = cpu.encoder.pos_emb(t_enc);
         let off = genc.encode_blocks(&model, &x, t_enc, &pe);
         assert!(t_enc >= 24, "offline t_enc={t_enc} too small");
         let off = &off[..24 * d];
 
-        let mut senc = GpuStreamingEncoder::new(&ctx, model).expect("build kernels");
+        let mut senc =
+            GpuStreamingEncoder::new(&ctx, model).expect("build kernels");
         let mut stream_out = Vec::new();
         for bi in 0..n_batches {
             let t0 = bi * 64;
-            senc
-                .encode_new(&mut cpu.encoder, &mel, n_mels, t0, t0 + 64, None)
+            senc.encode_new(&mut cpu.encoder, &mel, n_mels, t0, t0 + 64, None)
                 .expect("gpu stream");
             let s = t0 / 8;
             let c = 8;
-            stream_out.extend_from_slice(senc.frames(s, s + c).expect("frames"));
+            stream_out
+                .extend_from_slice(senc.frames(s, s + c).expect("frames"));
         }
 
         let mut worst = 0.0f32;
@@ -592,6 +754,74 @@ mod tests {
             worst < 1e-5,
             "GPU streaming != GPU offline: max abs diff={worst:.3e}"
         );
+    }
+
+    #[test]
+    fn mem_diag() {
+        let path = crate::default_model_path();
+        if !path.exists() {
+            eprintln!("skipping: model not found at {}", path.display());
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        fn ws_mb() -> f64 {
+            use std::ffi::c_void;
+            #[repr(C)]
+            struct PMC {
+                cb: u32,
+                _pf: u32,
+                peak_ws: usize,
+                ws: usize,
+                _x: [usize; 6],
+                pagefile: usize,
+                _peak_pf: usize,
+            }
+            unsafe extern "system" {
+                fn GetCurrentProcess() -> *mut c_void;
+                fn K32GetProcessMemoryInfo(
+                    p: *mut c_void,
+                    info: *mut PMC,
+                    cb: u32,
+                ) -> i32;
+            }
+            unsafe {
+                let mut pmc: PMC = std::mem::zeroed();
+                pmc.cb = std::mem::size_of::<PMC>() as u32;
+                let p = GetCurrentProcess();
+                K32GetProcessMemoryInfo(p, &mut pmc, pmc.cb);
+                let ws = pmc.ws as f64 / (1024.0 * 1024.0);
+                let commit = pmc.pagefile as f64 / (1024.0 * 1024.0);
+                eprintln!("  [mem] WS={ws:.1} MB commit={commit:.1} MB");
+                ws
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        fn ws_mb() -> f64 {
+            0.0
+        }
+        let m = ws_mb();
+        eprintln!("[mem] before load: {m:.1} MB");
+        let Some(ctx) = super::super::context::GpuContext::init() else {
+            eprintln!("[mem] no GPU; CPU fallback");
+            return;
+        };
+        let ctx = Arc::new(ctx);
+        eprintln!("[mem] after gpu init (no model): {:.1} MB", ws_mb());
+        let mut cpu = crate::nemotron::Nemotron::load(&path).expect("load");
+        eprintln!("[mem] after cpu load: {:.1} MB", ws_mb());
+        let model =
+            GpuModel::from_encoder(&ctx, &cpu.encoder).expect("upload weights");
+        ctx.device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        eprintln!("[mem] after upload + poll: {:.1} MB", ws_mb());
+        cpu.encoder.blocks = Vec::new();
+        eprintln!("[mem] after free cpu blocks: {:.1} MB", ws_mb());
+        drop(model);
+        ctx.device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        eprintln!("[mem] after drop(gpu model): {:.1} MB", ws_mb());
+        drop(cpu);
+        eprintln!("[mem] after drop(whole cpu): {:.1} MB", ws_mb());
+        drop(ctx);
+        eprintln!("[mem] after drop(ctx): {:.1} MB", ws_mb());
     }
 
     #[test]
@@ -608,7 +838,8 @@ mod tests {
 
         let ctx = GpuContext::init().expect("no GPU adapter");
         let ctx = Arc::new(ctx);
-        let model = GpuModel::from_encoder(&ctx, &cpu.encoder).expect("upload weights");
+        let model =
+            GpuModel::from_encoder(&ctx, &cpu.encoder).expect("upload weights");
 
         // Deterministic mel: 3 batches of BATCH_MEL=64 mel frames.
         let mut seed = 0x1234_abcd_5678_ef01u64;
@@ -619,12 +850,14 @@ mod tests {
             (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
         };
         let n_batches = 3;
-        let mel: Vec<f32> = (0..n_batches * 64 * n_mels).map(|_| rnd_f()).collect();
+        let mel: Vec<f32> =
+            (0..n_batches * 64 * n_mels).map(|_| rnd_f()).collect();
 
         // Phase 1: offline reference divergence per batch (CPU vs GPU,
         // the inherent f32-vs-i8 noise of this audio), before the model
         // moves into the streaming encoder.
-        let mut genc = crate::gpu::encoder::GpuEncoder::new(&ctx).expect("gpu encoder");
+        let mut genc =
+            crate::gpu::encoder::GpuEncoder::new(&ctx).expect("gpu encoder");
         let mut offline_err = vec![0.0f32; n_batches];
         for bi in 0..n_batches {
             let t1 = (bi + 1) * 64;
@@ -635,7 +868,9 @@ mod tests {
                 .encoder
                 .encode(&mel[..t1 * n_mels], t1, None, &mut cpu_out)
                 .expect("cpu offline");
-            let x = cpu.encoder.pre_encode_forward(&mel[..t1 * n_mels], t1, n_mels);
+            let x =
+                cpu.encoder
+                    .pre_encode_forward(&mel[..t1 * n_mels], t1, n_mels);
             let t_enc = x.len() / d;
             let pe = cpu.encoder.pos_emb(t_enc);
             let gpu_out = genc.encode_blocks(&model, &x, t_enc, &pe);
@@ -659,7 +894,8 @@ mod tests {
         // Phase 2: streaming, then require the GPU-vs-CPU streaming
         // divergence to stay within the offline path's own noise.
         let mut senc_cpu = StreamingEncoder::new(n_layers);
-        let mut senc_gpu = GpuStreamingEncoder::new(&ctx, model).expect("build kernels");
+        let mut senc_gpu =
+            GpuStreamingEncoder::new(&ctx, model).expect("build kernels");
         for bi in 0..n_batches {
             let t0 = bi * 64;
             let t1 = t0 + 64;

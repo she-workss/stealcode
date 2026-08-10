@@ -25,7 +25,7 @@ all = ["desktop", "server", "tui", "voice", "web"]
 desktop = ["dep:gui"]
 server = ["dep:server"]
 tui = ["dep:tui"]
-voice = ["dep:voice", "tui?/voice", "gui?/voice"]
+voice = ["dep:voice", "tui?/voice", "gui?/voice", "voice/gpu"]
 web = []
 
 [dependencies]

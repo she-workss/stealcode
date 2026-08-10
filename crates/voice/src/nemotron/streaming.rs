@@ -705,3 +705,45 @@ fn transpose_into<'a>(
     }
     trans
 }
+
+/// Common interface of a streaming (incremental) encoder, implemented by
+/// both the CPU [`StreamingEncoder`] and the GPU
+/// [`crate::gpu::streaming::GpuStreamingEncoder`]. The voice worker picks
+/// a backend at runtime (GPU first, CPU fallback) and drives it through
+/// this trait, so `LiveTranscriber` never needs to know which one it is.
+pub trait StreamEncoder {
+    /// Append encoder frames for mel frames `[t0, t1)`.
+    fn encode_new(
+        &mut self,
+        enc: &mut Encoder,
+        mel: &[f32],
+        n_mels: usize,
+        t0: usize,
+        t1: usize,
+        prompt_id: Option<u32>,
+    ) -> Result<()>;
+    /// Encoder output frames `[from, to)` (absolute encoder-frame indices).
+    fn frames(&self, from: usize, to: usize) -> Result<&[f32]>;
+    /// Number of encoder frames currently cached.
+    fn total(&self) -> usize;
+}
+
+impl StreamEncoder for StreamingEncoder {
+    fn encode_new(
+        &mut self,
+        enc: &mut Encoder,
+        mel: &[f32],
+        n_mels: usize,
+        t0: usize,
+        t1: usize,
+        prompt_id: Option<u32>,
+    ) -> Result<()> {
+        StreamingEncoder::encode_new(self, enc, mel, n_mels, t0, t1, prompt_id)
+    }
+    fn frames(&self, from: usize, to: usize) -> Result<&[f32]> {
+        StreamingEncoder::frames(self, from, to)
+    }
+    fn total(&self) -> usize {
+        self.total
+    }
+}

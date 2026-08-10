@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::context::GpuContext;
+use super::{batch::ComputeBatch, context::GpuContext};
 use crate::nemotron::gguf::f16_to_f32;
 
 const Q8_GEMM_WGSL: &str = include_str!("shaders/q8_gemm.wgsl");
@@ -20,6 +20,17 @@ pub struct PackedQ8 {
     pub q: Vec<u8>,
     /// `rows * kb` f32, little-endian.
     pub s: Vec<u8>,
+    /// Output rows of the weight matrix.
+    pub rows: usize,
+    /// Blocks per row (`k.div_ceil(32)`).
+    pub kb: usize,
+}
+
+/// Slim layout descriptor kept on the host after upload. The packed
+/// bytes themselves live in GPU storage buffers; the host copies from
+/// [`pack_q8`] are dropped so the model is not duplicated in RAM.
+#[derive(Debug, Clone, Copy)]
+pub struct PackedMeta {
     /// Output rows of the weight matrix.
     pub rows: usize,
     /// Blocks per row (`k.div_ceil(32)`).
@@ -104,8 +115,7 @@ pub fn q8_gemm_ref(
                 ]);
                 let mut bdot = 0.0f32;
                 for i in 0..32 {
-                    bdot += wval(n, b * 32 + i) as f32
-                        * x[ti * k + b * 32 + i];
+                    bdot += wval(n, b * 32 + i) as f32 * x[ti * k + b * 32 + i];
                 }
                 acc += scale * bdot;
             }
@@ -141,7 +151,8 @@ impl Q8Gemm {
             },
         );
         let module = ctx.shader("voice/gpu q8_gemm shader", Q8_GEMM_WGSL)?;
-        let pipeline = ctx.pipeline("voice/gpu q8_gemm", &module, &layout, "main");
+        let pipeline =
+            ctx.pipeline("voice/gpu q8_gemm", &module, &layout, "main");
         let params = ctx.create_buffer(
             "voice/gpu q8_gemm params",
             32,
@@ -173,7 +184,7 @@ impl Q8Gemm {
     /// matrix (n = packed.rows). Blocks until done and returns `y`.
     pub fn gemm(
         &mut self,
-        packed: &PackedQ8,
+        packed: &PackedMeta,
         w_q: &wgpu::Buffer,
         w_s: &wgpu::Buffer,
         bias: Option<&wgpu::Buffer>,
@@ -209,41 +220,105 @@ impl Q8Gemm {
             0,
             0,
         ];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu q8_gemm"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.x_buf, 0, bytemuck_safe(x));
-        let bias_buf = bias.unwrap_or(&self.bias_dummy);
-        let bind = self.ctx.device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                label: Some("voice/gpu q8_gemm bind"),
-                layout: &self.layout,
-                entries: &[
-                    binding(0, &self.params),
-                    binding(1, w_q),
-                    binding(2, w_s),
-                    binding(3, &self.x_buf),
-                    binding(4, bias_buf),
-                    binding(5, &self.out_buf),
-                ],
             },
         );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.x_buf, 0, bytemuck_safe(x));
+        let bias_buf = bias.unwrap_or(&self.bias_dummy);
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu q8_gemm bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, w_q),
+                        binding(2, w_s),
+                        binding(3, &self.x_buf),
+                        binding(4, bias_buf),
+                        binding(5, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu q8_gemm pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu q8_gemm pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
-            pass.dispatch_workgroups(t.div_ceil(8) as u32, n.div_ceil(8) as u32, 1);
+            pass.dispatch_workgroups(
+                t.div_ceil(8) as u32,
+                n.div_ceil(8) as u32,
+                1,
+            );
         }
         self.ctx.queue.submit(Some(encoder.finish()));
         let bytes = self.ctx.download(&self.out_buf, out_size);
         bytes_to_f32(&bytes, t * n)
+    }
+
+    /// Record the Q8 GEMM into `batch` (no submit/download). `x` is a
+    /// GPU buffer; `out` receives `[t, n]` and must be a scratch slot.
+    pub fn record(
+        &mut self,
+        batch: &mut ComputeBatch,
+        packed: &PackedMeta,
+        w_q: &wgpu::Buffer,
+        w_s: &wgpu::Buffer,
+        bias: Option<&wgpu::Buffer>,
+        x: &wgpu::Buffer,
+        t: usize,
+        k: usize,
+        out: &wgpu::Buffer,
+    ) {
+        let n = packed.rows;
+        let kb = packed.kb;
+        let params: [u32; 8] = [
+            t as u32,
+            k as u32,
+            n as u32,
+            kb as u32,
+            u32::from(bias.is_some()),
+            0,
+            0,
+            0,
+        ];
+        // Params are per-dispatch scratch: all queue writes happen before
+        // the single submission, so a shared buffer would end up holding
+        // only the last op's values for every pass.
+        let params_buf = batch.alloc((params.len() * 4) as u64);
+        batch.write(&params_buf, &bytes32(&params));
+        let bias_buf = bias.unwrap_or(&self.bias_dummy);
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu q8_gemm bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding(1, w_q),
+                        binding(2, w_s),
+                        binding(3, x),
+                        binding(4, bias_buf),
+                        binding(5, out),
+                    ],
+                });
+        batch.dispatch(
+            &self.pipeline,
+            &bind,
+            t.div_ceil(8) as u32,
+            n.div_ceil(8) as u32,
+        );
     }
 }
 
@@ -291,8 +366,10 @@ impl LayerNormKernel {
                 ],
             },
         );
-        let module = ctx.shader("voice/gpu layernorm shader", LAYERNORM_WGSL)?;
-        let pipeline = ctx.pipeline("voice/gpu layernorm", &module, &layout, "main");
+        let module =
+            ctx.shader("voice/gpu layernorm shader", LAYERNORM_WGSL)?;
+        let pipeline =
+            ctx.pipeline("voice/gpu layernorm", &module, &layout, "main");
         let mk = |label: &str, usages| ctx.create_buffer(label, 4, usages);
         Ok(Self {
             ctx: ctx.clone(),
@@ -364,32 +441,43 @@ impl LayerNormKernel {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let params: [u32; 4] = [t as u32, d as u32, eps.to_bits(), 0];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu layernorm"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.x_buf, 0, bytemuck_safe(x));
-        self.ctx.queue.write_buffer(&self.gamma_buf, 0, bytemuck_safe(gamma));
-        self.ctx.queue.write_buffer(&self.beta_buf, 0, bytemuck_safe(beta));
-        let bind = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice/gpu layernorm bind"),
-            layout: &self.layout,
-            entries: &[
-                binding(0, &self.params),
-                binding(1, &self.x_buf),
-                binding(2, &self.gamma_buf),
-                binding(3, &self.beta_buf),
-                binding(4, &self.out_buf),
-            ],
-        });
+            },
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.x_buf, 0, bytemuck_safe(x));
+        self.ctx
+            .queue
+            .write_buffer(&self.gamma_buf, 0, bytemuck_safe(gamma));
+        self.ctx
+            .queue
+            .write_buffer(&self.beta_buf, 0, bytemuck_safe(beta));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu layernorm bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, &self.x_buf),
+                        binding(2, &self.gamma_buf),
+                        binding(3, &self.beta_buf),
+                        binding(4, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu layernorm pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu layernorm pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(t.div_ceil(64) as u32, 1, 1);
@@ -397,6 +485,46 @@ impl LayerNormKernel {
         self.ctx.queue.submit(Some(encoder.finish()));
         let bytes = self.ctx.download(&self.out_buf, size);
         bytes_to_f32(&bytes, count)
+    }
+
+    /// Record LayerNorm into `batch`. `x` is a GPU buffer (read from byte
+    /// offset `x_off`); `gamma`/`beta` are host slices (uploaded per op —
+    /// tiny); `out` receives `[t, d]`.
+    pub fn record(
+        &mut self,
+        batch: &mut ComputeBatch,
+        x: &wgpu::Buffer,
+        x_off: u64,
+        gamma: &[f32],
+        beta: &[f32],
+        t: usize,
+        d: usize,
+        eps: f32,
+        out: &wgpu::Buffer,
+    ) {
+        let dsize = (d * 4).max(4) as u64;
+        let params: [u32; 4] = [t as u32, d as u32, eps.to_bits(), 0];
+        let params_buf = batch.alloc(16);
+        batch.write(&params_buf, &bytes32(&params));
+        let gamma_buf = batch.alloc(dsize);
+        batch.write(&gamma_buf, bytemuck_safe(gamma));
+        let beta_buf = batch.alloc(dsize);
+        batch.write(&beta_buf, bytemuck_safe(beta));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu layernorm bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding_off(1, x, x_off),
+                        binding(2, &gamma_buf),
+                        binding(3, &beta_buf),
+                        binding(4, out),
+                    ],
+                });
+        batch.dispatch(&self.pipeline, &bind, t.div_ceil(64) as u32, 1);
     }
 }
 
@@ -429,8 +557,16 @@ impl ElementwiseKernel {
                 ],
             },
         );
-        let module = ctx.shader("voice/gpu elementwise shader", ELEMENTWISE_WGSL)?;
-        let mk = |op: &str| ctx.pipeline(&format!("voice/gpu elementwise {op}"), &module, &layout, op);
+        let module =
+            ctx.shader("voice/gpu elementwise shader", ELEMENTWISE_WGSL)?;
+        let mk = |op: &str| {
+            ctx.pipeline(
+                &format!("voice/gpu elementwise {op}"),
+                &module,
+                &layout,
+                op,
+            )
+        };
         Ok(Self {
             ctx: ctx.clone(),
             silu: mk("silu"),
@@ -497,33 +633,46 @@ impl ElementwiseKernel {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let params: [u32; 4] = [count as u32, dim as u32, scale.to_bits(), 0];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu elementwise"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.x_buf, 0, bytemuck_safe(x));
+            },
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.x_buf, 0, bytemuck_safe(x));
         if let Some(v) = y {
-            self.ctx.queue.write_buffer(&self.y_buf, 0, bytemuck_safe(v));
+            self.ctx
+                .queue
+                .write_buffer(&self.y_buf, 0, bytemuck_safe(v));
         }
-        let y_buf = if y.is_some() { &self.y_buf } else { &self.dummy };
-        let bind = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice/gpu elementwise bind"),
-            layout: &self.layout,
-            entries: &[
-                binding(0, &self.params),
-                binding(1, &self.x_buf),
-                binding(2, y_buf),
-                binding(3, &self.out_buf),
-            ],
-        });
+        let y_buf = if y.is_some() {
+            &self.y_buf
+        } else {
+            &self.dummy
+        };
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu elementwise bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, &self.x_buf),
+                        binding(2, y_buf),
+                        binding(3, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu elementwise pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu elementwise pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(count.div_ceil(256) as u32, 1, 1);
@@ -564,6 +713,79 @@ impl ElementwiseKernel {
         let p = self.bias_add.clone();
         self.run(&p, x, Some(bias), x.len(), bias.len(), 0.0)
     }
+
+    /// Record one elementwise op into `batch`. `x`/`y` (optional) are GPU
+    /// buffers; `out` receives `count` values.
+    pub fn record(
+        &self,
+        batch: &mut ComputeBatch,
+        op: &wgpu::ComputePipeline,
+        x: &wgpu::Buffer,
+        y: Option<&wgpu::Buffer>,
+        count: usize,
+        dim: usize,
+        scale: f32,
+        out: &wgpu::Buffer,
+    ) {
+        let params: [u32; 4] = [count as u32, dim as u32, scale.to_bits(), 0];
+        let params_buf = batch.alloc(16);
+        batch.write(&params_buf, &bytes32(&params));
+        let y_buf = y.unwrap_or(&self.dummy);
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu elementwise bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding(1, x),
+                        binding(2, y_buf),
+                        binding(3, out),
+                    ],
+                });
+        batch.dispatch(op, &bind, count.div_ceil(256) as u32, 1);
+    }
+
+    /// `out = x * sigmoid(x)` over `count` values.
+    pub fn record_silu(
+        &self,
+        batch: &mut ComputeBatch,
+        x: &wgpu::Buffer,
+        out: &wgpu::Buffer,
+        count: usize,
+    ) {
+        let p = self.silu.clone();
+        self.record(batch, &p, x, None, count, 0, 0.0, out);
+    }
+
+    /// GLU over a `[t, 2d]` buffer: `out[i] = x[i] * sigmoid(x[d + i])`
+    /// for `count = t * d`.
+    pub fn record_glu(
+        &self,
+        batch: &mut ComputeBatch,
+        x: &wgpu::Buffer,
+        out: &wgpu::Buffer,
+        count: usize,
+        dim: usize,
+    ) {
+        let p = self.glu.clone();
+        self.record(batch, &p, x, None, count, dim, 0.0, out);
+    }
+
+    /// `out = a + scale * b` over `count` values.
+    pub fn record_add_mul(
+        &self,
+        batch: &mut ComputeBatch,
+        a: &wgpu::Buffer,
+        b: &wgpu::Buffer,
+        out: &wgpu::Buffer,
+        count: usize,
+        scale: f32,
+    ) {
+        let p = self.add_mul.clone();
+        self.record(batch, &p, a, Some(b), count, 0, scale, out);
+    }
 }
 
 /// Attention: relative-position biased scores, softmax over the band,
@@ -599,8 +821,10 @@ impl AttentionKernel {
                 ],
             },
         );
-        let module = ctx.shader("voice/gpu attention shader", ATTENTION_WGSL)?;
-        let pipeline = ctx.pipeline("voice/gpu attention", &module, &layout, "main");
+        let module =
+            ctx.shader("voice/gpu attention shader", ATTENTION_WGSL)?;
+        let pipeline =
+            ctx.pipeline("voice/gpu attention", &module, &layout, "main");
         let mk = |label: &str, usages| ctx.create_buffer(label, 4, usages);
         Ok(Self {
             ctx: ctx.clone(),
@@ -611,12 +835,30 @@ impl AttentionKernel {
                 32,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
-            q_buf: mk("voice/gpu attention q", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            k_buf: mk("voice/gpu attention k", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            v_buf: mk("voice/gpu attention v", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            qb_buf: mk("voice/gpu attention q_bias", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            vb_buf: mk("voice/gpu attention v_bias", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            pos_buf: mk("voice/gpu attention pos", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
+            q_buf: mk(
+                "voice/gpu attention q",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            k_buf: mk(
+                "voice/gpu attention k",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            v_buf: mk(
+                "voice/gpu attention v",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            qb_buf: mk(
+                "voice/gpu attention q_bias",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            vb_buf: mk(
+                "voice/gpu attention v_bias",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            pos_buf: mk(
+                "voice/gpu attention pos",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
             out_buf: mk(
                 "voice/gpu attention out",
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -681,37 +923,55 @@ impl AttentionKernel {
             chunk_size as u32,
             left_chunks as u32,
         ];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu attention"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.q_buf, 0, bytemuck_safe(q));
-        self.ctx.queue.write_buffer(&self.k_buf, 0, bytemuck_safe(k));
-        self.ctx.queue.write_buffer(&self.v_buf, 0, bytemuck_safe(v));
-        self.ctx.queue.write_buffer(&self.qb_buf, 0, bytemuck_safe(q_bias));
-        self.ctx.queue.write_buffer(&self.vb_buf, 0, bytemuck_safe(v_bias));
-        self.ctx.queue.write_buffer(&self.pos_buf, 0, bytemuck_safe(pos));        let bind = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice/gpu attention bind"),
-            layout: &self.layout,
-            entries: &[
-                binding(0, &self.params),
-                binding(1, &self.q_buf),
-                binding(2, &self.k_buf),
-                binding(3, &self.v_buf),
-                binding(4, &self.qb_buf),
-                binding(5, &self.vb_buf),
-                binding(6, &self.pos_buf),
-                binding(7, &self.out_buf),
-            ],
-        });
+            },
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.q_buf, 0, bytemuck_safe(q));
+        self.ctx
+            .queue
+            .write_buffer(&self.k_buf, 0, bytemuck_safe(k));
+        self.ctx
+            .queue
+            .write_buffer(&self.v_buf, 0, bytemuck_safe(v));
+        self.ctx
+            .queue
+            .write_buffer(&self.qb_buf, 0, bytemuck_safe(q_bias));
+        self.ctx
+            .queue
+            .write_buffer(&self.vb_buf, 0, bytemuck_safe(v_bias));
+        self.ctx
+            .queue
+            .write_buffer(&self.pos_buf, 0, bytemuck_safe(pos));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu attention bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, &self.q_buf),
+                        binding(2, &self.k_buf),
+                        binding(3, &self.v_buf),
+                        binding(4, &self.qb_buf),
+                        binding(5, &self.vb_buf),
+                        binding(6, &self.pos_buf),
+                        binding(7, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu attention pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu attention pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(t as u32, 1, 1);
@@ -719,6 +979,66 @@ impl AttentionKernel {
         self.ctx.queue.submit(Some(encoder.finish()));
         let bytes = self.ctx.download(&self.out_buf, size);
         bytes_to_f32(&bytes, count)
+    }
+
+    /// Record the offline rel-pos attention into `batch`. `q`/`k`/`v`/
+    /// `pos` are GPU buffers; `q_bias`/`v_bias` are host slices; `out`
+    /// receives `[t, d]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record(
+        &mut self,
+        batch: &mut ComputeBatch,
+        q: &wgpu::Buffer,
+        k: &wgpu::Buffer,
+        v: &wgpu::Buffer,
+        q_bias: &[f32],
+        v_bias: &[f32],
+        pos: &wgpu::Buffer,
+        t: usize,
+        d: usize,
+        n_heads: usize,
+        scale: f32,
+        left: usize,
+        right: usize,
+        out: &wgpu::Buffer,
+    ) {
+        let dsize = (d * 4).max(4) as u64;
+        let chunk_size = right + 1;
+        let left_chunks = left / chunk_size;
+        let params: [u32; 8] = [
+            t as u32,
+            d as u32,
+            n_heads as u32,
+            (d / n_heads) as u32,
+            scale.to_bits(),
+            0,
+            chunk_size as u32,
+            left_chunks as u32,
+        ];
+        let params_buf = batch.alloc(32);
+        batch.write(&params_buf, &bytes32(&params));
+        let qb_buf = batch.alloc(dsize);
+        batch.write(&qb_buf, bytemuck_safe(q_bias));
+        let vb_buf = batch.alloc(dsize);
+        batch.write(&vb_buf, bytemuck_safe(v_bias));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu attention bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding(1, q),
+                        binding(2, k),
+                        binding(3, v),
+                        binding(4, &qb_buf),
+                        binding(5, &vb_buf),
+                        binding(6, pos),
+                        binding(7, out),
+                    ],
+                });
+        batch.dispatch(&self.pipeline, &bind, t as u32, 1);
     }
 }
 
@@ -759,8 +1079,10 @@ impl AttnStreamKernel {
                 ],
             },
         );
-        let module = ctx.shader("voice/gpu attn_stream shader", ATTN_STREAM_WGSL)?;
-        let pipeline = ctx.pipeline("voice/gpu attn_stream", &module, &layout, "main");
+        let module =
+            ctx.shader("voice/gpu attn_stream shader", ATTN_STREAM_WGSL)?;
+        let pipeline =
+            ctx.pipeline("voice/gpu attn_stream", &module, &layout, "main");
         let mk = |label: &str, usages| ctx.create_buffer(label, 4, usages);
         Ok(Self {
             ctx: ctx.clone(),
@@ -771,12 +1093,30 @@ impl AttnStreamKernel {
                 48,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
-            q_buf: mk("voice/gpu attn_stream q", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            kv_buf: mk("voice/gpu attn_stream kv", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            vv_buf: mk("voice/gpu attn_stream vv", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            pos_buf: mk("voice/gpu attn_stream pos", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            qb_buf: mk("voice/gpu attn_stream q_bias", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            vb_buf: mk("voice/gpu attn_stream v_bias", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
+            q_buf: mk(
+                "voice/gpu attn_stream q",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            kv_buf: mk(
+                "voice/gpu attn_stream kv",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            vv_buf: mk(
+                "voice/gpu attn_stream vv",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            pos_buf: mk(
+                "voice/gpu attn_stream pos",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            qb_buf: mk(
+                "voice/gpu attn_stream q_bias",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            vb_buf: mk(
+                "voice/gpu attn_stream v_bias",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
             out_buf: mk(
                 "voice/gpu attn_stream out",
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -850,38 +1190,55 @@ impl AttnStreamKernel {
             k_hi as u32,
             pos_off as u32,
         ];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu attn_stream"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.q_buf, 0, bytemuck_safe(q));
-        self.ctx.queue.write_buffer(&self.kv_buf, 0, bytemuck_safe(kv));
-        self.ctx.queue.write_buffer(&self.vv_buf, 0, bytemuck_safe(vv));
-        self.ctx.queue.write_buffer(&self.pos_buf, 0, bytemuck_safe(pos_p));
-        self.ctx.queue.write_buffer(&self.qb_buf, 0, bytemuck_safe(q_bias));
-        self.ctx.queue.write_buffer(&self.vb_buf, 0, bytemuck_safe(v_bias));
-        let bind = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice/gpu attn_stream bind"),
-            layout: &self.layout,
-            entries: &[
-                binding(0, &self.params),
-                binding(1, &self.q_buf),
-                binding(2, &self.kv_buf),
-                binding(3, &self.vv_buf),
-                binding(4, &self.pos_buf),
-                binding(5, &self.qb_buf),
-                binding(6, &self.vb_buf),
-                binding(7, &self.out_buf),
-            ],
-        });
+            },
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.q_buf, 0, bytemuck_safe(q));
+        self.ctx
+            .queue
+            .write_buffer(&self.kv_buf, 0, bytemuck_safe(kv));
+        self.ctx
+            .queue
+            .write_buffer(&self.vv_buf, 0, bytemuck_safe(vv));
+        self.ctx
+            .queue
+            .write_buffer(&self.pos_buf, 0, bytemuck_safe(pos_p));
+        self.ctx
+            .queue
+            .write_buffer(&self.qb_buf, 0, bytemuck_safe(q_bias));
+        self.ctx
+            .queue
+            .write_buffer(&self.vb_buf, 0, bytemuck_safe(v_bias));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu attn_stream bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, &self.q_buf),
+                        binding(2, &self.kv_buf),
+                        binding(3, &self.vv_buf),
+                        binding(4, &self.pos_buf),
+                        binding(5, &self.qb_buf),
+                        binding(6, &self.vb_buf),
+                        binding(7, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu attn_stream pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu attn_stream pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(c as u32, 1, 1);
@@ -889,6 +1246,76 @@ impl AttnStreamKernel {
         self.ctx.queue.submit(Some(encoder.finish()));
         let bytes = self.ctx.download(&self.out_buf, size);
         bytes_to_f32(&bytes, count)
+    }
+
+    /// Record the streaming rel-pos attention into `batch`. `q`/`kv`/`vv`
+    /// are GPU buffers; `pos_p`/`q_bias`/`v_bias` are host slices; `out`
+    /// receives `[c, d]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record(
+        &mut self,
+        batch: &mut ComputeBatch,
+        q: &wgpu::Buffer,
+        kv: &wgpu::Buffer,
+        vv: &wgpu::Buffer,
+        pos_p: &[f32],
+        q_bias: &[f32],
+        v_bias: &[f32],
+        c: usize,
+        d: usize,
+        n_heads: usize,
+        scale: f32,
+        s: usize,
+        k_lo: usize,
+        band: usize,
+        chunk: usize,
+        left_chunks: usize,
+        k_hi: usize,
+        pos_off: usize,
+        out: &wgpu::Buffer,
+    ) {
+        let dsize = (d * 4).max(4) as u64;
+        let pos_size = (pos_p.len() * 4).max(4) as u64;
+        let params: [u32; 12] = [
+            c as u32,
+            d as u32,
+            n_heads as u32,
+            (d / n_heads) as u32,
+            scale.to_bits(),
+            s as u32,
+            k_lo as u32,
+            band as u32,
+            chunk as u32,
+            left_chunks as u32,
+            k_hi as u32,
+            pos_off as u32,
+        ];
+        let params_buf = batch.alloc(48);
+        batch.write(&params_buf, &bytes32(&params));
+        let pos_buf = batch.alloc(pos_size);
+        batch.write(&pos_buf, bytemuck_safe(pos_p));
+        let qb_buf = batch.alloc(dsize);
+        batch.write(&qb_buf, bytemuck_safe(q_bias));
+        let vb_buf = batch.alloc(dsize);
+        batch.write(&vb_buf, bytemuck_safe(v_bias));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu attn_stream bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding(1, q),
+                        binding(2, kv),
+                        binding(3, vv),
+                        binding(4, &pos_buf),
+                        binding(5, &qb_buf),
+                        binding(6, &vb_buf),
+                        binding(7, out),
+                    ],
+                });
+        batch.dispatch(&self.pipeline, &bind, c as u32, 1);
     }
 }
 
@@ -917,7 +1344,8 @@ impl DwConvKernel {
             },
         );
         let module = ctx.shader("voice/gpu dwconv shader", DWCONV_WGSL)?;
-        let pipeline = ctx.pipeline("voice/gpu dwconv", &module, &layout, "main");
+        let pipeline =
+            ctx.pipeline("voice/gpu dwconv", &module, &layout, "main");
         let mk = |label: &str, usages| ctx.create_buffer(label, 4, usages);
         Ok(Self {
             ctx: ctx.clone(),
@@ -928,8 +1356,14 @@ impl DwConvKernel {
                 16,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
-            x_buf: mk("voice/gpu dwconv x", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
-            w_buf: mk("voice/gpu dwconv w", wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST),
+            x_buf: mk(
+                "voice/gpu dwconv x",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            w_buf: mk(
+                "voice/gpu dwconv w",
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
             out_buf: mk(
                 "voice/gpu dwconv out",
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -937,7 +1371,8 @@ impl DwConvKernel {
         })
     }
 
-    /// `out[tt, c] = sum_k x[tt - pad_left + k, c] * w[c, k]` over valid frames.
+    /// `out[tt, c] = sum_k x[tt - pad_left + k, c] * w[c, k]` over valid
+    /// frames.
     pub fn forward(
         &mut self,
         x: &[f32],
@@ -972,30 +1407,39 @@ impl DwConvKernel {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let params: [u32; 4] = [t as u32, d as u32, kh as u32, pad_left as u32];
-        let mut encoder = self
-            .ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
                 label: Some("voice/gpu dwconv"),
-            });
-        self.ctx.queue.write_buffer(&self.params, 0, &bytes32(&params));
-        self.ctx.queue.write_buffer(&self.x_buf, 0, bytemuck_safe(x));
-        self.ctx.queue.write_buffer(&self.w_buf, 0, bytemuck_safe(w));
-        let bind = self.ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice/gpu dwconv bind"),
-            layout: &self.layout,
-            entries: &[
-                binding(0, &self.params),
-                binding(1, &self.x_buf),
-                binding(2, &self.w_buf),
-                binding(3, &self.out_buf),
-            ],
-        });
+            },
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.params, 0, &bytes32(&params));
+        self.ctx
+            .queue
+            .write_buffer(&self.x_buf, 0, bytemuck_safe(x));
+        self.ctx
+            .queue
+            .write_buffer(&self.w_buf, 0, bytemuck_safe(w));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu dwconv bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &self.params),
+                        binding(1, &self.x_buf),
+                        binding(2, &self.w_buf),
+                        binding(3, &self.out_buf),
+                    ],
+                });
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice/gpu dwconv pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("voice/gpu dwconv pass"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(count.div_ceil(256) as u32, 1, 1);
@@ -1004,6 +1448,42 @@ impl DwConvKernel {
         let bytes = self.ctx.download(&self.out_buf, size);
         bytes_to_f32(&bytes, count)
     }
+
+    /// Record the causal depthwise conv into `batch`. `x` is a GPU buffer;
+    /// `w` is a host slice (`[d, kh]`); `out` receives `[t, d]`.
+    pub fn record(
+        &mut self,
+        batch: &mut ComputeBatch,
+        x: &wgpu::Buffer,
+        w: &[f32],
+        t: usize,
+        d: usize,
+        kh: usize,
+        pad_left: usize,
+        out: &wgpu::Buffer,
+    ) {
+        let count = t * d;
+        let wsize = (w.len() * 4).max(4) as u64;
+        let params: [u32; 4] = [t as u32, d as u32, kh as u32, pad_left as u32];
+        let params_buf = batch.alloc(16);
+        batch.write(&params_buf, &bytes32(&params));
+        let w_buf = batch.alloc(wsize);
+        batch.write(&w_buf, bytemuck_safe(w));
+        let bind =
+            self.ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("voice/gpu dwconv bind"),
+                    layout: &self.layout,
+                    entries: &[
+                        binding(0, &params_buf),
+                        binding(1, x),
+                        binding(2, &w_buf),
+                        binding(3, out),
+                    ],
+                });
+        batch.dispatch(&self.pipeline, &bind, count.div_ceil(256) as u32, 1);
+    }
 }
 
 fn bind_buffer(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
@@ -1011,9 +1491,7 @@ fn bind_buffer(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage {
-                read_only,
-            },
+            ty: wgpu::BufferBindingType::Storage { read_only },
             has_dynamic_offset: false,
             min_binding_size: None,
         },
@@ -1025,11 +1503,20 @@ fn binding<'a>(
     binding: u32,
     buffer: &'a wgpu::Buffer,
 ) -> wgpu::BindGroupEntry<'a> {
+    binding_off(binding, buffer, 0)
+}
+
+/// Like [`binding`] but with a byte offset into `buffer`.
+fn binding_off<'a>(
+    binding: u32,
+    buffer: &'a wgpu::Buffer,
+    offset: u64,
+) -> wgpu::BindGroupEntry<'a> {
     wgpu::BindGroupEntry {
         binding,
         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
             buffer,
-            offset: 0,
+            offset,
             size: None,
         }),
     }
@@ -1039,18 +1526,7 @@ fn bytes32(v: &[u32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
-fn bytemuck_safe(x: &[f32]) -> &[u8] {
-    // SAFETY: f32 has no padding bits; the slice is exactly len*4 bytes.
-    unsafe {
-        std::slice::from_raw_parts(x.as_ptr() as *const u8, x.len() * 4)
-    }
-}
-
-pub(crate) fn f32_bytes(x: &[f32]) -> Vec<u8> {
-    bytemuck_safe(x).to_vec()
-}
-
-fn bytes_to_f32(v: &[u8], count: usize) -> Vec<f32> {
+pub(crate) fn bytes_to_f32(v: &[u8], count: usize) -> Vec<f32> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         out.push(f32::from_le_bytes([
@@ -1061,6 +1537,15 @@ fn bytes_to_f32(v: &[u8], count: usize) -> Vec<f32> {
         ]));
     }
     out
+}
+
+pub(crate) fn bytemuck_safe(x: &[f32]) -> &[u8] {
+    // SAFETY: f32 has no padding bits; the slice is exactly len*4 bytes.
+    unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, x.len() * 4) }
+}
+
+pub(crate) fn f32_bytes(x: &[f32]) -> Vec<u8> {
+    bytemuck_safe(x).to_vec()
 }
 
 #[cfg(test)]
@@ -1116,16 +1601,17 @@ mod tests {
         let mut gemm = Q8Gemm::new(&ctx).unwrap();
         let w_q = ctx.upload("wq", &packed.q, wgpu::BufferUsages::STORAGE);
         let w_s = ctx.upload("ws", &packed.s, wgpu::BufferUsages::STORAGE);
-        let y_gpu = gemm.gemm(&packed, &w_q, &w_s, None, &x, t, k);
+        let meta = PackedMeta {
+            rows: packed.rows,
+            kb: packed.kb,
+        };
+        let y_gpu = gemm.gemm(&meta, &w_q, &w_s, None, &x, t, k);
 
         let mut max_err = 0.0f32;
         for i in 0..y_ref.len() {
             max_err = max_err.max((y_ref[i] - y_gpu[i]).abs());
         }
-        let scale = y_ref
-            .iter()
-            .fold(0.0f32, |a, &b| a.max(b.abs()))
-            .max(1.0);
+        let scale = y_ref.iter().fold(0.0f32, |a, &b| a.max(b.abs())).max(1.0);
         assert!(
             max_err < scale * 1e-4,
             "max_err={max_err} scale={scale} ref={:?} gpu={:?}",
@@ -1283,8 +1769,7 @@ mod tests {
         // bias_add
         let dim = 1024;
         let bias: Vec<f32> = (0..dim).map(|_| rnd_f()).collect();
-        let y_ref: Vec<f32> =
-            (0..n).map(|i| x[i] + bias[i % dim]).collect();
+        let y_ref: Vec<f32> = (0..n).map(|i| x[i] + bias[i % dim]).collect();
         let y_gpu = ew.bias_add(&x, &bias);
         max_err = y_ref
             .iter()
@@ -1368,8 +1853,10 @@ mod tests {
         }
 
         let mut attn = AttentionKernel::new(&ctx).unwrap();
-        let y_gpu =
-            attn.forward(&q, &k, &v, &q_bias, &v_bias, &pos, t, d, n_heads, scale, left, right);
+        let y_gpu = attn.forward(
+            &q, &k, &v, &q_bias, &v_bias, &pos, t, d, n_heads, scale, left,
+            right,
+        );
         let mut max_err = 0.0f32;
         for i in 0..y_ref.len() {
             max_err = max_err.max((y_ref[i] - y_gpu[i]).abs());

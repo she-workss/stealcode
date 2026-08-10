@@ -12,7 +12,8 @@
 use anyhow::{Context, Result, bail};
 
 use super::{
-    Nemotron, Token, decoder::GreedyDecoder, streaming::StreamingEncoder,
+    Nemotron, Token, decoder::GreedyDecoder,
+    streaming::{StreamEncoder, StreamingEncoder},
 };
 
 /// One chunk = att_right+1 = 4 encoder frames = 32 mel frames = 320 ms.
@@ -190,7 +191,9 @@ pub fn grow_mel(
 /// Incremental transcript state (encoder cache + predictor state +
 /// accumulated tokens), decoupled from the `Nemotron` so the voice
 /// worker can own both independently.
-#[derive(Debug)]
+/// Incremental transcript state (encoder cache + predictor state +
+/// accumulated tokens), decoupled from the `Nemotron` so the voice
+/// worker can own both independently.
 pub struct LiveTranscriber {
     prompt_id: u32,
     pcm: Vec<f32>,
@@ -200,13 +203,36 @@ pub struct LiveTranscriber {
     tokens: Vec<Token>,
     st: StreamState,
     scratch: Vec<f32>,
-    senc: StreamingEncoder,
+    senc: Box<dyn StreamEncoder>,
+}
+
+impl std::fmt::Debug for LiveTranscriber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveTranscriber")
+            .field("prompt_id", &self.prompt_id)
+            .field("mel_next", &self.mel_next)
+            .field("processed_mel", &self.processed_mel)
+            .field("tokens", &self.tokens)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LiveTranscriber {
     pub fn new(model: &Nemotron, prompt_id: u32) -> Self {
         let st = StreamState::new(&model.decoder);
-        let senc = StreamingEncoder::new(model.encoder.cfg.n_layers);
+        let senc: Box<dyn StreamEncoder> =
+            Box::new(StreamingEncoder::new(model.encoder.cfg.n_layers));
+        Self::with_encoder(prompt_id, st, senc)
+    }
+
+    /// Build from an already-initialized encoder (CPU or GPU) plus
+    /// predictor state. This is how the voice worker plumbs a GPU
+    /// streaming encoder through.
+    pub fn with_encoder(
+        prompt_id: u32,
+        st: StreamState,
+        senc: Box<dyn StreamEncoder>,
+    ) -> Self {
         Self {
             prompt_id,
             pcm: Vec::new(),

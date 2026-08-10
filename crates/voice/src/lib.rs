@@ -364,7 +364,7 @@ fn process_stream(
                 return;
             }
         };
-        *live = Some(nemotron::live::LiveTranscriber::new(m, prompt_id));
+        *live = Some(build_live_transcriber(m, prompt_id));
     }
     let Some(tr) = live.as_mut() else { return };
     let t_decode = Instant::now();
@@ -393,6 +393,41 @@ fn process_stream(
                 .send(VoiceEvent::Error(format!("Decode error: {e:?}")));
         }
     }
+}
+
+/// Создаёт стриминговый транскрайбер, отдавая предпочтение GPU
+/// энкодеру (если доступен), иначе — CPU. GPU-фолбэк прозрачен:
+/// `try_build` возвращает `None` при отсутствии GPU.
+fn build_live_transcriber(
+    m: &mut nemotron::Nemotron,
+    prompt_id: u32,
+) -> nemotron::live::LiveTranscriber {
+    #[cfg(feature = "gpu")]
+    {
+        match gpu::streaming::try_build(&m.encoder) {
+            Ok(Some(senc)) => {
+                info!("voice backend: GPU streaming encoder");
+                // GPU path keeps weights in VRAM; drop the CPU copies so
+                // the encoder is not duplicated in RAM (~700 MB saved).
+                m.encoder.blocks = Vec::new();
+                let st = nemotron::live::StreamState::new(&m.decoder);
+                return nemotron::live::LiveTranscriber::with_encoder(
+                    prompt_id, st, senc,
+                );
+            }
+            Ok(None) => {
+                info!("voice backend: GPU unavailable, falling back to CPU encoder");
+            }
+            Err(e) => {
+                info!("voice backend: GPU init failed ({e:?}), using CPU encoder");
+            }
+        }
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        info!("voice backend: GPU support not compiled, using CPU encoder");
+    }
+    nemotron::live::LiveTranscriber::new(m, prompt_id)
 }
 
 /// Загрузка модели с публикацией статусов; возвращает None при ошибке.

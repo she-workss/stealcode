@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::info;
-use wgpu::util::DeviceExt;
 
 /// A thin wrapper over a wgpu device/queue plus the small helpers the
 /// kernels below need (buffers, pipelines, staged download).
@@ -70,7 +69,7 @@ impl GpuContext {
                 required_features: features,
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
             },
         ))
@@ -152,19 +151,27 @@ impl GpuContext {
         })
     }
 
-    /// Upload `contents` into a new buffer with `usage` (one-shot,
-    /// mapped at creation — used for weights/constants).
+    /// Upload `contents` into a new buffer with `usage`.
+    ///
+    /// Uses `queue.write_buffer` (backed by a per-call staging buffer that is
+    /// freed on the next submission). This keeps a CPU copy of `contents`
+    /// transiently, which is fine for small buffers. For bulk weight uploads
+    /// use a `StagingBelt` (see `GpuModel::from_encoder`) so staging memory
+    /// is reused instead of doubling the working set.
     pub fn upload(
         &self,
         label: &str,
         contents: &[u8],
         usage: wgpu::BufferUsages,
     ) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
-            contents,
-            usage,
-        })
+            size: contents.len() as u64,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&buf, 0, contents);
+        buf
     }
 
     /// Copy `size` bytes from `src` into a CPU-visible staging buffer

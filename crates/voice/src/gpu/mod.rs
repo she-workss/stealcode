@@ -4,6 +4,7 @@
 //! enabled and is never required at runtime: if `GpuContext::init()`
 //! returns `None`, the voice crate keeps using the CPU path untouched.
 
+pub mod batch;
 pub mod context;
 pub mod encoder;
 pub mod kernels;

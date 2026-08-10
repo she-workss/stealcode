@@ -10,14 +10,14 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 use super::context::GpuContext;
-use super::kernels::{f32_bytes, pack_q8, PackedQ8};
+use super::kernels::{f32_bytes, pack_q8, PackedMeta};
 use crate::nemotron::encoder::Encoder;
 use crate::nemotron::weights::{LayerNorm, Lin};
 
 /// Uploaded Q8 weight matrix + bias for one linear layer.
 pub struct LinBufs {
     /// Packed layout descriptor (used for dispatch sizing).
-    pub packed: PackedQ8,
+    pub packed: PackedMeta,
     /// `packed.q` on the GPU (storage).
     pub q: wgpu::Buffer,
     /// `packed.s` on the GPU (storage).
@@ -72,7 +72,12 @@ pub struct GpuModel {
     pub blocks: Vec<GpuBlock>,
 }
 
-fn pack_lin(ctx: &Arc<GpuContext>, lin: &Lin) -> Result<LinBufs> {
+fn pack_lin(
+    ctx: &Arc<GpuContext>,
+    belt: &mut wgpu::util::StagingBelt,
+    encoder: &mut wgpu::CommandEncoder,
+    lin: &Lin,
+) -> Result<LinBufs> {
     let qm = lin
         .q
         .as_ref()
@@ -80,19 +85,57 @@ fn pack_lin(ctx: &Arc<GpuContext>, lin: &Lin) -> Result<LinBufs> {
     let row_len = qm.row_len();
     let block_bytes = qm.padded_row() / row_len.div_ceil(32);
     let packed = pack_q8(qm.bytes(), qm.rows(), row_len, qm.padded_row(), block_bytes);
-    let q = ctx.upload("voice/gpu lin q", &packed.q, wgpu::BufferUsages::STORAGE);
-    let s = ctx.upload("voice/gpu lin s", &packed.s, wgpu::BufferUsages::STORAGE);
+    let q = upload_belt(ctx, belt, encoder, "voice/gpu lin q", &packed.q);
+    let s = upload_belt(ctx, belt, encoder, "voice/gpu lin s", &packed.s);
     let bias = lin
         .bias
         .as_ref()
-        .map(|b| ctx.upload("voice/gpu lin bias", &f32_bytes(b), wgpu::BufferUsages::STORAGE));
+        .map(|b| upload_belt(ctx, belt, encoder, "voice/gpu lin bias", &f32_bytes(b)));
+    // The host-side packed byte copies are transient: `upload` copies them
+    // into storage buffers, so only the layout descriptor is kept.
     Ok(LinBufs {
-        packed,
+        packed: PackedMeta {
+            rows: packed.rows,
+            kb: packed.kb,
+        },
         q,
         s,
         bias,
         k: row_len,
     })
+}
+
+/// Create a not-mapped storage buffer and stage `contents` into it through
+/// a shared `StagingBelt`. The belt reuses its staging chunks across calls
+/// (unlike `Queue::write_buffer`, which allocates a fresh staging buffer per
+/// call that is only freed on the next submission — with hundreds of
+/// uploads that transiently holds a full second copy of the weights in
+/// host memory).
+fn upload_belt(
+    ctx: &Arc<GpuContext>,
+    belt: &mut wgpu::util::StagingBelt,
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    contents: &[u8],
+) -> wgpu::Buffer {
+    let size = contents.len() as u64;
+    let size_aligned = size.div_ceil(wgpu::COPY_BUFFER_ALIGNMENT) * wgpu::COPY_BUFFER_ALIGNMENT;
+    let buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size_aligned,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    {
+        let mut view = belt.write_buffer(
+            encoder,
+            &buf,
+            0,
+            wgpu::BufferSize::new(size_aligned).expect("size"),
+        );
+        view.slice(..size as usize).copy_from_slice(contents);
+    }
+    buf
 }
 
 fn pack_norm(n: &LayerNorm) -> NormW {
@@ -111,6 +154,7 @@ impl GpuModel {
         let cfg = &enc.cfg;
         let head_dim = cfg.d_model / cfg.n_heads;
         let mut blocks = Vec::with_capacity(enc.blocks.len());
+        let mut belt = wgpu::util::StagingBelt::new(ctx.device.as_ref().clone(), 8 << 20);
         for b in &enc.blocks {
             let dw = &b.dw;
             if dw.pad_right != 0 {
@@ -119,30 +163,42 @@ impl GpuModel {
                     dw.pad_right
                 ));
             }
-            blocks.push(GpuBlock {
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("voice/gpu model upload"),
+                });
+            let block = GpuBlock {
                 norm_ff1: pack_norm(&b.norm_ff1),
-                ff1_lin1: pack_lin(ctx, &b.ff1_lin1)?,
-                ff1_lin2: pack_lin(ctx, &b.ff1_lin2)?,
+                ff1_lin1: pack_lin(ctx, &mut belt, &mut encoder, &b.ff1_lin1)?,
+                ff1_lin2: pack_lin(ctx, &mut belt, &mut encoder, &b.ff1_lin2)?,
                 norm_att: pack_norm(&b.norm_att),
-                attn_q: pack_lin(ctx, &b.attn_q)?,
-                attn_k: pack_lin(ctx, &b.attn_k)?,
-                attn_v: pack_lin(ctx, &b.attn_v)?,
-                attn_pos: pack_lin(ctx, &b.attn_pos)?,
-                attn_out: pack_lin(ctx, &b.attn_out)?,
+                attn_q: pack_lin(ctx, &mut belt, &mut encoder, &b.attn_q)?,
+                attn_k: pack_lin(ctx, &mut belt, &mut encoder, &b.attn_k)?,
+                attn_v: pack_lin(ctx, &mut belt, &mut encoder, &b.attn_v)?,
+                attn_pos: pack_lin(ctx, &mut belt, &mut encoder, &b.attn_pos)?,
+                attn_out: pack_lin(ctx, &mut belt, &mut encoder, &b.attn_out)?,
                 pos_u: b.pos_u.clone(),
                 pos_v: b.pos_v.clone(),
                 norm_conv: pack_norm(&b.norm_conv),
-                pw1: pack_lin(ctx, &b.pw1)?,
+                pw1: pack_lin(ctx, &mut belt, &mut encoder, &b.pw1)?,
                 dw: dw.w.clone(),
                 dw_kh: dw.kh,
                 dw_pad_left: dw.pad_left,
                 conv_ln: pack_norm(&b.conv_ln),
-                pw2: pack_lin(ctx, &b.pw2)?,
+                pw2: pack_lin(ctx, &mut belt, &mut encoder, &b.pw2)?,
                 norm_ff2: pack_norm(&b.norm_ff2),
-                ff2_lin1: pack_lin(ctx, &b.ff2_lin1)?,
-                ff2_lin2: pack_lin(ctx, &b.ff2_lin2)?,
+                ff2_lin1: pack_lin(ctx, &mut belt, &mut encoder, &b.ff2_lin1)?,
+                ff2_lin2: pack_lin(ctx, &mut belt, &mut encoder, &b.ff2_lin2)?,
                 norm_out: pack_norm(&b.norm_out),
-            });
+            };
+            belt.finish();
+            ctx.queue.submit(Some(encoder.finish()));
+            ctx.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("voice/gpu model upload poll");
+            belt.recall();
+            blocks.push(block);
         }
         Ok(Self {
             ctx: ctx.clone(),
