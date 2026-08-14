@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "audio_engine"
-version = "0.14.16"
+version = "0.14.20"
 dependencies = [
  "anyhow",
  "cpal 0.18.1",
