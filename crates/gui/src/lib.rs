@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 #[cfg(feature = "voice")]
 use gpui::Entity;
 use gpui::{
@@ -15,11 +16,10 @@ use gpui::{
     point, prelude::*, px, size,
 };
 #[cfg(feature = "voice")]
+use gpui_component::button::ButtonVariants;
+#[cfg(feature = "voice")]
 use gpui_component::input::{Input, InputState};
-use gpui_component::{
-    Disableable, Root, StyledExt,
-    button::{Button, ButtonVariants},
-};
+use gpui_component::{Disableable, Root, StyledExt, button::Button};
 use settings::Settings;
 use sound::sounds::SoundName;
 use tracing::error;
@@ -32,12 +32,9 @@ use voice::VoiceManager;
 
 const APP_USER_MODEL_ID: &str = "he-thinks.StealCode";
 
-/// How often the background task checks `VoiceManager` for new status/text
-/// updates and asks the view to redraw. Mirrors the TUI's per-loop-iteration
-/// `state.voice.poll_events()` call, just adapted to GPUI's async model
-/// instead of a blocking terminal event loop.
-#[cfg(feature = "voice")]
-const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// How often the background task polls the voice/update workers for new
+/// status text and asks the view to redraw (mirrors the TUI's poll loop).
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[cfg(target_os = "macos")]
 static SOUND: &str = "Submarine";
@@ -67,119 +64,47 @@ fn show_notification() {
         .show();
 }
 
-/// Background worker for "Check for updates now" / auto-update polling,
-/// used only to let the GUI exercise both the manual and automatic paths
-/// through `auto_update` for testing. Same background-thread-plus-channel
-/// shape as `VoiceManager`, kept separate from it since the two have
-/// nothing in common besides that shape.
-#[derive(Debug)]
-enum UpdateCommand {
-    Check,
-    UpdateAndRestart,
-}
-
-#[derive(Debug)]
-enum UpdateEvent {
-    Status(String),
-    Checked(Option<semver::Version>),
-}
-
+/// Background worker for update checks / auto-update polling; owns the
+/// channels and UI state (worker thread lives in
+/// `auto_update::spawn_update_worker`, shared with the TUI).
 #[derive(Debug)]
 struct UpdateManager {
     auto_update_enabled: bool,
     status: String,
     /// Version an update is available for, from the last successful check.
     available_version: Option<semver::Version>,
-    tx_cmd: Option<Sender<UpdateCommand>>,
-    rx_event: Option<Receiver<UpdateEvent>>,
+    tx_cmd: Option<Sender<auto_update::UpdateWorkerCommand>>,
+    rx_event: Option<Receiver<auto_update::UpdateWorkerEvent>>,
 }
 
 impl UpdateManager {
     fn new(auto_update_enabled: bool) -> Self {
         Self {
             auto_update_enabled,
-            status: Self::status_label(auto_update_enabled),
+            status: if auto_update_enabled {
+                "Auto-update: ON".to_string()
+            } else {
+                "Auto-update: OFF (manual only)".to_string()
+            },
             available_version: None,
             tx_cmd: None,
             rx_event: None,
         }
     }
 
-    const fn status_label(auto_update_enabled: bool) -> String {
-        String::new() // placeholder, overwritten immediately below
-    }
-
     fn start_worker_if_needed(&mut self) {
         if self.tx_cmd.is_some() {
             return;
         }
-        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<UpdateCommand>();
-        let (tx_event, rx_event) = std::sync::mpsc::channel::<UpdateEvent>();
-        std::thread::spawn(move || {
-            while let Ok(command) = rx_cmd.recv() {
-                let current_version =
-                    semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let owner = "she-workss";
-                let repo = "stealcode";
-                let token = std::env::var("STEALCODE_GH_TOKEN").ok();
-                let channel = release_channel::ReleaseChannel::current();
-                match command {
-                    UpdateCommand::Check => {
-                        let result = auto_update::check_now_blocking(
-                            owner,
-                            repo,
-                            token,
-                            current_version,
-                            channel,
-                        );
-                        let event = match result {
-                            Ok(Some(version)) => {
-                                UpdateEvent::Checked(Some(version))
-                            }
-                            Ok(None) => UpdateEvent::Checked(None),
-                            Err(error) => UpdateEvent::Status(format!(
-                                "Check failed: {error}"
-                            )),
-                        };
-                        let _ = tx_event.send(event);
-                    }
-                    UpdateCommand::UpdateAndRestart => {
-                        let _ = tx_event.send(UpdateEvent::Status(
-                            "Downloading update...".to_string(),
-                        ));
-                        match auto_update::update_now_blocking(
-                            owner,
-                            repo,
-                            token,
-                            current_version,
-                            channel,
-                        ) {
-                            Ok(version) => {
-                                let _ = tx_event.send(UpdateEvent::Status(
-                                    format!(
-                                        "Update installed: v{version} \
-                                         - restarting"
-                                    ),
-                                ));
-                                if let Err(error) =
-                                    auto_update::restart_updated_app()
-                                {
-                                    let _ = tx_event.send(UpdateEvent::Status(
-                                        format!("Restart failed: {error}"),
-                                    ));
-                                }
-                            }
-                            Err(error) => {
-                                let _ = tx_event.send(UpdateEvent::Status(
-                                    format!("Update failed: {error}"),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+        let (tx_cmd, rx_event) = auto_update::spawn_update_worker(
+            "she-workss",
+            "stealcode",
+            std::env::var("STEALCODE_GH_TOKEN").ok(),
+            current_version,
+            release_channel::ReleaseChannel::current(),
+        );
         self.tx_cmd = Some(tx_cmd);
         self.rx_event = Some(rx_event);
     }
@@ -188,7 +113,7 @@ impl UpdateManager {
         self.start_worker_if_needed();
         self.status = "Checking...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(UpdateCommand::Check);
+            let _ = tx.send(auto_update::UpdateWorkerCommand::Check);
         }
     }
 
@@ -199,7 +124,7 @@ impl UpdateManager {
         self.start_worker_if_needed();
         self.status = "Downloading update...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(UpdateCommand::UpdateAndRestart);
+            let _ = tx.send(auto_update::UpdateWorkerCommand::UpdateAndRestart);
         }
     }
 
@@ -216,18 +141,19 @@ impl UpdateManager {
     }
 
     fn poll_events(&mut self) {
+        use auto_update::UpdateWorkerEvent;
         if let Some(rx) = &self.rx_event {
             if let Ok(event) = rx.try_recv() {
                 match event {
-                    UpdateEvent::Status(status) => self.status = status,
-                    UpdateEvent::Checked(version) => {
-                        self.available_version = version.clone();
-                        self.status = match version {
+                    UpdateWorkerEvent::Status(status) => self.status = status,
+                    UpdateWorkerEvent::Checked(version) => {
+                        self.status = match &version {
                             Some(version) => {
                                 format!("Update available: v{version}")
                             }
                             None => "Up to date".to_string(),
                         };
+                        self.available_version = version;
                     }
                 }
             }
@@ -239,17 +165,15 @@ impl UpdateManager {
 struct StealcodeApp {
     #[cfg(feature = "voice")]
     voice: VoiceManager,
-    /// Backing state for the read-only transcript textarea. Its buffer is
-    /// written to from the polling task below via `set_value` whenever
-    /// `VoiceManager::text` changes - there's no per-render override for
-    /// `Input` the way some other gpui-component widgets have (e.g.
-    /// `Clipboard::value`), so this is the only way to keep it in sync.
+    /// Backing state for the read-only transcript textarea, kept in sync by
+    /// the polling task via `set_value` (`Input` has no per-render override).
     #[cfg(feature = "voice")]
     voice_input: Entity<InputState>,
     updates: UpdateManager,
 }
 
 impl StealcodeApp {
+    #[cfg_attr(not(feature = "voice"), allow(unused_variables))]
     fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
         #[cfg(feature = "voice")]
         let voice_input = cx.new(|cx| {
@@ -259,42 +183,36 @@ impl StealcodeApp {
                 .placeholder("Press \"Start voice recognition\" and speak...")
         });
 
-        // Same reasoning as the TUI's poll loop: VoiceManager runs its
-        // actual work (mic capture, model load, transcription) on a
-        // background thread and only exposes state through
-        // `poll_events()`. GPUI has no equivalent of the TUI's blocking
-        // event loop to hang this off of, so it gets its own lightweight
-        // polling task instead, spawned once here and running for the
-        // life of the view.
-        //
-        // `spawn_in`/`update_in` (rather than plain `spawn`/`update`) are
-        // needed specifically because `InputState::set_value` requires a
-        // `&mut Window`, not just a `Context` - plain `cx.spawn` only
-        // hands back an `AsyncApp`, which has no window attached.
-        #[cfg(feature = "voice")]
+        // VoiceManager works on a background thread and exposes state only
+        // through `poll_events()` (as in the TUI), so poll it from a
+        // lightweight task for the life of the view. `spawn_in`/`update_in`
+        // are required because `InputState::set_value` needs a `&mut Window`.
         cx.spawn_in(window, async move |this, cx| {
             loop {
-                cx.background_executor().timer(VOICE_POLL_INTERVAL).await;
+                cx.background_executor().timer(POLL_INTERVAL).await;
                 let alive = this.update_in(cx, |this, window, cx| {
-                    this.voice.poll_events();
-                    let text = this.voice.text.clone();
-                    this.voice_input.update(cx, |input_state, cx| {
-                        input_state.set_value(text, window, cx);
-                    });
                     this.updates.poll_events();
+                    #[cfg(feature = "voice")]
+                    {
+                        this.voice.poll_events();
+                        let text = &this.voice.text;
+                        this.voice_input.update(cx, |input_state, cx| {
+                            input_state.set_value(text, window, cx);
+                        });
+                    }
+                    #[cfg(not(feature = "voice"))]
+                    let _ = window;
                     cx.notify();
                 });
                 if alive.is_err() {
-                    // The view (and its window) is gone - nothing left to
-                    // update, stop polling instead of spinning forever.
+                    // The view and its window are gone; stop polling.
                     break;
                 }
             }
         })
         .detach();
 
-        let mut updates = UpdateManager::new(true);
-        updates.status = "Auto-update: ON".to_string();
+        let updates = UpdateManager::new(true);
 
         Self {
             #[cfg(feature = "voice")]
@@ -358,12 +276,10 @@ impl Render for StealcodeApp {
                                     cx.notify();
                                 })),
                         )
-                        .child(SharedString::from(self.voice.status.clone()))
+                        .child(SharedString::from(&self.voice.status))
                         .child(
-                            // Content is kept in sync by the polling task's
-                            // `set_value` call above, not here - `Input` has no
-                            // per-render value override, unlike some other
-                            // gpui-component widgets (e.g. `Clipboard::value`).
+                            // Kept in sync by the polling task's `set_value` above; `Input` has
+                            // no per-render value override.
                             Input::new(&self.voice_input),
                         )
                 }
@@ -431,7 +347,7 @@ impl Render for StealcodeApp {
                                     )),
                             ),
                     )
-                    .child(SharedString::from(self.updates.status.clone())),
+                    .child(SharedString::from(&self.updates.status)),
             )
     }
 }
@@ -453,7 +369,7 @@ fn open_app_window(
     window_handle: &Arc<Mutex<Option<WindowHandle<Root>>>>,
     cx: &mut App,
 ) {
-    let mut state = window_handle.lock().unwrap();
+    let mut state = window_handle.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(handle) = state.as_ref() {
         let is_alive = handle
             .update(cx, |_, window, _| {
@@ -487,22 +403,16 @@ fn open_app_window(
     }
 }
 
-fn load_icon() -> tray_icon::Icon {
-    // The icon is compiled into the binary so it doesn't depend on the
-    // (source-tree) path the build ran on; `env!("CARGO_MANIFEST_DIR")`
-    // bakes that build machine's path in, which is wrong for installed
-    // binaries.
+fn load_icon() -> anyhow::Result<tray_icon::Icon> {
+    // Compiled in so the binary doesn't depend on the build machine's path;
+    // `env!("CARGO_MANIFEST_DIR")` would bake that path in.
     let image_bytes = include_bytes!("../../cli/assets/icons/prod/icon.png");
-    let (icon_rgba, icon_width, icon_height) = {
-        let image = image::load_from_memory(image_bytes)
-            .expect("Failed to decode embedded icon")
-            .into_rgba8();
-        let (width, height) = image.dimensions();
-        let rgba = image.into_raw();
-        (rgba, width, height)
-    };
-    tray_icon::Icon::from_rgba(icon_rgba, icon_width, icon_height)
-        .expect("Failed to open icon")
+    let image = image::load_from_memory(image_bytes)
+        .context("failed to decode embedded icon")?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    tray_icon::Icon::from_rgba(image.into_raw(), width, height)
+        .context("failed to open icon")
 }
 
 #[cfg(target_os = "windows")]
@@ -522,27 +432,24 @@ pub fn run_desktop(
 ) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     setup_windows_app_id();
-    // If a previous session staged an update (e.g. via `stealcode upgrade`
-    // or an in-app update while another instance was running), apply it now:
-    // the helper swaps the binary in, relaunches StealCode, and this stale
-    // process exits.
+    let icon = load_icon()?;
+    // Apply a staged update (e.g. from `stealcode upgrade` or another
+    // instance) via the helper, which relaunches StealCode; exit this process.
     #[cfg(target_os = "windows")]
     if auto_update::apply_staged_update_on_startup()? {
         std::process::exit(0);
     }
     gpui_platform::application().run(move |cx| {
-        // If a silent update finished while we were running, spawn the
-        // helper to apply it as we exit. The subscription must stay alive
-        // for the hook to remain registered (same leak trick as the tray
-        // icon below). Renaming a running exe is legal on Windows, so the
+        // Apply a silent update finished while running as we exit. The
+        // subscription must stay alive for the hook (same leak trick as the
+        // tray icon); renaming a running exe is legal on Windows, so the
         // helper's retry loop rides out our shutdown.
         #[cfg(target_os = "windows")]
         std::mem::forget(cx.on_app_quit(|_| async move {
             auto_update::finalize_auto_update_on_quit().await;
         }));
-        // Remove stale update/install/old dirs from a crashed previous
-        // update, at startup (only empty dirs are removed - a genuinely
-        // broken leftover is left alone, see `cleanup_windows`).
+        // Remove stale update dirs from a crashed previous update at
+        // startup (only empty dirs; see `cleanup_windows`).
         #[cfg(target_os = "windows")]
         cx.spawn(|_: &mut AsyncApp| async move {
             if let Err(error) = auto_update::cleanup_windows().await {
@@ -551,7 +458,7 @@ pub fn run_desktop(
         })
         .detach();
         gpui_component::init(cx);
-        cx.open_window(
+        let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(0.), px(0.)),
@@ -562,8 +469,10 @@ pub fn run_desktop(
                 ..Default::default()
             },
             |_window, cx| cx.new(|_| DummyView),
-        )
-        .expect("Failed to create dummy window");
+        );
+        if let Err(error) = result {
+            error!("failed to create dummy window: {error:?}");
+        }
         let main_window_handle: Arc<Mutex<Option<WindowHandle<Root>>>> =
             Arc::new(Mutex::new(None));
         let menu = Menu::new();
@@ -572,15 +481,16 @@ pub fn run_desktop(
         let exit_item = MenuItem::with_id("exit", "Exit", true, None);
         let _ = menu.append(&show_notif_item);
         let _ = menu.append(&exit_item);
-        let icon = load_icon();
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip("StealCode")
             .with_icon(icon)
             .with_menu_on_left_click(false)
-            .build()
-            .expect("Failed to create tray icon");
-        std::mem::forget(tray_icon);
+            .build();
+        match tray_icon {
+            Ok(tray_icon) => std::mem::forget(tray_icon),
+            Err(error) => error!("failed to create tray icon: {error}"),
+        }
         cx.spawn({
             let main_window_handle = main_window_handle.clone();
             async move |cx: &mut AsyncApp| {

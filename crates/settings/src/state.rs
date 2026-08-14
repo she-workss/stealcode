@@ -29,11 +29,9 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// Atomically increments the token index and returns the next slot in the
-    /// pool using wrapping modulo.  Returns `0` for an empty pool.
-    ///
-    /// `Relaxed` ordering is sufficient here: we only need the atomicity of
-    /// `fetch_add`, not any cross-thread memory ordering guarantee.
+    /// Atomically increments the token index, wrapping modulo `pool_len`;
+    /// returns `0` for an empty pool. `Relaxed` ordering suffices - we only
+    /// need `fetch_add` atomicity, not any cross-thread ordering guarantee.
     pub fn increment_token_index(&self, pool_len: usize) -> usize {
         if pool_len == 0 {
             return 0;
@@ -53,6 +51,7 @@ pub fn now_secs() -> f64 {
         .as_secs_f64()
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

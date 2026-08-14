@@ -1,6 +1,6 @@
-//! Provides the StealCode release channel (stable vs nightly).
+//! Provides the `StealCode` release channel (stable vs nightly).
 //!
-//! Independent implementation for StealCode, inspired by Zed's
+//! Independent implementation for `StealCode`, inspired by Zed's
 //! `crates/release_channel` (GPL-3.0-or-later) but not copied from it -
 //! written fresh to stay under the workspace's MIT license, and
 //! deliberately dependency-light (no `gpui`) so it can be used identically
@@ -49,7 +49,7 @@ pub static RELEASE_CHANNEL: LazyLock<ReleaseChannel> = LazyLock::new(|| {
     })
 });
 
-/// A StealCode release channel. Stable and nightly are separate,
+/// A `StealCode` release channel. Stable and nightly are separate,
 /// side-by-side-installable builds (different `AppId`/AUMID in
 /// `stealcode.iss`), not a runtime toggle - you pick one when you download
 /// the installer, and self-update only ever moves you within that channel.
@@ -61,8 +61,7 @@ pub enum ReleaseChannel {
 }
 
 impl ReleaseChannel {
-    pub const ALL: [ReleaseChannel; 2] =
-        [ReleaseChannel::Stable, ReleaseChannel::Nightly];
+    pub const ALL: [Self; 2] = [Self::Stable, Self::Nightly];
 
     /// Returns the channel this binary was built for.
     #[must_use]
@@ -80,8 +79,8 @@ impl ReleaseChannel {
     #[must_use]
     pub const fn poll_interval(self) -> std::time::Duration {
         match self {
-            Self::Stable => std::time::Duration::from_secs(60 * 60),
-            Self::Nightly => std::time::Duration::from_secs(15 * 60),
+            Self::Stable => std::time::Duration::from_hours(1),
+            Self::Nightly => std::time::Duration::from_mins(15),
         }
     }
 
@@ -103,7 +102,7 @@ impl ReleaseChannel {
         }
     }
 
-    /// The Windows AppUserModelID for this channel - must be distinct per
+    /// The Windows `AppUserModelID` for this channel - must be distinct per
     /// channel so stable and nightly installs get separate taskbar/toast
     /// identities and don't fight over the same jump list.
     #[must_use]

@@ -292,19 +292,15 @@ impl ColorScheme {
     }
 }
 
-/// Background worker for "check for updates now" / auto-update polling in
-/// the TUI. Same background-thread-plus-channel shape used elsewhere in
-/// this file for `VoiceManager`.
-enum UpdateCommand {
-    Check,
-    UpdateAndRestart,
-}
-
+/// Background worker for update checks / auto-update polling; owns the
+/// channels and UI state (worker thread shared with the GUI).
 struct UpdateManagerTui {
     auto_update_enabled: bool,
     status: String,
-    tx_cmd: Option<std::sync::mpsc::Sender<UpdateCommand>>,
-    rx_event: Option<std::sync::mpsc::Receiver<String>>,
+    /// Version an update is available for, from the last successful check.
+    available_version: Option<semver::Version>,
+    tx_cmd: Option<std::sync::mpsc::Sender<auto_update::UpdateWorkerCommand>>,
+    rx_event: Option<std::sync::mpsc::Receiver<auto_update::UpdateWorkerEvent>>,
 }
 
 impl UpdateManagerTui {
@@ -312,6 +308,7 @@ impl UpdateManagerTui {
         Self {
             auto_update_enabled,
             status: "Update: idle".to_string(),
+            available_version: None,
             tx_cmd: None,
             rx_event: None,
         }
@@ -321,68 +318,15 @@ impl UpdateManagerTui {
         if self.tx_cmd.is_some() {
             return;
         }
-        let (tx_cmd, rx_cmd) = std::sync::mpsc::channel::<UpdateCommand>();
-        let (tx_event, rx_event) = std::sync::mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            while let Ok(command) = rx_cmd.recv() {
-                let current_version =
-                    semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
-                let owner = "she-workss";
-                let repo = "stealcode";
-                let token = std::env::var("STEALCODE_GH_TOKEN").ok();
-                let channel = release_channel::ReleaseChannel::current();
-                match command {
-                    UpdateCommand::Check => {
-                        let message = match auto_update::check_now_blocking(
-                            owner,
-                            repo,
-                            token,
-                            current_version,
-                            channel,
-                        ) {
-                            Ok(Some(version)) => {
-                                format!("Update available: v{version}")
-                            }
-                            Ok(None) => "Up to date".to_string(),
-                            Err(error) => {
-                                format!("Check failed: {error}")
-                            }
-                        };
-                        let _ = tx_event.send(message);
-                    }
-                    UpdateCommand::UpdateAndRestart => {
-                        let _ =
-                            tx_event.send("Downloading update...".to_string());
-                        match auto_update::update_now_blocking(
-                            owner,
-                            repo,
-                            token,
-                            current_version,
-                            channel,
-                        ) {
-                            Ok(version) => {
-                                let _ = tx_event.send(format!(
-                                    "Update installed: v{version} \
-                                     - restarting"
-                                ));
-                                if let Err(error) =
-                                    auto_update::restart_updated_app()
-                                {
-                                    let _ = tx_event.send(format!(
-                                        "Restart failed: {error}"
-                                    ));
-                                }
-                            }
-                            Err(error) => {
-                                let _ = tx_event
-                                    .send(format!("Update failed: {error}"));
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+        let (tx_cmd, rx_event) = auto_update::spawn_update_worker(
+            "she-workss",
+            "stealcode",
+            std::env::var("STEALCODE_GH_TOKEN").ok(),
+            current_version,
+            release_channel::ReleaseChannel::current(),
+        );
         self.tx_cmd = Some(tx_cmd);
         self.rx_event = Some(rx_event);
     }
@@ -391,15 +335,18 @@ impl UpdateManagerTui {
         self.start_worker_if_needed();
         self.status = "Checking...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(UpdateCommand::Check);
+            let _ = tx.send(auto_update::UpdateWorkerCommand::Check);
         }
     }
 
     fn update_and_restart(&mut self) {
+        if self.available_version.is_none() {
+            return;
+        }
         self.start_worker_if_needed();
         self.status = "Downloading update...".to_string();
         if let Some(tx) = &self.tx_cmd {
-            let _ = tx.send(UpdateCommand::UpdateAndRestart);
+            let _ = tx.send(auto_update::UpdateWorkerCommand::UpdateAndRestart);
         }
     }
 
@@ -408,9 +355,21 @@ impl UpdateManagerTui {
     }
 
     fn poll_events(&mut self) {
+        use auto_update::UpdateWorkerEvent;
         if let Some(rx) = &self.rx_event {
-            if let Ok(message) = rx.try_recv() {
-                self.status = message;
+            if let Ok(event) = rx.try_recv() {
+                match event {
+                    UpdateWorkerEvent::Status(status) => self.status = status,
+                    UpdateWorkerEvent::Checked(version) => {
+                        self.status = match &version {
+                            Some(version) => {
+                                format!("Update available: v{version}")
+                            }
+                            None => "Up to date".to_string(),
+                        };
+                        self.available_version = version;
+                    }
+                }
             }
         }
     }
@@ -635,10 +594,8 @@ pub fn run_tui(
     if color_mode.supports_osc() {
         state.scheme().apply_osc(&mut terminal)?;
     }
-    // If a previous session staged an update (e.g. via `stealcode upgrade`
-    // or an in-app update while another instance was running), apply it now:
-    // the helper swaps the binary in and relaunches this process as the new
-    // version; exit the stale instance.
+    // Apply a staged update (e.g. from `stealcode upgrade` or another
+    // instance) by relaunching via the helper; exit this stale process.
     #[cfg(target_os = "windows")]
     if auto_update::apply_staged_update_on_startup_blocking()? {
         return Ok(());
@@ -651,9 +608,8 @@ pub fn run_tui(
     }
     let result = run(&mut terminal, &events, &mut state, project);
     restore_terminal(&mut terminal, color_mode)?;
-    // If a silent update finished while we were running, spawn the helper
-    // to apply it as we exit (renaming a running exe is legal on Windows,
-    // so the helper's retry loop rides out our shutdown).
+    // If a silent update finished while running, apply it on exit: renaming
+    // a running exe is legal on Windows, so the helper retries until we quit.
     #[cfg(target_os = "windows")]
     auto_update::finalize_auto_update_on_quit_blocking();
     result
@@ -796,17 +752,15 @@ fn render(f: &mut Frame<'_>, state: &mut AppState) {
         s,
     );
     render_sound_buttons(f, chunks[6], state, s);
-    let hint = if cfg!(feature = "voice") {
-        format!(
-            "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+G (Voice) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}",
-            state.mode_label()
-        )
-    } else {
-        format!(
-            "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}",
-            state.mode_label()
-        )
-    };
+    let hint = format!(
+        "Ctrl+P (Palette) Ctrl+F (Search) Ctrl+T (Title++) Tab (Next Theme) {}Ctrl+U (Update) Ctrl+H (Help) Ctrl+C (Exit) | {}",
+        if cfg!(feature = "voice") {
+            "Ctrl+G (Voice) "
+        } else {
+            ""
+        },
+        state.mode_label()
+    );
     f.render_widget(Paragraph::new(hint).style(s.hint_style()), chunks[7]);
 }
 

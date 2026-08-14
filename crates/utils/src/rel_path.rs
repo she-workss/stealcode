@@ -168,12 +168,12 @@ impl RelPath {
 
     #[must_use]
     pub fn file_stem(&self) -> Option<&str> {
-        Some(self.as_std_path().file_stem()?.to_str().unwrap())
+        self.as_std_path().file_stem()?.to_str()
     }
 
     #[must_use]
     pub fn extension(&self) -> Option<&str> {
-        Some(self.as_std_path().extension()?.to_str().unwrap())
+        self.as_std_path().extension()?.to_str()
     }
 
     #[must_use]
@@ -386,15 +386,17 @@ impl RelPathBuf {
     }
 
     pub fn set_extension(&mut self, extension: &str) -> bool {
-        if let Some(filename) = self.file_name() {
-            let mut filename = PathBuf::from(filename);
-            filename.set_extension(extension);
-            self.pop();
-            self.0.push_str(filename.to_str().unwrap());
-            true
-        } else {
-            false
-        }
+        let Some(filename) = self.file_name() else {
+            return false;
+        };
+        let mut filename = PathBuf::from(filename);
+        filename.set_extension(extension);
+        let Some(filename) = filename.to_str() else {
+            return false;
+        };
+        self.pop();
+        self.0.push_str(filename);
+        true
     }
 }
 
@@ -539,6 +541,7 @@ impl<'a> Iterator for RelPathAncestors<'a> {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use std::assert_matches;

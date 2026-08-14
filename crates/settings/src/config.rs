@@ -222,8 +222,7 @@ pub struct Settings {
     pub color_customizations: FxHashMap<String, FxHashMap<String, String>>,
     #[serde(default)]
     pub providers: FxHashMap<String, ProviderEntry>,
-    /// Whether StealCode checks for updates automatically in the
-    /// background. Manual checks ("Check for updates now") always work
-    /// regardless of this setting. Default: `true`.
+    /// Whether `StealCode` auto-checks for updates in the background; manual
+    /// checks always work regardless. Default: `true`.
     pub auto_update: Option<bool>,
 }

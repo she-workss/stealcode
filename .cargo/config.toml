@@ -1,5 +1,5 @@
 [alias]
-nt = "nextest run --all-targets --features cli/all --status-level fail --no-fail-fast"
+nt = "nextest run --all-targets --all-features --status-level fail --no-fail-fast"
 
 [env]
 # Fix incorrect bindings generation with Cranelift on Windows:
@@ -8,24 +8,16 @@ AWS_LC_SYS_NO_U1_BINDINGS = "1"
 
 [build]
 incremental = true
-rustflags = [
-    "--cfg=tokio_unstable",
-    "-Zcache-proc-macros",
-    "-Zshare-generics=y",
-    "-Zthreads=0",
-    "-Znext-solver=globally",
-    # "-Zlocation-detail=none",
-]
 
 # Fix linking error with Cranelift and `-Clink-arg=-fuse-ld=lld` on Windows
 # (pulp 0.22.3)
 [profile.dev.package.pulp]
 codegen-backend = "llvm"
 
-# voice's AVX2 kernels use intrinsics Cranelift doesn't implement
+# audio_engine's AVX2 kernels use intrinsics Cranelift doesn't implement
 # (`psign.b`, `permps`), which trap at runtime in dev builds. Build it
 # with LLVM so dev examples/apps actually run.
-[profile.dev.package.voice]
+[profile.dev.package.audio_engine]
 codegen-backend = "llvm"
 
 [unstable]
@@ -66,21 +58,14 @@ rustflags = [
     # "-Zlocation-detail=none",
 ]
 
-[target.x86_64-unknown-linux-musl]
+[target.'cfg(target_os = "macos")']
 linker = "clang"
 rustflags = [
     "--cfg=tokio_unstable",
-    "-Clink-arg=-fuse-ld=mold",
+    "-Clink-arg=-fuse-ld=lld",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
     "-Znext-solver=globally",
-    "-Crelocation-model=static",
     # "-Zlocation-detail=none",
-]
-
-[target.wasm32-unknown-unknown]
-rustflags = [
-    "--cfg=web_sys_unstable_apis",
-    "-Ctarget-feature=+sign-ext,+nontrapping-fptoint",
 ]

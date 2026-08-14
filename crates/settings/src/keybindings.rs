@@ -73,15 +73,9 @@ pub struct KeyContext {
     pub streaming: bool,
 }
 
-/// Evaluates a simple `when` expression.
-///
-/// Syntax: space-separated terms joined by implicit AND.  A term may be
-/// prefixed with `!` for negation.
-///
-/// Examples:
-/// - `"chat"` → `context.chat`
-/// - `"!paletteOpen"` → `!context.palette_open`
-/// - `"chat && !streaming"` → `context.chat && !context.streaming`
+/// Evaluates a `when` expression: `&&`-separated named terms against
+/// `ctx`, each optionally negated with a leading `!` (e.g. `"chat &&
+/// !streaming"`).
 fn eval_when(expr: &str, ctx: &KeyContext) -> bool {
     let terms: Vec<&str> = expr.split("&&").map(str::trim).collect();
     for term in terms {
@@ -359,6 +353,7 @@ pub fn default_keybindings() -> Keybindings {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,6 +18,9 @@ const SAMPLE_RATE: u32 = 44_100;
 const SOURCE_STOP_PADDING: f32 = 0.05;
 const ENVELOPE_FLOOR: f32 = 0.0001;
 const INAUDIBLE_GAIN: f32 = 0.001;
+const CHANNELS: NonZero<u16> = NonZero::new(1u16).expect("1 is non-zero");
+const SAMPLE_RATE_NONZERO: NonZero<u32> =
+    NonZero::new(SAMPLE_RATE).expect("44100 is non-zero");
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static RENDER_CACHE: LazyLock<Mutex<HashMap<SoundName, Arc<Vec<f32>>>>> =
@@ -238,7 +241,7 @@ fn render_recipe(recipe: &SoundRecipe) -> Vec<f32> {
     let mut delay_line = dry.clone();
     let mut filter =
         Biquad::new(FilterType::LowPass, shimmer.lowpass, sample_rate, 1.0);
-    let mut out = dry.clone();
+    let mut out = dry;
     for n in 0..total_len {
         let delayed = if n >= delay_samples {
             delay_line[n - delay_samples]
@@ -256,7 +259,9 @@ fn render_recipe(recipe: &SoundRecipe) -> Vec<f32> {
 }
 
 fn rendered(sound: SoundName) -> Arc<Vec<f32>> {
-    let mut cache = RENDER_CACHE.lock().unwrap();
+    let mut cache = RENDER_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     cache
         .entry(sound)
         .or_insert_with(|| Arc::new(render_recipe(&sound.recipe())))
@@ -278,16 +283,16 @@ pub fn play(sound: SoundName) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    let mut guard = STREAM.lock().unwrap();
+    let mut guard = STREAM
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if guard.is_none() || DEVICE_LOST.swap(false, Ordering::Relaxed) {
         *guard = open_stream();
     }
     let Some(stream) = guard.as_ref() else {
         return;
     };
-    let samples = rendered(sound);
-    let channels = NonZero::new(1u16).expect("1 is non-zero");
-    let sample_rate = NonZero::new(SAMPLE_RATE).expect("44100 is non-zero");
-    let buffer = SamplesBuffer::new(channels, sample_rate, (*samples).clone());
+    let samples = Arc::unwrap_or_clone(rendered(sound));
+    let buffer = SamplesBuffer::new(CHANNELS, SAMPLE_RATE_NONZERO, samples);
     stream.mixer().add(buffer);
 }

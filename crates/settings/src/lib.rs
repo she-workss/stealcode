@@ -21,11 +21,8 @@ pub mod plugin;
 pub mod state;
 pub mod tui;
 
-/// Reads and parses a JSON file.
-///
-/// Returns `None` if the file does not exist. If the file exists but cannot
-/// be read or contains invalid JSON, logs a warning and returns `None` so
-/// callers can fall back to other settings layers / defaults.
+/// Reads and parses a JSON file, returning `None` (with a warning) if the
+/// file is missing or malformed so callers can fall back to defaults.
 fn read_json_file(path: &Path) -> Option<Value> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -44,9 +41,8 @@ fn read_json_file(path: &Path) -> Option<Value> {
     }
 }
 
-/// Recursively merges `override_` into `base`. Objects are merged key by
-/// key; any other value in `override_` (including `null`, arrays, and
-/// scalars) replaces the corresponding value in `base` wholesale.
+/// Recursively merges `override_` into `base`: objects merge key by key,
+/// any other value in `override_` replaces the base value wholesale.
 fn merge_json(base_val: &mut Value, override_val: Value) {
     match (base_val, override_val) {
         (Value::Object(base_map), Value::Object(over_map)) => {
@@ -62,9 +58,9 @@ fn merge_json(base_val: &mut Value, override_val: Value) {
     }
 }
 
-/// Reads each of `paths` that exists and deep-merges them in order, so that
-/// later paths take priority over earlier ones. Paths that don't exist or
-/// don't parse are skipped (see [`read_json_file`]).
+/// Reads each of `paths` that exists and deep-merges them in order, so later
+/// paths take priority over earlier ones (missing/unparseable ones are
+/// skipped).
 fn merge_json_layers(paths: &[&Path]) -> Value {
     let mut value = Value::Object(serde_json::Map::new());
     for path in paths {
@@ -75,10 +71,9 @@ fn merge_json_layers(paths: &[&Path]) -> Value {
     value
 }
 
-/// Write `data` to `path` atomically via a `.tmp` file in
-/// [`std::env::temp_dir`], then rename onto the target.  This keeps the
-/// filesystem watcher in the TUI from seeing spurious `.tmp` file events inside
-/// the config directory.
+/// Writes `data` to `path` atomically via a `.tmp` file in
+/// [`std::env::temp_dir`] plus rename, so the TUI filesystem watcher never
+/// sees spurious `.tmp` events inside the config directory.
 fn write_atomic(path: &Path, data: &str) -> Result<()> {
     let file_name = path
         .file_name()
@@ -97,7 +92,7 @@ fn write_atomic(path: &Path, data: &str) -> Result<()> {
 }
 
 /// Ensures `path`'s parent directory exists, then returns `path` unchanged.
-fn ensure_parent_dir(path: &'static PathBuf) -> Result<&'static PathBuf> {
+fn ensure_parent_dir(path: &'static Path) -> Result<&'static Path> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!("failed to create directory {}", parent.display())
@@ -107,30 +102,22 @@ fn ensure_parent_dir(path: &'static PathBuf) -> Result<&'static PathBuf> {
 }
 
 /// Picks the write target for the two global settings tiers: the user
-/// settings file (`settings_file()`) if it exists, otherwise the defaults
-/// file (`global_settings_file()`), creating its parent directory if
-/// necessary.
-///
-/// This never targets the project-local `.stealcode/settings.json` discovered
-/// by [`find_local_settings_file`] - writes always go to one of the two
-/// global files.
+/// settings file if it exists, else the defaults file (creating its parent).
+/// Writes never target the project-local `.stealcode/settings.json`.
 fn resolve_write_target(
-    user_settings: &'static PathBuf,
-    defaults: &'static PathBuf,
-) -> Result<&'static PathBuf> {
+    user_settings: &'static Path,
+    defaults: &'static Path,
+) -> Result<&'static Path> {
     if user_settings.exists() {
         return Ok(user_settings);
     }
     ensure_parent_dir(defaults)
 }
 
-/// Returns the path to `.stealcode/settings.json` directly inside `cwd` if
-/// the file exists, or `None` otherwise.
+/// Returns the path to `<cwd>/.stealcode/settings.json` if that file exists.
 ///
-/// Unlike `.git` discovery, this does **not** walk up through parent
-/// directories - it only checks the single directory you pass in.  This
-/// matches VS Code's `.vscode/settings.json` semantics: the file is
-/// workspace-local, not inherited from ancestors.
+/// Like VS Code's `.vscode` semantics, only the exact `cwd` is checked -
+/// parent directories are not walked.
 #[must_use]
 pub fn find_local_settings_file(cwd: &Path) -> Option<PathBuf> {
     let candidate =
@@ -138,33 +125,23 @@ pub fn find_local_settings_file(cwd: &Path) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-fn default_settings_value() -> Value {
+fn default_settings_value() -> Result<Value> {
     let settings = Settings {
         providers: default_providers(),
         ..Default::default()
     };
-    let mut value = serde_json::to_value(settings)
-        .expect("Settings::default() is always serializable");
+    let mut value = serde_json::to_value(settings)?;
     if let Value::Object(ref mut m) = value {
         m.insert(
             "$schema".into(),
             Value::String("https://opencode.ai/config.json".into()),
         );
     }
-    value
+    Ok(value)
 }
 
-/// Creates any missing config files on first run.
-///
-/// * `global_settings_file()` - written with all defaults if absent.  This is
-///   the lowest-priority layer and acts as the documented reference for every
-///   available key.
-/// * `settings_file()` - written as empty `{}` if absent.  Users put their
-///   personal overrides here.
-/// * `auth_file()` - written as empty `{}` if absent.  Credentials live here
-///   rather than in the main settings so they can be excluded from version
-///   control independently.
-///
+/// Creates missing config files on first run: the global defaults file, the
+/// user overrides file (written as `{}`), and the auth file (written as `{}`).
 /// Call once at startup, before [`load_settings`].
 pub fn init_config() -> Result<()> {
     let global = global_settings_file();
@@ -174,7 +151,7 @@ pub fn init_config() -> Result<()> {
         })?;
     }
     if !global.exists() {
-        let data = serde_json::to_string_pretty(&default_settings_value())?;
+        let data = serde_json::to_string_pretty(&default_settings_value()?)?;
         write_atomic(global, &data)?;
     }
 
@@ -295,14 +272,9 @@ fn default_providers() -> FxHashMap<String, ProviderEntry> {
     providers
 }
 
-/// Loads settings by merging three layers, lowest priority first:
-///
-/// 1. `global_settings_file()` - factory defaults (every key at its default
-///    value).
-/// 2. `settings_file()` - the user's personal overrides.
-/// 3. `<cwd>/.stealcode/settings.json` - project-local overrides, highest
-///    priority.  Only the exact `cwd` is checked; parent directories are not
-///    walked.
+/// Loads settings by merging layers, lowest priority first: factory defaults,
+/// then the user's overrides, then `<cwd>/.stealcode/settings.json` (highest;
+/// only the exact `cwd` is checked, parents are not walked).
 #[must_use]
 pub fn load_settings(cwd: &Path) -> Settings {
     let local_settings = find_local_settings_file(cwd);
@@ -336,7 +308,10 @@ pub fn load_auth() -> config::AuthSettings {
 }
 
 pub fn patch_settings_value(f: impl FnOnce(&mut Value)) -> Result<()> {
-    let target = resolve_write_target(settings_file(), global_settings_file())?;
+    let target = resolve_write_target(
+        settings_file().as_path(),
+        global_settings_file().as_path(),
+    )?;
     let mut value = read_json_file(target)
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
     f(&mut value);
@@ -344,12 +319,15 @@ pub fn patch_settings_value(f: impl FnOnce(&mut Value)) -> Result<()> {
 }
 
 pub fn save_settings(settings: &Settings) -> Result<()> {
-    let target = resolve_write_target(settings_file(), global_settings_file())?;
+    let target = resolve_write_target(
+        settings_file().as_path(),
+        global_settings_file().as_path(),
+    )?;
     write_atomic(target, &serde_json::to_string_pretty(settings)?)
 }
 
 pub fn save_auth(auth: &config::AuthSettings) -> Result<()> {
-    let target = ensure_parent_dir(auth_file())?;
+    let target = ensure_parent_dir(auth_file().as_path())?;
     write_atomic(target, &serde_json::to_string_pretty(auth)?)
 }
 
@@ -461,7 +439,7 @@ mod tests {
 
     #[test]
     fn default_settings_value_round_trips_and_has_schema_and_providers() {
-        let value = default_settings_value();
+        let value = default_settings_value().unwrap();
         assert_eq!(
             value.get("$schema").and_then(Value::as_str),
             Some("https://opencode.ai/config.json")

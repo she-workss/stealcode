@@ -21,7 +21,10 @@ use crate::rel_path::{RelPath, RelPathBuf};
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
-        dirs::home_dir().expect("failed to determine home directory")
+        // Losing the home dir would break most path handling downstream;
+        // fall back to the temp dir (always absolute and writable) rather
+        // than panicking.
+        dirs::home_dir().unwrap_or_else(std::env::temp_dir)
     })
 }
 
@@ -154,7 +157,6 @@ pub fn strip_path_suffix<'a>(
     if base.ends_with(suffix) {
         let suffix_len = suffix.components().count();
         let mut iter = base.components();
-        // Safely strip the suffix components from the end of the base path
         for _ in 0..suffix_len {
             iter.next_back();
         }
@@ -288,7 +290,6 @@ impl Display for SanitizedPath {
     }
 }
 
-// Replaced `Arc<SanitizedPath>` with `SanitizedArcPath`
 impl From<&SanitizedPath> for SanitizedArcPath {
     fn from(sanitized_path: &SanitizedPath) -> Self {
         let path: Arc<Path> = sanitized_path.0.into();
@@ -515,16 +516,7 @@ impl PathStyle {
 
 #[must_use]
 pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/')
-        || path_style == PathStyle::Windows
-            && (path_like.starts_with('\\')
-                || path_like
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic())
-                    && path_like[1..].strip_prefix(':').is_some_and(|path| {
-                        path.starts_with('/') || path.starts_with('\\')
-                    }))
+    path_style.is_absolute(path_like)
 }
 
 #[derive(Debug, PartialEq)]
@@ -539,24 +531,12 @@ impl std::fmt::Display for NormalizeError {
     }
 }
 
-/// Copied from stdlib where it's unstable.
+/// Copied from stdlib where it's unstable: lexically normalizes a path,
+/// resolving `.` and `..` without touching the filesystem. Errors if `..`
+/// would escape the root.
 ///
-/// Normalize a path, including `..` without traversing the filesystem.
-///
-/// Returns an error if normalization would leave leading `..` components.
-///
-/// <div class="warning">
-///
-/// This function always resolves `..` to the "lexical" parent.
-/// That is "a/b/../c" will always resolve to `a/c` which can change the meaning
-/// of the path. In particular, `a/c` and `a/b/../c` are distinct on many
-/// systems because `b` may be a symbolic link, so its parent isn't `a`.
-///
-/// </div>
-///
-/// [`std::path::absolute`] is an alternative that preserves `..`.
-/// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the
-/// filesystem.
+/// `..` is resolved lexically (symlinks are not followed); use
+/// [`Path::canonicalize`] when filesystem semantics are required.
 pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
     use std::path::Component;
 
@@ -655,10 +635,6 @@ impl PathWithPosition {
     /// suffix. Parenthesis format is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
-    ///
-    /// Be mindful that `test_file:10:1:` is a valid posix filename.
-    /// `PathWithPosition` class assumes that the ending position-like suffix is
-    /// **not** part of the filename.
     ///
     /// # Examples
     ///
@@ -771,7 +747,15 @@ impl PathWithPosition {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let (_, suffix) = trimmed.split_once(file_name).unwrap();
+                // The `file_name` capture always matches inside `trimmed`
+                // (it matched against its last component), so this cannot fail.
+                let Some((_, suffix)) = trimmed.split_once(file_name) else {
+                    return Self {
+                        path: Path::new(s).to_path_buf(),
+                        row,
+                        column,
+                    };
+                };
                 let path_without_suffix =
                     &trimmed[..trimmed.len() - suffix.len()];
 
@@ -956,44 +940,12 @@ impl Default for PathMatcher {
     }
 }
 
-/// Compares two sequences of consecutive digits for natural sorting.
+/// Compares two consecutive digit sequences for natural sorting: numeric
+/// value wins, equal values order by length (more leading zeros sort larger),
+/// and numbers overflowing `u128` fall back to string comparison.
 ///
-/// This function is a core component of natural sorting that handles numeric
-/// comparison in a way that feels natural to humans. It extracts and compares
-/// consecutive digit sequences from two iterators, handling various cases like
-/// leading zeros and very large numbers.
-///
-/// # Behavior
-///
-/// The function implements the following comparison rules:
-/// 1. Different numeric values: Compares by actual numeric value (e.g., "2" <
-///    "10")
-/// 2. Leading zeros: When values are equal, longer sequence wins (e.g., "002" >
-///    "2")
-/// 3. Large numbers: Falls back to string comparison for numbers that would
-///    overflow u128
-///
-/// # Examples
-///
-/// ```text
-/// "1" vs "2"      -> Less       (different values)
-/// "2" vs "10"     -> Less       (numeric comparison)
-/// "002" vs "2"    -> Greater    (leading zeros)
-/// "10" vs "010"   -> Less       (leading zeros)
-/// "999..." vs "1000..." -> Less (large number comparison)
-/// ```
-///
-/// # Implementation Details
-///
-/// 1. Extracts consecutive digits into strings
-/// 2. Compares sequence lengths for leading zero handling
-/// 3. For equal lengths, compares digit by digit
-/// 4. For different lengths:
-///    - Attempts numeric comparison first (for numbers up to 2^128 - 1)
-///    - Falls back to string comparison if numbers would overflow
-///
-/// The function advances both iterators past their respective numeric
-/// sequences, regardless of the comparison result.
+/// Both iterators are advanced past their digit sequences regardless of the
+/// comparison result.
 fn compare_numeric_segments<I>(
     a_iter: &mut std::iter::Peekable<I>,
     b_iter: &mut std::iter::Peekable<I>,
@@ -1001,7 +953,6 @@ fn compare_numeric_segments<I>(
 where
     I: Iterator<Item = char>,
 {
-    // Collect all consecutive digits into strings
     let mut a_num_str = String::new();
     let mut b_num_str = String::new();
     while let Some(&c) = a_iter.peek() {
@@ -1018,61 +969,31 @@ where
         b_num_str.push(c);
         b_iter.next();
     }
-    // First compare lengths (handle leading zeros)
+    // Equal values with different lengths differ only in leading zeros,
+    // where the longer sequence sorts larger.
     match a_num_str.len().cmp(&b_num_str.len()) {
-        Ordering::Equal => {
-            // Same length, compare digit by digit
-            match a_num_str.cmp(&b_num_str) {
-                Ordering::Equal => Ordering::Equal,
-                ordering => ordering,
-            }
-        }
-        // Different lengths but same value means leading zeros
+        Ordering::Equal => a_num_str.cmp(&b_num_str),
         ordering => {
-            // Try parsing as numbers first
             if let (Ok(a_val), Ok(b_val)) =
                 (a_num_str.parse::<u128>(), b_num_str.parse::<u128>())
             {
                 match a_val.cmp(&b_val) {
-                    Ordering::Equal => ordering, // Same value, longer one
-                    // is greater (leading
-                    // zeros)
+                    // Same value, longer digit sequence wins (leading zeros)
+                    Ordering::Equal => ordering,
                     ord => ord,
                 }
             } else {
-                // If parsing fails (overflow), compare as strings
+                // Overflowing u128: fall back to string comparison
                 a_num_str.cmp(&b_num_str)
             }
         }
     }
 }
 
-/// Performs natural sorting comparison between two strings.
-///
-/// Natural sorting is an ordering that handles numeric sequences in a way that
-/// matches human expectations. For example, "file2" comes before "file10"
-/// (unlike standard lexicographic sorting).
-///
-/// # Characteristics
-///
-/// * Case-sensitive with lowercase priority: When comparing same letters,
-///   lowercase comes before uppercase
-/// * Numbers are compared by numeric value, not character by character
-/// * Leading zeros affect ordering when numeric values are equal
-/// * Can handle numbers larger than [`u128::MAX`] (falls back to string
-///   comparison)
-/// * When strings are equal case-insensitively, lowercase is prioritized
-///   (lowercase < uppercase)
-///
-/// # Algorithm
-///
-/// The function works by:
-/// 1. Processing strings character by character in a case-insensitive manner
-/// 2. When encountering digits, treating consecutive digits as a single number
-/// 3. Comparing numbers by their numeric value rather than lexicographically
-/// 4. For non-numeric characters, using case-insensitive comparison
-/// 5. If everything is equal case-insensitively, using case-sensitive
-///    comparison as final tie-breaker
+/// Natural-sort comparison: numeric runs compare by value (`file2` before
+/// `file10`), otherwise case-insensitively, with case-sensitive comparison as
+/// the final tie-breaker (lowercase wins ties). Numbers larger than
+/// [`u128::MAX`] fall back to string comparison.
 #[must_use]
 pub fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
@@ -1122,17 +1043,13 @@ fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
         return (None, None);
     }
     match filename.rsplit_once('.') {
-        // Case 1: No dot was found. The entire name is the stem.
         None => (Some(filename), None),
-        // Case 2: A dot was found.
         Some((before, after)) => {
-            // This is the crucial check for dotfiles like ".bashrc".
-            // If `before` is empty, the dot was the first character.
-            // In that case, we revert to the "whole name is the stem" logic.
+            // Dotfiles like ".bashrc" have no stem: the dot is the first
+            // character, so the whole name is the stem.
             if before.is_empty() {
                 (Some(filename), None)
             } else {
-                // Otherwise, we have a standard stem and extension.
                 (Some(before), Some(after))
             }
         }
@@ -1180,21 +1097,25 @@ fn case_group_key(name: &str, order: SortOrder) -> u8 {
     match order {
         SortOrder::Upper => first.is_lowercase() as u8,
         SortOrder::Lower => first.is_uppercase() as u8,
-        _ => 0,
+        SortOrder::Default | SortOrder::Unicode => 0,
     }
 }
 
 fn compare_strings(a: &str, b: &str, order: SortOrder) -> Ordering {
     match order {
         SortOrder::Unicode => a.cmp(b),
-        _ => natural_sort(a, b),
+        SortOrder::Default | SortOrder::Upper | SortOrder::Lower => {
+            natural_sort(a, b)
+        }
     }
 }
 
 fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
     match order {
         SortOrder::Unicode => a.cmp(b),
-        _ => natural_sort_no_tiebreak(a, b),
+        SortOrder::Default | SortOrder::Upper | SortOrder::Lower => {
+            natural_sort_no_tiebreak(a, b)
+        }
     }
 }
 
@@ -1384,6 +1305,7 @@ pub fn compare_paths(
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

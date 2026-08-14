@@ -604,6 +604,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio_engine"
+version = "0.14.16"
+dependencies = [
+ "anyhow",
+ "cpal 0.18.1",
+ "hound",
+ "matrixmultiply",
+ "memmap2",
+ "pollster 0.4.0",
+ "rayon",
+ "tracing",
+ "tracing-subscriber",
+ "wgpu 30.0.0",
+]
+
+[[package]]
 name = "auto_update"
 version = "0.14.16"
 dependencies = [
@@ -8991,16 +9007,11 @@ name = "voice"
 version = "0.14.16"
 dependencies = [
  "anyhow",
+ "audio_engine",
  "cpal 0.18.1",
- "hound",
- "matrixmultiply",
- "memmap2",
  "paths",
- "pollster 0.4.0",
- "rayon",
  "reqwest",
  "tracing",
- "wgpu 30.0.0",
 ]
 
 [[package]]

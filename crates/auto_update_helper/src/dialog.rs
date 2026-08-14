@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 //! A minimal Win32 progress window shown while `auto_update_helper` swaps
 //! files. A plain WNDCLASS with a progress bar control.
 
@@ -14,9 +16,9 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, GetDesktopWindow,
                 GetWindowRect, PostMessageW, PostQuitMessage, RegisterClassW,
-                SendMessageW, WINDOW_EX_STYLE, WM_CLOSE, WM_CREATE, WM_DESTROY,
-                WM_PAINT, WM_USER, WNDCLASSW, WS_CAPTION, WS_CHILD,
-                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                SendMessageW, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_PAINT,
+                WM_USER, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST,
+                WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -86,13 +88,13 @@ pub(crate) fn create_dialog_window(total_steps: usize) -> Result<HWND> {
     }
 }
 
-pub fn notify_job_done(hwnd: HWND) {
+pub(crate) fn notify_job_done(hwnd: HWND) {
     unsafe {
         let _ = PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
     }
 }
 
-pub fn notify_terminate(hwnd: isize) {
+pub(crate) fn notify_terminate(hwnd: isize) {
     unsafe {
         let _ = PostMessageW(
             Some(HWND(hwnd as _)),

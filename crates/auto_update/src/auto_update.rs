@@ -229,22 +229,20 @@ impl GithubReleaseSource {
     }
 
     fn latest_release_url(&self) -> String {
-        format!(
-            "{}/repos/{}/{}/releases/latest",
-            self.api_base, self.owner, self.repo
-        )
+        self.releases_url("/latest")
     }
 
     fn release_by_tag_url(&self, tag: &str) -> String {
-        format!(
-            "{}/repos/{}/{}/releases/tags/{}",
-            self.api_base, self.owner, self.repo, tag
-        )
+        self.releases_url(&format!("/tags/{tag}"))
     }
 
     fn releases_list_url(&self) -> String {
+        self.releases_url("")
+    }
+
+    fn releases_url(&self, suffix: &str) -> String {
         format!(
-            "{}/repos/{}/{}/releases",
+            "{}/repos/{}/{}/releases{suffix}",
             self.api_base, self.owner, self.repo
         )
     }
@@ -275,27 +273,14 @@ pub async fn fetch_most_recent_release(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
 ) -> Result<Option<ReleaseInfo>> {
-    let mut request = client
-        .get(source.releases_list_url())
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .header(ACCEPT, "application/vnd.github+json");
-    if let Some(token) = &source.token {
-        request = request.bearer_auth(token);
-    }
-    let response = request
-        .send()
-        .await
-        .context("failed to reach the GitHub releases API")?;
+    let response =
+        github_get(client, source, &source.releases_list_url()).await?;
     let status = response.status();
     let body = response
         .bytes()
         .await
         .context("failed to read the releases list body")?;
-    anyhow::ensure!(
-        status.is_success(),
-        "GitHub releases API returned {status}: {}",
-        String::from_utf8_lossy(&body)
-    );
+    ensure_success(status, &body, "GitHub releases API")?;
     Ok(most_recent_prerelease(parse_releases_list_response(&body)?))
 }
 
@@ -336,11 +321,7 @@ pub async fn fetch_release_by_version(
     source: &GithubReleaseSource,
     version: &str,
 ) -> Result<ReleaseInfo> {
-    let tag = if version.starts_with('v') {
-        version.to_string()
-    } else {
-        format!("v{version}")
-    };
+    let tag = format!("v{}", version.trim_start_matches('v'));
     fetch_release(client, source, &source.release_by_tag_url(&tag))
         .await?
         .with_context(|| {
@@ -351,11 +332,11 @@ pub async fn fetch_release_by_version(
         })
 }
 
-async fn fetch_release(
+async fn github_get(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
     url: &str,
-) -> Result<Option<ReleaseInfo>> {
+) -> Result<reqwest::Response> {
     let mut request = client
         .get(url)
         .header(USER_AGENT, USER_AGENT_VALUE)
@@ -363,10 +344,31 @@ async fn fetch_release(
     if let Some(token) = &source.token {
         request = request.bearer_auth(token);
     }
-    let response = request
+    request
         .send()
         .await
-        .context("failed to reach the GitHub releases API")?;
+        .context("failed to reach the GitHub releases API")
+}
+
+fn ensure_success(
+    status: reqwest::StatusCode,
+    body: &[u8],
+    api: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        status.is_success(),
+        "{api} returned {status}: {}",
+        String::from_utf8_lossy(body)
+    );
+    Ok(())
+}
+
+async fn fetch_release(
+    client: &reqwest::Client,
+    source: &GithubReleaseSource,
+    url: &str,
+) -> Result<Option<ReleaseInfo>> {
+    let response = github_get(client, source, url).await?;
     let status = response.status();
     let body = response
         .bytes()
@@ -375,11 +377,7 @@ async fn fetch_release(
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
-    anyhow::ensure!(
-        status.is_success(),
-        "GitHub releases API returned {status}: {}",
-        String::from_utf8_lossy(&body)
-    );
+    ensure_success(status, &body, "GitHub releases API")?;
     parse_release_response(&body).map(Some)
 }
 
@@ -495,52 +493,67 @@ pub fn update_now_blocking(
         let release = fetch_release_for_channel(&client, &source, channel)
             .await?
             .context("no release available for this channel")?;
-        let new_version = newer_version_available(
-            &release,
-            &current_version,
-            channel,
-        )?
-        .context("no update available")?;
+        let new_version =
+            newer_version_available(&release, &current_version, channel)?
+                .context("no update available")?;
 
-        let (platform, arch) = current_platform_arch()?;
-        let asset_name = expected_asset_name(platform, arch);
-        let asset = find_asset_by_name(&release, &asset_name)?;
         let download_dir = std::env::temp_dir().join("stealcode");
-        let downloaded_path = download_dir.join(&asset.name);
-        download_asset(&client, &source, asset, &downloaded_path).await?;
-
-        #[cfg(target_os = "linux")]
-        {
-            let current_exe = std::env::current_exe()
-                .context("failed to determine current executable path")?;
-            apply_linux_update(&downloaded_path, &current_exe)?;
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            let app_dir = std::env::current_exe()
-                .context("failed to determine current executable path")?
-                .ancestors()
-                .nth(2) // Contents/MacOS/stealcode -> Contents -> StealCode.app
-                .context(
-                    "could not locate StealCode.app from the running executable",
-                )?
-                .to_path_buf();
-            apply_macos_update(&downloaded_path, &app_dir)?;
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let helper_path = install_release_windows(&downloaded_path).await?;
-            anyhow::ensure!(
-                helper_path.is_file(),
-                "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
-                helper_path.display()
-            );
-        }
+        apply_release_asset(&client, &source, &release, &download_dir).await?;
 
         Ok(new_version)
     })
+}
+
+/// Downloads the release's binary asset and applies it on the current
+/// platform: `rename` swap on Linux, `hdiutil`+`rsync` on macOS, silent
+/// installer staging on Windows. Shared by `update_now_blocking` and the
+/// CLI's `stealcode upgrade [target]` path.
+pub async fn apply_release_asset(
+    client: &reqwest::Client,
+    source: &GithubReleaseSource,
+    release: &ReleaseInfo,
+    download_dir: &Path,
+) -> Result<()> {
+    let (platform, arch) = current_platform_arch()?;
+    let asset_name = expected_asset_name(platform, arch);
+    let asset = find_asset_by_name(release, &asset_name)?;
+    let downloaded_path = download_dir.join(&asset.name);
+    download_asset(client, source, asset, &downloaded_path).await?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let current_exe = std::env::current_exe()
+            .context("failed to determine current executable path")?;
+        apply_linux_update(&downloaded_path, &current_exe)?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        apply_macos_update(&downloaded_path, &macos_app_dir()?)?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let helper_path = install_release_windows(&downloaded_path).await?;
+        anyhow::ensure!(
+            helper_path.is_file(),
+            "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
+            helper_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Locates `StealCode.app` from the running binary inside a macOS bundle.
+#[cfg(target_os = "macos")]
+fn macos_app_dir() -> Result<PathBuf> {
+    std::env::current_exe()
+        .context("failed to determine current executable path")?
+        .ancestors()
+        .nth(2) // Contents/MacOS/stealcode -> Contents -> StealCode.app
+        .context("could not locate StealCode.app from the running executable")?
+        .to_path_buf()
 }
 
 /// Relaunches StealCode after a successful `update_now_blocking` and exits
@@ -561,6 +574,97 @@ pub fn restart_updated_app() -> Result<()> {
             .context("failed to relaunch StealCode")?;
         std::process::exit(0);
     }
+}
+
+/// A command for the background worker spawned by [`spawn_update_worker`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateWorkerCommand {
+    Check,
+    UpdateAndRestart,
+}
+
+/// An event from the background worker. `Checked` carries the newest
+/// available version, or `None` when already up to date.
+#[derive(Debug, Clone)]
+pub enum UpdateWorkerEvent {
+    Status(String),
+    Checked(Option<Version>),
+}
+
+/// Spawns the shared "check / update-and-restart" worker used by the GUI
+/// and TUI: one thread with its own blocking update flow, driven through a
+/// command channel and reporting through an event channel.
+#[must_use]
+pub fn spawn_update_worker(
+    owner: &'static str,
+    repo: &'static str,
+    token: Option<String>,
+    current_version: Version,
+    channel: ReleaseChannel,
+) -> (
+    std::sync::mpsc::Sender<UpdateWorkerCommand>,
+    std::sync::mpsc::Receiver<UpdateWorkerEvent>,
+) {
+    let (tx_cmd, rx_cmd) = std::sync::mpsc::channel();
+    let (tx_event, rx_event) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(command) = rx_cmd.recv() {
+            let token = token.clone();
+            match command {
+                UpdateWorkerCommand::Check => {
+                    let event = match check_now_blocking(
+                        owner,
+                        repo,
+                        token,
+                        current_version.clone(),
+                        channel,
+                    ) {
+                        Ok(Some(version)) => {
+                            UpdateWorkerEvent::Checked(Some(version))
+                        }
+                        Ok(None) => UpdateWorkerEvent::Checked(None),
+                        Err(error) => UpdateWorkerEvent::Status(format!(
+                            "Check failed: {error}"
+                        )),
+                    };
+                    let _ = tx_event.send(event);
+                }
+                UpdateWorkerCommand::UpdateAndRestart => {
+                    let _ = tx_event.send(UpdateWorkerEvent::Status(
+                        "Downloading update...".to_string(),
+                    ));
+                    match update_now_blocking(
+                        owner,
+                        repo,
+                        token,
+                        current_version.clone(),
+                        channel,
+                    ) {
+                        Ok(version) => {
+                            let _ = tx_event.send(UpdateWorkerEvent::Status(
+                                format!(
+                                    "Update installed: v{version} \
+                                     - restarting"
+                                ),
+                            ));
+                            if let Err(error) = restart_updated_app() {
+                                let _ =
+                                    tx_event.send(UpdateWorkerEvent::Status(
+                                        format!("Restart failed: {error}"),
+                                    ));
+                            }
+                        }
+                        Err(error) => {
+                            let _ = tx_event.send(UpdateWorkerEvent::Status(
+                                format!("Update failed: {error}"),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    });
+    (tx_cmd, rx_event)
 }
 
 // ---------------------------------------------------------------------
@@ -592,6 +696,19 @@ pub fn atomic_swap(new_binary: &Path, target_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn ensure_command_succeeded(
+    output: &std::process::Output,
+    what: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        output.status.success(),
+        "{what} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 pub fn apply_linux_update(tarball: &Path, current_exe: &Path) -> Result<()> {
     let extract_dir = tempdir_next_to(current_exe)?;
@@ -602,11 +719,7 @@ pub fn apply_linux_update(tarball: &Path, current_exe: &Path) -> Result<()> {
         .arg(&extract_dir)
         .output()
         .context("failed to spawn `tar`")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "tar extraction failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    ensure_command_succeeded(&output, "tar extraction")?;
 
     let extracted_binary = extract_dir.join("stealcode");
     anyhow::ensure!(
@@ -640,11 +753,7 @@ pub fn apply_macos_update(
         .arg("-quiet")
         .output()
         .context("failed to spawn `hdiutil attach`")?;
-    anyhow::ensure!(
-        attach.status.success(),
-        "hdiutil attach failed: {}",
-        String::from_utf8_lossy(&attach.stderr)
-    );
+    ensure_command_succeeded(&attach, "hdiutil attach")?;
     let result = (|| -> Result<()> {
         let source_app = mount_point.join("StealCode.app");
         anyhow::ensure!(
@@ -658,11 +767,7 @@ pub fn apply_macos_update(
             .arg(format!("{}/", installed_app_dir.display()))
             .output()
             .context("failed to spawn `rsync`")?;
-        anyhow::ensure!(
-            rsync.status.success(),
-            "rsync failed: {}",
-            String::from_utf8_lossy(&rsync.stderr)
-        );
+        ensure_command_succeeded(&rsync, "rsync")?;
         Ok(())
     })();
     let _ = std::process::Command::new("hdiutil")
@@ -812,34 +917,39 @@ pub async fn finalize_auto_update_on_quit() {
 /// `block_on`-ing on the current thread panics with "Cannot start a
 /// runtime from within a runtime" - a fresh thread has no such context.
 #[cfg(target_os = "windows")]
-fn block_on_sync_host<F, R>(future: F) -> R
+fn block_on_sync_host<F, R>(future: F) -> Result<R>
 where
     F: std::future::Future<Output = R> + Send + 'static,
     R: Send + 'static,
 {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to start update runtime thread");
-        let result = runtime.block_on(future);
-        let _ = tx.send(result);
-    });
-    rx.recv().expect("update runtime thread panicked")
+    std::thread::Builder::new()
+        .name("stealcode-update-runtime".to_string())
+        .spawn(move || {
+            let result = (|| -> Result<R> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("failed to start update runtime thread")?;
+                Ok(runtime.block_on(future))
+            })();
+            let _ = tx.send(result);
+        })
+        .context("failed to spawn update runtime thread")?;
+    rx.recv().context("update runtime thread panicked")?
 }
 
 /// Blocking variant of `finalize_auto_update_on_quit` for hosts with a
 /// blocking event loop (the TUI) that don't pull in tokio themselves.
 #[cfg(target_os = "windows")]
 pub fn finalize_auto_update_on_quit_blocking() {
-    block_on_sync_host(finalize_auto_update_on_quit());
+    let _ = block_on_sync_host(finalize_auto_update_on_quit());
 }
 
 /// Blocking variant of `cleanup_windows` for the same sync hosts.
 #[cfg(target_os = "windows")]
 pub fn cleanup_windows_blocking() -> Result<()> {
-    block_on_sync_host(cleanup_windows())
+    block_on_sync_host(cleanup_windows())?
 }
 
 /// Called when the person explicitly clicks "Restart to update" while
@@ -869,15 +979,15 @@ mod tests {
         assets: &[(&str, &str)],
     ) -> String {
         let assets_json: Vec<String> = assets
-            .iter()
-            .enumerate()
-            .map(|(i, (name, url))| {
-                format!(
-                    r#"{{"id": {id}, "name": "{name}", "size": 1, "url": "https://api.github.com/repos/she-workss/stealcode/releases/assets/{id}", "browser_download_url": "{url}"}}"#,
-                    id = i + 1
-                )
-            })
-            .collect();
+        .iter()
+        .enumerate()
+        .map(|(i, (name, url))| {
+            format!(
+                r#"{{"id": {id}, "name": "{name}", "size": 1, "url": "https://api.github.com/repos/she-workss/stealcode/releases/assets/{id}", "browser_download_url": "{url}"}}"#,
+                id = i + 1
+            )
+        })
+        .collect();
         format!(
             r#"{{"tag_name": "{tag}", "draft": false, "prerelease": {prerelease}, "assets": [{}]}}"#,
             assets_json.join(",")
@@ -998,9 +1108,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn blocking_wrappers_work_inside_a_runtime_too() {
-        // Regression test: the CLI drives the TUI under `#[tokio::main]`,
-        // so the `_blocking` wrappers must not create a runtime or
-        // `block_on` from the runtime's own thread (that panics with
+        // Regression test: the CLI drives the TUI under #[tokio::main],
+        // so the _blocking wrappers must not create a runtime or
+        // block_on from the runtime's own thread (that panics with
         // "Cannot start a runtime from within a runtime"). They run on a
         // dedicated thread with their own runtime instead.
         let runtime = tokio::runtime::Builder::new_current_thread()

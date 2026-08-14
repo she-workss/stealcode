@@ -11,8 +11,6 @@ use utils::{paths::SanitizedPath, rel_path::RelPath};
 pub const APP_NAME: &str = "StealCode";
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
-/// This is used to override the default data directory location.
-/// The directory will be created if it doesn't exist when set.
 static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
@@ -46,45 +44,23 @@ pub const APP_NAME_LOWERCASE: &str = {
     }
 };
 
-/// The resolved data directory, combining custom override or platform defaults.
-/// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/Library/Application Support/StealCode`.
-/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/stealcode`.
-/// On Windows, this is `%LOCALAPPDATA%\StealCode`.
+/// The resolved data directory, cached after first use.
+/// macOS `~/Library/Application Support/StealCode`; Linux/FreeBSD
+/// `$XDG_DATA_HOME/stealcode`; Windows `%LOCALAPPDATA%\StealCode`.
 static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// The resolved config directory, combining custom override or platform
-/// defaults. This is set once and cached for subsequent calls.
-/// On macOS, this is `~/.config/stealcode`.
-/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/stealcode`.
-/// On Windows, this is `%APPDATA%\StealCode`.
+/// The resolved config directory, cached after first use.
+/// macOS `~/.config/stealcode`; Linux/FreeBSD `$XDG_CONFIG_HOME/stealcode`;
+/// Windows `%APPDATA%\StealCode`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Sets a custom directory for all user data, overriding the default data
-/// directory. This function must be called before any other path operations
-/// that depend on the data directory, and at most once. The directory's path
-/// will be canonicalized to an absolute path by a blocking FS operation. The
-/// directory will be created if it doesn't exist.
-///
-/// # Arguments
-///
-/// * `dir` - The path to use as the custom data directory. This will be used as
-///   the base directory for all user data, including databases, extensions, and
-///   logs.
-///
-/// # Returns
-///
-/// A reference to the static `PathBuf` containing the custom data directory
-/// path.
+/// Sets a custom base directory for all user data, overriding platform
+/// defaults. Must be called at most once, before `data_dir`/`config_dir`
+/// are first used; the directory is created if missing.
 ///
 /// # Panics
-///
-/// Panics if:
-/// * Called more than once
-/// * Called after the data directory has been initialized (e.g., via `data_dir`
-///   or `config_dir`)
-/// * The directory's path cannot be canonicalized to an absolute path
-/// * The directory cannot be created
+/// Panics if called more than once, after the data/config dirs are
+/// initialized, or if the directory cannot be created or canonicalized.
 pub fn set_custom_data_dir(dir: impl AsRef<Path>) -> &'static PathBuf {
     assert!(
         CUSTOM_DATA_DIR.get().is_none()
@@ -108,6 +84,12 @@ pub fn set_custom_data_dir(dir: impl AsRef<Path>) -> &'static PathBuf {
     })
 }
 
+/// A `dirs`-crate lookup with a fallback relative to the home directory,
+/// so a missing platform dir can never panic the `OnceLock` caches below.
+fn dir_or_home(dir: Option<PathBuf>, relative: &str) -> PathBuf {
+    dir.unwrap_or_else(|| home_dir().join(relative))
+}
+
 /// Returns the path to the configuration directory used by `StealCode`.
 pub fn config_dir() -> &'static PathBuf {
     CONFIG_DIR.get_or_init(|| {
@@ -116,17 +98,17 @@ pub fn config_dir() -> &'static PathBuf {
         }
 
         cfg_select! {
-            target_os = "windows" => dirs::config_dir()
-                .expect("failed to determine RoamingAppData directory")
-                .join(APP_NAME),
+            target_os = "windows" => {
+                dir_or_home(dirs::config_dir(), "AppData/Roaming")
+                    .join(APP_NAME)
+            }
             any(target_os = "linux", target_os = "freebsd") => {
                 let base_dir = if let Ok(flatpak_xdg_config) =
                     std::env::var("FLATPAK_XDG_CONFIG_HOME")
                 {
                     flatpak_xdg_config.into()
                 } else {
-                    dirs::config_dir()
-                        .expect("failed to determine XDG_CONFIG_HOME directory")
+                    dir_or_home(dirs::config_dir(), ".config")
                 };
                 base_dir.join(APP_NAME_LOWERCASE)
             }
@@ -152,28 +134,22 @@ pub fn data_dir() -> &'static PathBuf {
                 {
                     flatpak_xdg_data.into()
                 } else {
-                    dirs::data_local_dir()
-                        .expect("failed to determine XDG_DATA_HOME directory")
+                    dir_or_home(dirs::data_local_dir(), ".local/share")
                 };
                 data_local_dir.join(APP_NAME_LOWERCASE)
             }
-            target_os = "windows" => dirs::data_local_dir()
-                .expect("failed to determine LocalAppData directory")
-                .join(APP_NAME),
-            _ => {
-                config_dir().clone() // Fallback
+            target_os = "windows" => {
+                dir_or_home(dirs::data_local_dir(), "AppData/Local")
+                    .join(APP_NAME)
             }
+            _ => config_dir().clone(),
         }
     })
 }
 
 /// Returns the path to the state directory used by `StealCode`.
-///
-/// On macOS, this is `~/.local/state/StealCode`.
-/// On Linux/FreeBSD, this is `$XDG_STATE_HOME/stealcode`.
-/// On Windows (and any other platform without a native "state" directory
-/// convention), this currently falls back to the same path as `data_dir()`
-/// (`%LOCALAPPDATA%\StealCode`).
+/// macOS `~/.local/state/StealCode`; Linux/FreeBSD `$XDG_STATE_HOME/stealcode`;
+/// falls back to `data_dir()` on other platforms.
 pub fn state_dir() -> &'static PathBuf {
     static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
     STATE_DIR.get_or_init(|| {
@@ -187,13 +163,11 @@ pub fn state_dir() -> &'static PathBuf {
                 {
                     flatpak_xdg_state.into()
                 } else {
-                    dirs::state_dir()
-                        .expect("failed to determine XDG_STATE_HOME directory")
+                    dir_or_home(dirs::state_dir(), ".local/state")
                 };
                 base_dir.join(APP_NAME_LOWERCASE)
             }
-            _ => dirs::data_local_dir()
-                .expect("failed to determine LocalAppData directory")
+            _ => dir_or_home(dirs::data_local_dir(), "AppData/Local")
                 .join(APP_NAME),
         }
     })
@@ -204,20 +178,19 @@ pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
     TEMP_DIR.get_or_init(|| {
         cfg_select! {
-            target_os = "macos" => dirs::cache_dir()
-                .expect("failed to determine cachesDirectory directory")
-                .join(APP_NAME),
-            target_os = "windows" => dirs::cache_dir()
-                .expect("failed to determine LocalAppData directory")
-                .join(APP_NAME),
+            target_os = "macos" => {
+                dir_or_home(dirs::cache_dir(), "Library/Caches").join(APP_NAME)
+            }
+            target_os = "windows" => {
+                dir_or_home(dirs::cache_dir(), "AppData/Local").join(APP_NAME)
+            }
             any(target_os = "linux", target_os = "freebsd") => {
                 let cache_dir = if let Ok(flatpak_xdg_cache) =
                     std::env::var("FLATPAK_XDG_CACHE_HOME")
                 {
                     flatpak_xdg_cache.into()
                 } else {
-                    dirs::cache_dir()
-                        .expect("failed to determine XDG_CACHE_HOME directory")
+                    dir_or_home(dirs::cache_dir(), ".cache")
                 };
                 cache_dir.join(APP_NAME_LOWERCASE)
             }
@@ -257,7 +230,7 @@ pub fn database_dir() -> &'static PathBuf {
 /// Returns the path to the crashes directory, if it exists for the current
 /// platform.
 #[must_use]
-pub fn crashes_dir() -> Option<&'static PathBuf> {
+pub const fn crashes_dir() -> Option<&'static PathBuf> {
     cfg_select! {
         target_os = "macos" => {
             static CRASHES_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -308,28 +281,42 @@ pub fn keybindings_backup_file() -> &'static PathBuf {
 }
 
 /// Returns the path to the extensions directory.
-///
-/// This is where installed extensions are stored.
 pub fn plugins_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
     EXTENSIONS_DIR.get_or_init(|| data_dir().join("extensions"))
 }
 
-/// Returns the path to the themes directory.
-///
-/// This is where themes that are not provided by extensions are stored.
+/// Returns the path to the themes directory (themes not provided by
+/// extensions).
 pub fn themes_dir() -> &'static PathBuf {
     static THEMES_DIR: OnceLock<PathBuf> = OnceLock::new();
     THEMES_DIR.get_or_init(|| config_dir().join("themes"))
 }
 
-/// Returns the path to the languages directory.
-///
-/// This is where language servers are downloaded to for languages built-in to
-/// `StealCode`.
+/// Returns the path to the languages directory, where language servers for
+/// built-in languages are downloaded.
 pub fn languages_dir() -> &'static PathBuf {
     static LANGUAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
     LANGUAGES_DIR.get_or_init(|| data_dir().join("languages"))
+}
+
+/// Hugging Face Hub repository holding the speech model.
+pub const MODEL_REPO: &str = "nvidia/nemotron-3.5-asr-streaming-0.6b";
+/// GGUF checkpoint file inside the model repository.
+pub const GGUF_FILE: &str = "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf";
+
+/// Returns the path to the speech model directory.
+pub fn model_dir() -> &'static PathBuf {
+    static MODEL_DIR: OnceLock<PathBuf> = OnceLock::new();
+    MODEL_DIR.get_or_init(|| {
+        data_dir().join("models").join("nvidia").join("nemotron")
+    })
+}
+
+/// Returns the full path of the speech model GGUF checkpoint.
+pub fn model_path() -> &'static PathBuf {
+    static MODEL_PATH: OnceLock<PathBuf> = OnceLock::new();
+    MODEL_PATH.get_or_init(|| model_dir().join(GGUF_FILE))
 }
 
 /// Returns the relative path to a `.stealcode` folder within a project.

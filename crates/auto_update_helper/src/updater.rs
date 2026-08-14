@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-pub struct Job {
+pub(crate) struct Job {
     pub apply: Box<dyn Fn(&Path) -> Result<()> + Send + Sync>,
     pub rollback: Box<dyn Fn(&Path) -> Result<()> + Send + Sync>,
 }
@@ -61,7 +61,7 @@ impl Job {
 }
 
 #[must_use]
-pub fn jobs() -> Vec<Job> {
+pub(crate) fn jobs() -> Vec<Job> {
     vec![
         Job::mkdir("old"),
         Job::move_file("stealcode.exe", "old\\stealcode.exe"),
@@ -76,7 +76,7 @@ pub fn jobs() -> Vec<Job> {
 /// brief window where our own parent process might still be finishing
 /// shutdown). Rolls back everything already applied if a job never
 /// succeeds within `per_job_timeout`.
-pub fn perform_update_with_timeout(
+pub(crate) fn perform_update_with_timeout(
     app_dir: &Path,
     launch: bool,
     per_job_timeout: Duration,
@@ -125,10 +125,11 @@ pub fn perform_update_with_timeout(
 
 /// Real entry point used by `main.rs` - a 2 second per-job timeout, which
 /// is generous for a rename/mkdir/rmdir on local disk even under load.
-pub fn perform_update(app_dir: &Path, launch: bool) -> Result<()> {
+pub(crate) fn perform_update(app_dir: &Path, launch: bool) -> Result<()> {
     perform_update_with_timeout(app_dir, launch, Duration::from_secs(2))
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

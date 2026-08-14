@@ -22,28 +22,28 @@ use crate::api;
 
 const DEFAULT_PORT: u16 = 8000;
 
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
+async fn shutdown_signal() -> anyhow::Result<()> {
+    let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     let terminate = async {
         tokio::signal::unix::signal(
             tokio::signal::unix::SignalKind::terminate(),
-        )
-        .expect("failed to install SIGTERM handler")
+        )?
         .recv()
         .await;
+        Ok(())
     };
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
-        () = ctrl_c => info!("received Ctrl+C"),
-        () = terminate => info!("received SIGTERM"),
+        result = ctrl_c => {
+            result?;
+            info!("received Ctrl+C");
+        }
+        _ = terminate => info!("received SIGTERM"),
     }
     info!("starting graceful shutdown");
+    Ok(())
 }
 
 pub async fn run_server(
@@ -117,8 +117,15 @@ pub async fn run_server(
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("server starting on port {port}");
     let listener = TcpListener::bind(addr).await?;
+    let shutdown = async {
+        if let Err(error) = shutdown_signal().await {
+            tracing::error!(
+                "failed to install shutdown signal handler: {error}"
+            );
+        }
+    };
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await?;
     Ok(())
 }

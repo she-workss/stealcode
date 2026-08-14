@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/audio_engine",
     "crates/auto_update",
     "crates/auto_update_helper",
     "crates/cli",
@@ -29,12 +30,13 @@ resolver = "3"
 [workspace.package]
 version = "0.14.16"
 edition = "2024"
-authors = ["Sinkevich Artyom <sinkevich.artem@inbox.ru>"]
-homepage = "https://github.com/she-workss/stealcode"
+authors = ["he-thinks"]
+homepage = "https://github.com/he-thinks/stealcode"
 license = "MIT"
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
+audio_engine = { path = "crates/audio_engine" }
 auto_update = { path = "crates/auto_update" }
 axum = { version = "0.8", default-features = false, features = [
     "http1",
@@ -150,8 +152,8 @@ too_many_lines = "allow"
 type_complexity = "allow"
 
 [profile.release]
-opt-level = "s"
-# opt-level = 3
+# opt-level = "s"
+opt-level = 3
 codegen-units = 1
 strip = true
 lto = true

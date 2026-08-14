@@ -200,6 +200,7 @@ fn normalize_char_key(c: char, shift: bool) -> Cow<'static, str> {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use ratatui::termina::event::{KeyEvent, KeyEventKind, KeyEventState};
 

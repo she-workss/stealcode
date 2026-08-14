@@ -111,7 +111,7 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
             )
             .await?
             else {
-                println!("Релизов пока нет - обновляться нечем.");
+                println!("No releases yet - nothing to update.");
                 return Ok(());
             };
             release
@@ -131,51 +131,23 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
     };
 
     let Some(new_version) = new_version else {
-        println!("StealCode уже последней версии ({current_version}).");
+        println!("StealCode is already up to date ({current_version}).");
         return Ok(());
     };
 
-    let (platform, arch) = auto_update::current_platform_arch()?;
-    let asset_name = auto_update::expected_asset_name(platform, arch);
-    let asset = auto_update::find_asset_by_name(&release, &asset_name)?;
     let download_dir = paths::temp_dir();
-    let downloaded_path = download_dir.join(&asset.name);
-    auto_update::download_asset(&client, &source, asset, &downloaded_path)
+    auto_update::apply_release_asset(&client, &source, &release, &download_dir)
         .await?;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        let current_exe = std::env::current_exe()
-            .context("failed to determine current executable path")?;
-        auto_update::apply_linux_update(&downloaded_path, &current_exe)?;
-        println!("Обновлено до {new_version}. Перезапусти StealCode.");
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let app_dir = std::env::current_exe()
-            .context("failed to determine current executable path")?
-            .ancestors()
-            .nth(2) // Contents/MacOS/stealcode -> Contents -> StealCode.app
-            .context(
-                "could not locate StealCode.app from the running executable",
-            )?
-            .to_path_buf();
-        auto_update::apply_macos_update(&downloaded_path, &app_dir)?;
-        println!("Обновлено до {new_version}. Перезапусти StealCode.");
+        println!("Updated to {new_version}. Restart StealCode.");
     }
 
     #[cfg(target_os = "windows")]
     {
-        let helper_path =
-            auto_update::install_release_windows(&downloaded_path).await?;
-        anyhow::ensure!(
-            helper_path.is_file(),
-            "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
-            helper_path.display()
-        );
         println!(
-            "Обновление до {new_version} подготовлено. Перезапусти StealCode, чтобы применить."
+            "Update to {new_version} prepared. Restart StealCode to apply."
         );
     }
 

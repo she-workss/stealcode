@@ -37,7 +37,6 @@ pub struct TuiConfig {
     pub schema: Option<String>,
     pub theme: String,
     pub leader_timeout: u64,
-    #[serde(default)]
     pub plugin: Vec<String>,
     pub plugin_enabled: Option<FxHashMap<String, bool>>,
     pub scroll_speed: Option<ScrollSpeed>,
@@ -62,6 +61,7 @@ impl Default for TuiConfig {
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use serde_json::json;

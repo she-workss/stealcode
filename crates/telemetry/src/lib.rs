@@ -1,4 +1,4 @@
-//! Telemetry for StealCode: file- and stdout-based `tracing` logging setup.
+//! Telemetry for `StealCode`: file- and stdout-based `tracing` logging setup.
 
 use std::{fs::OpenOptions, io, path::Path};
 
@@ -10,25 +10,34 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
-fn setup_log_file(file: impl AsRef<Path>) -> (NonBlocking, WorkerGuard) {
+fn setup_log_file(
+    file: impl AsRef<Path>,
+) -> Option<(NonBlocking, WorkerGuard)> {
     let log_dir = paths::logs_dir();
     if let Err(e) = std::fs::create_dir_all(log_dir) {
         eprintln!(
             "Warning: failed to create log directory {}: {e}",
             log_dir.display()
         );
+        return None;
     }
     let log_path = log_dir.join(file);
-    let log_file = OpenOptions::new()
+    let log_file = match OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&log_path)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to open log file {}: {e}", log_path.display());
-            panic!("Could not open log file: {e}");
-        });
-    tracing_appender::non_blocking(log_file)
+    {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to open log file {}: {e}",
+                log_path.display()
+            );
+            return None;
+        }
+    };
+    Some(tracing_appender::non_blocking(log_file))
 }
 
 fn build_env_filter(level_filter: &str) -> EnvFilter {
@@ -47,7 +56,12 @@ pub fn init_logging(
     if tracing::dispatcher::has_been_set() {
         return None;
     }
-    let (non_blocking_appender, guard) = setup_log_file(file_name.as_ref());
+    let (non_blocking_appender, guard) =
+        match setup_log_file(file_name.as_ref()) {
+            Some(appender) => appender,
+            None => return None,
+        };
+
     let filter = build_env_filter(level_filter.as_ref());
     let file_layer = fmt::layer()
         .with_writer(non_blocking_appender)
