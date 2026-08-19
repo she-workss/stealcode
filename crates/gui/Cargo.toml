@@ -15,8 +15,11 @@ voice = ["dep:voice"]
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
-gpui = { git = "https://github.com/zed-industries/zed", default-features = false }
+gpui = { git = "https://github.com/zed-industries/zed", default-features = false, features = [
+    "profiler",
+] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", default-features = false }
+# gpui-fps = { git = "https://github.com/longbridge/gpui-component", default-features = false }
 gpui_platform = { git = "https://github.com/zed-industries/zed", default-features = false, features = [
     "font-kit",
 ] }

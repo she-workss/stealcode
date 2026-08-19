@@ -18,7 +18,7 @@ use gpui::{
 #[cfg(feature = "voice")]
 use gpui_component::button::ButtonVariants;
 #[cfg(feature = "voice")]
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Textarea, TextareaState};
 use gpui_component::{Disableable, Root, StyledExt, button::Button};
 use settings::Settings;
 use sound::sounds::SoundName;
@@ -168,7 +168,7 @@ struct StealcodeApp {
     /// Backing state for the read-only transcript textarea, kept in sync by
     /// the polling task via `set_value` (`Input` has no per-render override).
     #[cfg(feature = "voice")]
-    voice_input: Entity<InputState>,
+    voice_input: Entity<TextareaState>,
     updates: UpdateManager,
 }
 
@@ -177,16 +177,16 @@ impl StealcodeApp {
     fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
         #[cfg(feature = "voice")]
         let voice_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
-                .rows(4)
+            TextareaState::new(window, cx)
+                .auto_grow(4, 8)
                 .placeholder("Press \"Start voice recognition\" and speak...")
         });
 
         // VoiceManager works on a background thread and exposes state only
         // through `poll_events()` (as in the TUI), so poll it from a
         // lightweight task for the life of the view. `spawn_in`/`update_in`
-        // are required because `InputState::set_value` needs a `&mut Window`.
+        // are required because `TextareaState::set_value` needs a `&mut
+        // Window`.
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(POLL_INTERVAL).await;
@@ -280,7 +280,7 @@ impl Render for StealcodeApp {
                         .child(
                             // Kept in sync by the polling task's `set_value` above; `Input` has
                             // no per-render value override.
-                            Input::new(&self.voice_input),
+                            Textarea::new(&self.voice_input),
                         )
                 }
                 #[cfg(not(feature = "voice"))]

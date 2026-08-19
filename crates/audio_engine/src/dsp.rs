@@ -20,11 +20,16 @@ pub struct MelFrontend {
     window: Vec<f32>,
     /// Mel filterbank [n_fft/2 + 1, n_mels] (from GGUF).
     fb: Vec<f32>,
-    /// Precomputed twiddle factors (radix-2 FFT, n_fft must be a
-    /// power of two).
+    /// Twiddle factors for the real-input FFT: the even/odd packed
+    /// half-size FFT (`n_fft / 2`).
+    twiddles_half: Vec<f32>,
+    /// Twiddle factors for the recombination step (`n_fft`).
     twiddles: Vec<f32>,
     fft_re: Vec<f32>,
     fft_im: Vec<f32>,
+    /// Recombined spectrum `[0..=n_fft/2]` (full half-complex band).
+    out_re: Vec<f32>,
+    out_im: Vec<f32>,
 }
 
 impl MelFrontend {
@@ -48,11 +53,18 @@ impl MelFrontend {
         }
 
         let n = cfg.n_fft;
+        let half = n / 2;
         let mut twiddles = Vec::with_capacity(n);
         for k in 0..n {
             let angle = -2.0 * std::f32::consts::PI * k as f32 / n as f32;
             twiddles.push(angle.cos());
             twiddles.push(angle.sin());
+        }
+        let mut twiddles_half = Vec::with_capacity(half);
+        for k in 0..half {
+            let angle = -2.0 * std::f32::consts::PI * k as f32 / half as f32;
+            twiddles_half.push(angle.cos());
+            twiddles_half.push(angle.sin());
         }
 
         Ok(Self {
@@ -60,8 +72,11 @@ impl MelFrontend {
             window,
             fb,
             twiddles,
+            twiddles_half,
             fft_re: vec![0.0; n],
             fft_im: vec![0.0; n],
+            out_re: vec![0.0; half + 1],
+            out_im: vec![0.0; half + 1],
         })
     }
 
@@ -143,16 +158,54 @@ impl MelFrontend {
     }
 
     /// STFT column for one window (in-place, no windowing by caller).
+    /// The signal is real, so it uses the even/odd packing trick: one
+    /// complex FFT of length n_fft/2 plus a per-bin recombination
+    /// (Sorensen), which halves the transform work.
     fn fft_frame(&mut self, frame: &[f32]) {
         let n = self.cfg.n_fft;
-        let fft_re = &mut self.fft_re;
-        let fft_im = &mut self.fft_im;
-        let window = &self.window;
-        for i in 0..n {
-            fft_re[i] = frame[i] * window[i];
-            fft_im[i] = 0.0;
+        let half = n / 2;
+        // z[m] = x[2m] * w[2m] + i * x[2m+1] * w[2m+1]
+        for m in 0..half {
+            self.fft_re[m] = frame[2 * m] * self.window[2 * m];
+            self.fft_im[m] = frame[2 * m + 1] * self.window[2 * m + 1];
         }
-        // Iterative radix-2 Cooley-Tukey with bit-reversal permutation.
+        Self::fft_inplace(
+            half,
+            &mut self.fft_re[..half],
+            &mut self.fft_im[..half],
+            &self.twiddles_half,
+        );
+        // Recombine into the half-complex spectrum X[0..=n/2]:
+        //   Xe[m] = (Z[m] + conj(Z[N-m])) / 2
+        //   Xo[m] = -i (Z[m] - conj(Z[N-m])) / 2
+        //   X[m]  = Xe[m] + W_n^m * Xo[m]   (indices mod N = half)
+        let tw = &self.twiddles;
+        for m in 0..=half {
+            let zm_re = self.fft_re[m % half];
+            let zm_im = self.fft_im[m % half];
+            let zn_re = self.fft_re[(half - m) % half];
+            let zn_im = self.fft_im[(half - m) % half];
+            let xe_re = (zm_re + zn_re) * 0.5;
+            let xe_im = (zm_im - zn_im) * 0.5;
+            let xo_re = (zm_im + zn_im) * 0.5;
+            let xo_im = -(zm_re - zn_re) * 0.5;
+            // W_n^m; m == half wraps to W^(n/2) = -1 (index would be
+            // out of the twiddle table).
+            let (wr, wi) = if m < half {
+                (tw[2 * m], tw[2 * m + 1])
+            } else {
+                (-1.0, 0.0)
+            };
+            self.out_re[m] = xe_re + wr * xo_re - wi * xo_im;
+            self.out_im[m] = xe_im + wr * xo_im + wi * xo_re;
+        }
+        self.fft_re[..=half].copy_from_slice(&self.out_re[..=half]);
+        self.fft_im[..=half].copy_from_slice(&self.out_im[..=half]);
+    }
+
+    /// Iterative radix-2 Cooley-Tukey with bit-reversal permutation.
+    fn fft_inplace(len: usize, re: &mut [f32], im: &mut [f32], tw: &[f32]) {
+        let n = len;
         let mut j = 0usize;
         for i in 1..n {
             let mut bit = n >> 1;
@@ -162,138 +215,27 @@ impl MelFrontend {
             }
             j |= bit;
             if i < j {
-                fft_re.swap(i, j);
-                fft_im.swap(i, j);
+                re.swap(i, j);
+                im.swap(i, j);
             }
         }
-        let tw = &self.twiddles;
         let mut len = 2usize;
         while len <= n {
             let half = len / 2;
             let step = n / len;
             for i in (0..n).step_by(len) {
                 for k in 0..half {
-                    let t_re = fft_re[i + k + half] * tw[2 * k * step]
-                        - fft_im[i + k + half] * tw[2 * k * step + 1];
-                    let t_im = fft_re[i + k + half] * tw[2 * k * step + 1]
-                        + fft_im[i + k + half] * tw[2 * k * step];
-                    fft_re[i + k + half] = fft_re[i + k] - t_re;
-                    fft_im[i + k + half] = fft_im[i + k] - t_im;
-                    fft_re[i + k] += t_re;
-                    fft_im[i + k] += t_im;
+                    let t_re = re[i + k + half] * tw[2 * k * step]
+                        - im[i + k + half] * tw[2 * k * step + 1];
+                    let t_im = re[i + k + half] * tw[2 * k * step + 1]
+                        + im[i + k + half] * tw[2 * k * step];
+                    re[i + k + half] = re[i + k] - t_re;
+                    im[i + k + half] = im[i + k] - t_im;
+                    re[i + k] += t_re;
+                    im[i + k] += t_im;
                 }
             }
             len <<= 1;
-        }
-    }
-}
-
-/// Incremental mel frontend for streaming: mel frames are produced
-/// only once their STFT window is fully inside the received signal,
-/// so they never need recomputation. The final (held-back) frames are
-/// computed at end-of-stream via `finish`.
-#[derive(Debug)]
-pub struct StreamingMel {
-    frontend: MelFrontend,
-    /// Preemphasized samples received so far.
-    pcm: Vec<f32>,
-    /// Stable mel frames, frame-major [n, n_mels].
-    mel: Vec<f32>,
-    n_mels: usize,
-    last_preemph_sample: f32,
-}
-
-impl StreamingMel {
-    pub fn new(frontend: MelFrontend) -> Self {
-        let n_mels = frontend.cfg.n_mels;
-        Self {
-            frontend,
-            pcm: Vec::new(),
-            mel: Vec::new(),
-            n_mels,
-            last_preemph_sample: 0.0,
-        }
-    }
-
-    /// Append new PCM samples (preemphasized incrementally).
-    pub fn push(&mut self, samples: &[f32]) {
-        let preemph = self.frontend.cfg.preemph;
-        for (i, &s) in samples.iter().enumerate() {
-            let prev = if i == 0 {
-                if self.pcm.is_empty() {
-                    0.0
-                } else {
-                    self.last_preemph_sample
-                }
-            } else {
-                samples[i - 1]
-            };
-            self.pcm.push(s - preemph * prev);
-        }
-        self.last_preemph_sample = self.pcm.last().copied().unwrap_or(0.0);
-        self.grow();
-    }
-
-    fn grow(&mut self) {
-        let cfg = &self.frontend.cfg;
-        let n = self.pcm.len();
-        let half = cfg.n_fft / 2;
-        // Frame t is stable once its window end is within the signal:
-        // t*hop + half <= n  ->  t <= (n - half) / hop.
-        if n <= half {
-            return;
-        }
-        let stable = (n - half) / cfg.hop + 1;
-        let have = self.mel.len() / self.n_mels;
-        if stable <= have {
-            return;
-        }
-        // Recompute the last stable frame(s) using the zero-padded
-        // approach (frames are immutable once computed, so just append
-        // the new ones computed against the full signal).
-        let Ok(mut all) = self.frontend.compute(&self.pcm) else {
-            return;
-        };
-        let stable = stable.min(all.len() / self.n_mels);
-        all.truncate(stable * self.n_mels);
-        if have < stable {
-            let take = stable - have;
-            let start = all.len() - take * self.n_mels;
-            self.mel.extend_from_slice(&all[start..]);
-        }
-    }
-
-    /// Stable frames available right now.
-    pub fn stable_frames(&self) -> usize {
-        self.mel.len() / self.n_mels
-    }
-
-    /// Mel frame by absolute index, frame-major.
-    pub fn frame(&self, t: usize) -> &[f32] {
-        &self.mel[t * self.n_mels..(t + 1) * self.n_mels]
-    }
-
-    /// Total frames for the received signal (including the held-back
-    /// tail that `stable_frames` excludes). Call `finish` first for the
-    /// full count to be meaningful.
-    pub fn total_frames(&self) -> usize {
-        self.frontend.n_frames(self.pcm.len())
-    }
-
-    /// Compute the remaining tail frames (reflect-free: zero padding
-    /// against the true signal end, as in the full-audio mel).
-    pub fn finish(&mut self) {
-        let total = self.total_frames();
-        let have = self.mel.len() / self.n_mels;
-        if total <= have {
-            return;
-        }
-        let all = self.frontend.compute(&self.pcm).unwrap_or_default();
-        let all_frames = all.len() / self.n_mels;
-        if all_frames > have {
-            self.mel.extend_from_slice(
-                &all[have * self.n_mels..all_frames * self.n_mels],
-            );
         }
     }
 }
@@ -327,5 +269,58 @@ pub fn to_mono_16k(
         resampled
     } else {
         mono
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The real-input FFT must match the naive DFT of the same windowed
+    /// frame (parity with the reference mel frontend).
+    #[test]
+    fn fft_matches_naive_dft() {
+        let cfg = PreprocessorConfig {
+            sample_rate: 16000,
+            n_fft: 16,
+            win_length: 16,
+            hop: 4,
+            n_mels: 2,
+            preemph: 0.97,
+            dither: 0.0,
+        };
+        let fb = vec![1.0; (16 / 2 + 1) * 2];
+        let mut fe = MelFrontend::new(cfg, &fb).unwrap();
+        let pcm: Vec<f32> = (0..64)
+            .map(|i| ((i * 37) % 101) as f32 / 17.0 - 2.0)
+            .collect();
+        let n = 16;
+        let half = 8;
+        let window = fe.window.clone();
+        let mut frame = vec![0.0f32; n];
+        for t in 0..4 {
+            frame.copy_from_slice(&pcm[t * 4..t * 4 + n]);
+            fe.fft_frame(&frame);
+            for k in 0..=half {
+                let mut re = 0.0f64;
+                let mut im = 0.0f64;
+                for i in 0..n {
+                    let x = frame[i] as f64 * window[i] as f64;
+                    let a = -2.0 * std::f64::consts::PI * k as f64 * i as f64
+                        / n as f64;
+                    re += x * a.cos();
+                    im += x * a.sin();
+                }
+                let d_re = fe.fft_re[k] as f64 - re;
+                let d_im = fe.fft_im[k] as f64 - im;
+                let tol = 1e-3 * (1.0 + re.abs() + im.abs());
+                assert!(
+                    d_re.abs() < tol && d_im.abs() < tol,
+                    "frame {t} bin {k}: fft ({}, {}) vs dft ({re:.6}, {im:.6})",
+                    fe.fft_re[k],
+                    fe.fft_im[k]
+                );
+            }
+        }
     }
 }

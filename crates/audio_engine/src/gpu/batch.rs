@@ -34,8 +34,8 @@ const SLOT_ALIGN: u64 = 64 << 10;
 /// cooperation needed):
 /// - the pass is always dropped (`take`) before `encoder` is replaced in
 ///   `submit()` or the batch is dropped (`Drop`);
-/// - `copy()` drops the pass before touching `encoder`, so wgpu never
-///   sees encoder use while a pass is open.
+/// - `copy()` drops the pass before touching `encoder`, so wgpu never sees
+///   encoder use while a pass is open.
 #[derive(Debug)]
 pub struct ComputeBatch<'a> {
     pub ctx: &'a GpuContext,
@@ -133,23 +133,22 @@ impl<'a> ComputeBatch<'a> {
         wg_y: u32,
     ) {
         if self.pass.is_none() {
-            let pass = self
-                .encoder
-                .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("voice/gpu batch pass"),
-                    timestamp_writes: None,
-                });
+            let pass =
+                self.encoder
+                    .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("voice/gpu batch pass"),
+                        timestamp_writes: None,
+                    });
             // SAFETY: the pass borrows `self.encoder`; it is always
             // dropped before `encoder` is replaced or the batch drops
             // (see the struct-level invariants), and wgpu sees the
             // encoder as free whenever `copy`/`submit` touch it.
-            self.pass =
-                Some(unsafe {
-                    std::mem::transmute::<
-                        wgpu::ComputePass<'_>,
-                        wgpu::ComputePass<'static>,
-                    >(pass)
-                });
+            self.pass = Some(unsafe {
+                std::mem::transmute::<
+                    wgpu::ComputePass<'_>,
+                    wgpu::ComputePass<'static>,
+                >(pass)
+            });
         }
         // SAFETY: pass is Some here; set_pipeline/set_bind_group/dispatch
         // are exactly what the pass API allows in sequence.

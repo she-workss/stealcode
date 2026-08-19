@@ -25,7 +25,7 @@ use cpal::{
 
 /// How much audio a streaming encoder step covers, trading latency
 /// against throughput.
-const LATENCY_MODE: LatencyMode = LatencyMode::Medium;
+const LATENCY_MODE: LatencyMode = LatencyMode::HighQuality;
 
 /// Print only the newly appended transcript text (the committed prefix
 /// is never re-printed or rewritten).

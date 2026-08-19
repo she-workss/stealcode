@@ -207,6 +207,21 @@ impl Gguf {
         // file while it is open.
         let bytes = unsafe { Mmap::map(&file) }
             .with_context(|| format!("mmap GGUF {}", path.display()))?;
+        // Prefetch the whole mapping so the first inference does not
+        // stall on cold page faults (weights are ~600 MB on disk).
+        // unix: MADV_WILLNEED. Windows memmap2 has no `advise`, so touch
+        // one byte of every page instead (fills the OS page cache).
+        #[cfg(unix)]
+        let _ = bytes.advise(memmap2::Advice::WillNeed);
+        #[cfg(not(unix))]
+        {
+            let data: &[u8] = &bytes;
+            let mut acc: u8 = 0;
+            for chunk in data.chunks(4096) {
+                acc = acc.wrapping_add(chunk[0]);
+            }
+            std::hint::black_box(acc);
+        }
         let (kv, tensors, data_start) = Self::parse(&bytes)?;
         Ok(Self {
             kv,

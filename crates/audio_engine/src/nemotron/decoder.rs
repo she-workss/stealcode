@@ -15,7 +15,7 @@ use tracing::debug;
 
 use super::{
     config::RnntConfig,
-    weights::{Lin, load_lin},
+    weights::{Lin, Q8Mat, load_lin},
 };
 use crate::{
     gguf::Gguf,
@@ -26,6 +26,10 @@ use crate::{
 pub struct LstmLayer {
     pub ih: Lin,
     pub hh: Lin,
+    /// `ih`/`hh` concatenated per row into one `[4*hidden, 2*hidden]`
+    /// matrix (one matvec over `[x; h]` instead of two; `None` when the
+    /// shapes do not allow block-aligned concat).
+    pub merged: Option<Lin>,
     /// ih_bias + hh_bias folded.
     pub bias: Vec<f32>,
     pub hidden: usize,
@@ -36,6 +40,12 @@ pub struct Predictor {
     pub embed: Vec<f32>,
     pub layers: Vec<LstmLayer>,
     pub hidden: usize,
+    /// Scratch for `step` gates, reused across token steps (no per-step
+    /// heap alloc in the latency-critical decode loop).
+    gates: Vec<f32>,
+    g2: Vec<f32>,
+    /// Scratch `[x; h]` for the merged ih/hh matvec.
+    xh: Vec<f32>,
 }
 
 #[derive(Debug)]
@@ -70,6 +80,16 @@ impl LstmLayer {
         let h = format!("decoder.prediction.dec_rnn.lstm.hh_l{i}");
         let ih = load_lin(gguf, &p, hidden, 4 * hidden)?;
         let hh = load_lin(gguf, &h, hidden, 4 * hidden)?;
+        let merged = match (&ih.q, &hh.q) {
+            (Some(a), Some(b)) => Q8Mat::concat_rows(a, b).map(|q| Lin {
+                q: Some(q),
+                f: None,
+                bias: None,
+                out: 4 * hidden,
+                inp: 2 * hidden,
+            }),
+            _ => None,
+        };
         let mut bias = Vec::with_capacity(4 * hidden);
         {
             let m = gguf
@@ -90,6 +110,7 @@ impl LstmLayer {
         Ok(Self {
             ih,
             hh,
+            merged,
             bias,
             hidden,
         })
@@ -112,10 +133,16 @@ impl Predictor {
         let layers = (0..cfg.pred_n_layers)
             .map(|i| LstmLayer::load(gguf, i, hidden))
             .collect::<Result<Vec<_>>>()?;
+        let gates = vec![0.0f32; 4 * hidden];
+        let g2 = vec![0.0f32; 4 * hidden];
+        let xh = vec![0.0f32; 2 * hidden];
         Ok(Self {
             embed,
             layers,
             hidden,
+            gates,
+            g2,
+            xh,
         })
     }
 
@@ -136,21 +163,28 @@ impl Predictor {
             let base = last_token as usize * hdim;
             x.copy_from_slice(&self.embed[base..base + hdim]);
         }
-        let mut gates = vec![0.0f32; 4 * hdim];
         for l in 0..self.layers.len() {
             let input: &[f32] = if l == 0 { x } else { &nh[l - 1] };
             let layer = &self.layers[l];
-            layer.ih.matvec_nb(input, &mut gates);
-            let mut g2 = vec![0.0f32; 4 * hdim];
-            layer.hh.matvec_nb(&h[l], &mut g2);
+            if let Some(m) = &layer.merged {
+                self.xh[..hdim].copy_from_slice(input);
+                self.xh[hdim..2 * hdim].copy_from_slice(&h[l]);
+                m.matvec_nb(&self.xh, &mut self.gates);
+            } else {
+                layer.ih.matvec_nb(input, &mut self.gates);
+                layer.hh.matvec_nb(&h[l], &mut self.g2);
+                for k in 0..4 * hdim {
+                    self.gates[k] += self.g2[k];
+                }
+            }
             for k in 0..4 * hdim {
-                gates[k] += g2[k] + layer.bias[k];
+                self.gates[k] += layer.bias[k];
             }
             let (i, f, g, o) = (
-                &gates[0..hdim],
-                &gates[hdim..2 * hdim],
-                &gates[2 * hdim..3 * hdim],
-                &gates[3 * hdim..4 * hdim],
+                &self.gates[0..hdim],
+                &self.gates[hdim..2 * hdim],
+                &self.gates[2 * hdim..3 * hdim],
+                &self.gates[3 * hdim..4 * hdim],
             );
             for k in 0..hdim {
                 let ig = sigmoid(i[k]);
@@ -162,9 +196,7 @@ impl Predictor {
                 nh[l][k] = og * cn.tanh();
             }
             if l == 0 {
-                if let Some(dir) = std::env::var_os("STEALCODE_DUMP_DIR")
-                    .map(std::path::PathBuf::from)
-                {
+                if let Some(dir) = crate::nemotron::timing::dump_dir() {
                     let mut v: Vec<f32> = Vec::with_capacity(4 * hdim);
                     for k in 0..hdim {
                         v.push(sigmoid(i[k]));
@@ -176,7 +208,7 @@ impl Predictor {
                         .ok();
                     std::fs::write(
                         dir.join("real_gates0.bin"),
-                        bytemuck_enc(&gates),
+                        bytemuck_enc(&self.gates),
                     )
                     .ok();
                 }
@@ -215,8 +247,7 @@ impl GreedyDecoder {
     /// Greedy decode over encoder output `enc` (time-major
     /// [t_enc, d_enc]).
     pub fn decode(&mut self, enc: &[f32], t_enc: usize) -> Result<Vec<Token>> {
-        let dump = std::env::var_os("STEALCODE_DUMP_DIR")
-            .map(std::path::PathBuf::from);
+        let dump = crate::nemotron::timing::dump_dir();
         let d_enc = self.joint.d_enc;
         let joint_h = self.joint.joint_h;
         let n_cls = self.joint.n_cls;

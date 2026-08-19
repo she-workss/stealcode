@@ -7,9 +7,9 @@
 //!
 //!   * pre_encode, FF1, FF2, final LN: only the new frames;
 //!   * attention: new queries, keys/values over the band only;
-//!   * conv module: new outputs only - the `conv_context_left`-frame
-//!     causal context comes from cached GLU outputs, so the per-batch
-//!     cost is proportional to the batch size, not the kernel width.
+//!   * conv module: new outputs only - the `conv_context_left`-frame causal
+//!     context comes from cached GLU outputs, so the per-batch cost is
+//!     proportional to the batch size, not the kernel width.
 //!
 //! The attention band is chunk-aligned exactly like the offline path
 //! (`k_min = sat_sub(q/chunk - left_chunks)*chunk`,
@@ -173,11 +173,7 @@ impl StreamingEncoder {
         // and the decoder consumes all of them, so the transcript ends
         // at the same frame as the offline encode.
         let t_enc_offline = |tail: usize| ((tail / 2 + 1) / 2 + 1) / 2 + 1;
-        let t_new = if fin {
-            s + t_enc_offline(t1 - t0)
-        } else {
-            e
-        };
+        let t_new = if fin { s + t_enc_offline(t1 - t0) } else { e };
         if t_new <= s {
             return Ok(());
         }
@@ -221,12 +217,11 @@ impl StreamingEncoder {
         self.pre
             .extend_from_slice(&pe[start_rel * d..(start_rel + c) * d]);
         let pre = &self.pre;
-        let dump_dir = std::env::var_os("STEALCODE_DUMP_DIR")
-            .map(std::path::PathBuf::from);
-        if let Some(dir) = &dump_dir {
+        if let Some(dir) = crate::nemotron::timing::dump_dir() {
             let bytes = f32_bytes(pre);
             std::fs::write(dir.join("senc_pre.bin"), bytes).ok();
         }
+        let dump_dir = crate::nemotron::timing::dump_dir();
 
         // ---- attention band ----
         let k_lo = (s / chunk).saturating_sub(left_chunks) * chunk;
@@ -337,9 +332,7 @@ impl StreamingEncoder {
                 let xt = transpose(&cat, c, cat_in);
                 let mut h = Vec::new();
                 mlp.mlp0.forward_t(&mut self.scratch, &xt, c, &mut h);
-                for v in &mut h {
-                    *v = v.max(0.0);
-                }
+                crate::simd_kernel::relu_into(&mut h);
                 let mut y = Vec::new();
                 mlp.mlp2.forward_t(&mut self.scratch, &h, c, &mut y);
                 let y = transpose(&y, d, c);
@@ -432,9 +425,8 @@ fn block_new(
     let conv_lo = s.saturating_sub(conv_left);
     let dmp0 = |name: &str, v: &[f32]| {
         if dump0 {
-            if let Some(dir) = std::env::var_os("STEALCODE_DUMP_DIR") {
-                let p = std::path::PathBuf::from(dir)
-                    .join(format!("{name}_s{s}.bin"));
+            if let Some(dir) = crate::nemotron::timing::dump_dir() {
+                let p = dir.join(format!("{name}_s{s}.bin"));
                 let bytes = f32_bytes(v);
                 std::fs::write(p, bytes).ok();
             }
@@ -456,9 +448,7 @@ fn block_new(
     let t0x = Instant::now();
     b.ff1_lin1.forward_t(scratch, xt, c, &mut h);
     acc.push(("ff1_lin1", t0x.elapsed()));
-    for v in &mut h {
-        *v = *v * (1.0 + (-*v).exp()).recip(); // silu
-    }
+    crate::simd_kernel::silu_into(&mut h);
     let mut f = Vec::new();
     let t0x = Instant::now();
     b.ff1_lin2.forward_t(scratch, &h, c, &mut f);
@@ -487,14 +477,14 @@ fn block_new(
     let ln_new_t = transpose_into(&ln_new, c, d, trans);
     let mut k_new = Vec::new();
     let mut v_new = Vec::new();
+    let mut q_new = Vec::new();
     let t_a = Instant::now();
     b.attn_k.forward_t(scratch, ln_new_t, c, &mut k_new);
     b.attn_v.forward_t(scratch, ln_new_t, c, &mut v_new);
+    let lnst = transpose_into(&ln_new, c, d, trans);
+    b.attn_q.forward_t(scratch, lnst, c, &mut q_new);
     let k_new = transpose(&k_new, d, c);
     let v_new = transpose(&v_new, d, c);
-    let lnst = transpose_into(&ln_new, c, d, trans);
-    let mut q_new = Vec::new();
-    b.attn_q.forward_t(scratch, lnst, c, &mut q_new);
     let q_new = transpose(&q_new, d, c);
     acc.push(("qkv", t_a.elapsed()));
     dmp0("senc_b0_ln", &ln_new);
@@ -524,16 +514,11 @@ fn block_new(
                 } else {
                     &k_new[(fr - s) * d + hd..(fr - s) * d + hd + head_dim]
                 };
-                let pr =
-                    (qq as isize - (k_lo + kk) as isize - pos_lo) as usize;
+                let pr = (qq as isize - (k_lo + kk) as isize - pos_lo) as usize;
                 let pos_row = &pos_p[pr * d + hd..pr * d + hd + head_dim];
-                let mut acc = 0.0f32;
-                for i in 0..head_dim {
-                    let qui = qu[i] + uh[i];
-                    let qvi = qv[i] + vh[i];
-                    acc += qui * kk_d[i] + qvi * pos_row[i];
-                }
-                row[kk * n_heads + h] = acc * scale;
+                row[kk * n_heads + h] = crate::simd_kernel::score_dot(
+                    qu, uh, qv, vh, kk_d, pos_row, scale,
+                );
             }
         }
     };
@@ -566,30 +551,25 @@ fn block_new(
         let (k0, k1) = (k_min - k_lo, k_max - k_lo);
         for h in 0..n_heads {
             let hd = h * head_dim;
-            let mut maxv = f32::NEG_INFINITY;
-            for kk in k0..k1 {
-                maxv = maxv.max(srow[kk * n_heads + h]);
-            }
-            let mut sum = 0.0f32;
-            for kk in k0..k1 {
-                let e = (srow[kk * n_heads + h] - maxv).exp();
-                srow[kk * n_heads + h] = e;
-                sum += e;
-            }
-            let inv = 1.0 / sum;
-            for dd in 0..head_dim {
-                let mut acc = 0.0f32;
-                for kk in k0..k1 {
+            crate::simd_kernel::softmax_v(
+                srow,
+                k0,
+                k1,
+                n_heads,
+                h,
+                |kk| {
                     let fr = k_lo + kk;
-                    let vv = if fr < s {
-                        &v_v_in[krel(fr) * d + hd + dd]
+                    if fr < s {
+                        &v_v_in[krel(fr) * d + hd
+                            ..krel(fr) * d + hd + head_dim]
                     } else {
-                        &v_new[(fr - s) * d + hd + dd]
-                    };
-                    acc += srow[kk * n_heads + h] * inv * vv;
-                }
-                row[hd + dd] = acc;
-            }
+                        &v_new[(fr - s) * d + hd
+                            ..(fr - s) * d + hd + head_dim]
+                    }
+                },
+                head_dim,
+                &mut row[hd..hd + head_dim],
+            );
         }
     };
     if c * band * n_heads < 2048 {
@@ -630,20 +610,15 @@ fn block_new(
     let t_a = Instant::now();
     let mut lnc = vec![0.0f32; c * d];
     for j in 0..c {
-        b.norm_conv.forward(&y[j * d..(j + 1) * d], &mut lnc[j * d..(j + 1) * d]);
+        b.norm_conv
+            .forward(&y[j * d..(j + 1) * d], &mut lnc[j * d..(j + 1) * d]);
     }
     let lt = transpose_into(&lnc, c, d, trans);
     let mut h2 = Vec::new();
     b.pw1.forward_t(scratch, lt, c, &mut h2);
     let h2 = transpose_into(&h2, 2 * d, c, trans);
     let mut glu_new = vec![0.0f32; c * d];
-    for tt in 0..c {
-        for i in 0..d {
-            let gate = h2[tt * 2 * d + i];
-            let val = h2[tt * 2 * d + d + i];
-            glu_new[tt * d + i] = gate * (1.0 + (-val).exp()).recip();
-        }
-    }
+    crate::simd_kernel::glu_from(&h2, d, &mut glu_new);
     // dw input: cached old GLU for frames [conv_lo, s) (real values)
     // followed by the new frames' GLU; the kernel's left pad only
     // affects outputs below `old_glu`, which are discarded.
@@ -657,11 +632,9 @@ fn block_new(
     let mut ln2 = vec![0.0f32; d];
     let mut o2 = vec![0.0f32; c * d];
     for j in 0..c {
-        b.conv_ln
-            .forward(&conv[j * d..(j + 1) * d], &mut ln2);
-        for i in 0..d {
-            o2[j * d + i] = ln2[i] * (1.0 + (-ln2[i]).exp()).recip(); // silu
-        }
+        b.conv_ln.forward(&conv[j * d..(j + 1) * d], &mut ln2);
+        crate::simd_kernel::silu_into(&mut ln2);
+        o2[j * d..(j + 1) * d].copy_from_slice(&ln2);
     }
     let ot = transpose_into(&o2, c, d, trans);
     let mut o2t = Vec::new();
@@ -685,9 +658,7 @@ fn block_new(
     let t_a = Instant::now();
     b.ff2_lin1.forward_t(scratch, xt2, c, &mut h3);
     acc.push(("ff2_lin1", t_a.elapsed()));
-    for v in &mut h3 {
-        *v = *v * (1.0 + (-*v).exp()).recip(); // silu
-    }
+    crate::simd_kernel::silu_into(&mut h3);
     let mut f3 = Vec::new();
     let t_a = Instant::now();
     b.ff2_lin2.forward_t(scratch, &h3, c, &mut f3);
@@ -744,14 +715,7 @@ impl StreamEncoder for StreamingEncoder {
         fin: bool,
     ) -> Result<()> {
         StreamingEncoder::encode_new(
-            self,
-            enc,
-            mel,
-            n_mels,
-            t0,
-            t1,
-            prompt_id,
-            fin,
+            self, enc, mel, n_mels, t0, t1, prompt_id, fin,
         )
     }
 

@@ -4,7 +4,7 @@ pub mod config;
 pub mod decoder;
 pub mod encoder;
 pub mod live;
-mod timing;
+pub(crate) mod timing;
 pub mod weights;
 
 use std::path::Path;
@@ -115,9 +115,7 @@ impl Nemotron {
             &mel[..4],
             &mel[mel.len() - 4..]
         );
-        if let Some(dir) =
-            std::env::var_os("STEALCODE_DUMP_DIR").map(std::path::PathBuf::from)
-        {
+        if let Some(dir) = timing::dump_dir() {
             let bytes = f32_bytes(&mel);
             std::fs::write(dir.join("mel.bin"), bytes).ok();
         }

@@ -667,10 +667,8 @@ pub fn spawn_update_worker(
     (tx_cmd, rx_event)
 }
 
-// ---------------------------------------------------------------------
 // Linux / macOS: no helper process needed - rename() over a running exe is
 // allowed. macOS mounts the dmg via `hdiutil`; Linux extracts the tar.gz.
-// ---------------------------------------------------------------------
 
 pub fn atomic_swap(new_binary: &Path, target_path: &Path) -> Result<()> {
     anyhow::ensure!(

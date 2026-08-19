@@ -3,11 +3,8 @@
 /// Transpose [rows, cols] time-major -> [cols, rows] row-major.
 pub(crate) fn transpose(x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     let mut out = Vec::with_capacity(rows * cols);
-    for c in 0..cols {
-        for r in 0..rows {
-            out.push(x[r * cols + c]);
-        }
-    }
+    out.resize(rows * cols, 0.0);
+    crate::simd_kernel::transpose_simd(x, rows, cols, &mut out);
     out
 }
 
@@ -20,11 +17,8 @@ pub(crate) fn transpose_into<'a>(
 ) -> &'a mut Vec<f32> {
     trans.clear();
     trans.reserve(rows * cols);
-    for c in 0..cols {
-        for r in 0..rows {
-            trans.push(x[r * cols + c]);
-        }
-    }
+    trans.resize(rows * cols, 0.0);
+    crate::simd_kernel::transpose_simd(x, rows, cols, trans);
     trans
 }
 

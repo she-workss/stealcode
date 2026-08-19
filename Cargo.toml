@@ -11,6 +11,7 @@ members = [
     "crates/settings",
     "crates/sound",
     "crates/telemetry",
+    "crates/ttfx",
     "crates/tui",
     "crates/utils",
     "crates/voice",
@@ -22,6 +23,7 @@ default-members = [
     "crates/release_channel",
     "crates/settings",
     "crates/telemetry",
+    "crates/ttfx",
     "crates/tui",
     "crates/utils",
 ]
@@ -48,7 +50,10 @@ axum = { version = "0.8", default-features = false, features = [
 dirs = { version = "6", default-features = false }
 gui = { path = "crates/gui" }
 paths = { path = "crates/paths" }
-ratatui = { version = "0.30", default-features = false, features = ["termina"] }
+ratatui = { version = "0.30", default-features = false, features = [
+    "termina",
+    "unstable-backend-writer",
+] }
 release_channel = { path = "crates/release_channel" }
 reqwest = { version = "0.13", default-features = false, features = [
     "blocking",
@@ -152,12 +157,15 @@ too_many_lines = "allow"
 type_complexity = "allow"
 
 [profile.release]
-# opt-level = "s"
-opt-level = 3
+opt-level = "s"
+# opt-level = 3
 codegen-units = 1
 strip = true
 lto = true
-panic = "abort"
+
+[profile.release.package.windows]
+hint-mostly-unused = true
+# panic = "abort"
 
 [profile.dev]
 opt-level = 0
@@ -166,6 +174,9 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[profile.dev.package.windows]
+hint-mostly-unused = true
 
 [profile.debugging]
 inherits = "dev"

@@ -249,11 +249,7 @@ impl Encoder {
     pub fn load(gguf: &Gguf, cfg: EncoderConfig) -> Result<Self> {
         let pre_encode =
             PreEncode::load(gguf, cfg.conv_channels, cfg.subsampling_factor)?;
-        if let (Some(dir), Some(q)) = (
-            std::env::var_os("STEALCODE_DUMP_DIR")
-                .map(std::path::PathBuf::from),
-            &pre_encode.out.q,
-        ) {
+        if let (Some(dir), Some(q)) = (timing::dump_dir(), &pre_encode.out.q) {
             let mut s = Vec::new();
             q.to_f32(&mut s);
             std::fs::write(dir.join("w_pre_out.bin"), f32_bytes(&s)).ok();
@@ -303,30 +299,6 @@ impl Encoder {
         pe
     }
 
-    /// ChunkedLimited mask, [T, T] time-major: 0 inside the chunk band,
-    /// -inf outside. chunk_size = att_right + 1,
-    /// left_chunks = att_left / chunk_size.
-    pub fn chunked_mask(&self, t_enc: usize) -> Vec<f32> {
-        let left = self.cfg.att_context_left;
-        let right = self.cfg.att_context_right;
-        let chunk_size = right + 1;
-        let left_chunks = if chunk_size > 0 { left / chunk_size } else { 0 };
-        let mut mask = vec![0.0f32; t_enc * t_enc];
-        for q in 0..t_enc {
-            let q_chunk = if chunk_size > 0 { q / chunk_size } else { 0 };
-            let k_min_chunk = q_chunk.saturating_sub(left_chunks);
-            let k_min = k_min_chunk * chunk_size;
-            let k_max = (q_chunk + 1) * chunk_size;
-            let row = &mut mask[q * t_enc..(q + 1) * t_enc];
-            for k in 0..t_enc {
-                if k < k_min || k >= k_max {
-                    row[k] = f32::NEG_INFINITY;
-                }
-            }
-        }
-        mask
-    }
-
     /// Full offline encode: mel [t_mel, n_mels] time-major in, encoder
     /// output [t_enc, d_model] time-major out. `prompt_id` selects the
     /// one-hot for the prompt MLP (None skips the prompt MLP).
@@ -346,9 +318,7 @@ impl Encoder {
 
         let t_enc = x.len() / d;
 
-        let dump_dir = std::env::var_os("STEALCODE_DUMP_DIR")
-            .map(std::path::PathBuf::from);
-        if let Some(dir) = &dump_dir {
+        if let Some(dir) = timing::dump_dir() {
             std::fs::write(dir.join("enc_pre.bin"), f32_bytes(&x)).ok();
         }
 
@@ -363,6 +333,7 @@ impl Encoder {
         // ---- conformer blocks ----
         let pe = self.pos_emb(t_enc);
         timing::tick("blocks");
+        let dump_dir = timing::dump_dir();
         for (i, b) in self.blocks.iter_mut().enumerate() {
             let dump_b0 = dump_dir.is_some() && i == 0;
             x = Self::block_forward(
@@ -373,7 +344,7 @@ impl Encoder {
                 &pe,
                 &mut self.scratch,
                 dump_b0,
-                &dump_dir,
+                dump_dir,
             );
             if let Some(dir) = &dump_dir {
                 std::fs::write(
@@ -417,9 +388,7 @@ impl Encoder {
                     let xt = transpose(&cat, t_enc, cat_in);
                     let mut h = Vec::new();
                     mlp.mlp0.forward_t(&mut self.scratch, &xt, t_enc, &mut h);
-                    for v in &mut h {
-                        *v = v.max(0.0);
-                    }
+                    crate::simd_kernel::relu_into(&mut h);
                     let mut y = Vec::new();
                     mlp.mlp2.forward_t(&mut self.scratch, &h, t_enc, &mut y);
                     *x = transpose(&y, d, t_enc);
@@ -443,16 +412,11 @@ impl Encoder {
             *t0 = std::time::Instant::now();
         };
         let pe = &mut self.pre_encode;
-        let dump_dir = std::env::var_os("STEALCODE_DUMP_DIR")
-            .map(std::path::PathBuf::from);
+        let dump_dir = timing::dump_dir();
         let mut y = Vec::new();
         let mut x = mel.to_vec();
         let (mut t, mut f) = (t_mel, n_mels);
-        let relu = |v: &mut Vec<f32>| {
-            for x in v.iter_mut() {
-                *x = x.max(0.0);
-            }
-        };
+        let relu = |v: &mut Vec<f32>| crate::simd_kernel::relu_into(v);
         // conv0: 1 -> C, k=3 s=2, causal pad.
         pe.conv0.forward(&x, t, f, &mut y);
         relu(&mut y);
@@ -538,9 +502,7 @@ impl Encoder {
         let xt = transpose(&ln, t, d);
         let mut h = Vec::new();
         lin1.forward_t(scratch, &xt, t, &mut h); // [d_ff, t]
-        for v in &mut h {
-            *v = *v * (1.0 + (-*v).exp()).recip(); // silu
-        }
+        crate::simd_kernel::silu_into(&mut h);
         // h is already [d_ff, t] (out-row-major) - the layout forward_t wants.
         let mut f = Vec::new();
         lin2.forward_t(scratch, &h, t, &mut f); // [d, t]
@@ -561,7 +523,7 @@ impl Encoder {
         pe: &[f32],
         scratch: &mut Vec<f32>,
         dump: bool,
-        dump_dir: &Option<std::path::PathBuf>,
+        dump_dir: Option<&std::path::PathBuf>,
     ) -> Vec<f32> {
         let d = cfg.d_model;
         let n_heads = cfg.n_heads;
@@ -640,13 +602,9 @@ impl Encoder {
                     let kk_d = &k[kk * d + hd..kk * d + hd + head_dim];
                     let pos_row = &p[(kk + t - qq - 1) * d + hd
                         ..(kk + t - qq - 1) * d + hd + head_dim];
-                    let mut acc = 0.0f32;
-                    for i in 0..head_dim {
-                        let qui = qu[i] + uh[i];
-                        let qvi = qv[i] + vh[i];
-                        acc += qui * kk_d[i] + qvi * pos_row[i];
-                    }
-                    row[kk * n_heads + h] = acc * scale;
+                    row[kk * n_heads + h] = crate::simd_kernel::score_dot(
+                        qu, uh, qv, vh, kk_d, pos_row, scale,
+                    );
                 }
             }
         };
@@ -669,25 +627,16 @@ impl Encoder {
             let (k_min, k_max) = band(qq);
             for h in 0..n_heads {
                 let hd = h * head_dim;
-                let mut maxv = f32::NEG_INFINITY;
-                for kk in k_min..k_max {
-                    maxv = maxv.max(srow[kk * n_heads + h]);
-                }
-                let mut sum = 0.0f32;
-                for kk in k_min..k_max {
-                    let e = (srow[kk * n_heads + h] - maxv).exp();
-                    srow[kk * n_heads + h] = e;
-                    sum += e;
-                }
-                let inv = 1.0 / sum;
-                for dd in 0..head_dim {
-                    let mut acc = 0.0f32;
-                    for kk in k_min..k_max {
-                        acc +=
-                            srow[kk * n_heads + h] * inv * v[kk * d + hd + dd];
-                    }
-                    row[hd + dd] = acc;
-                }
+                crate::simd_kernel::softmax_v(
+                    srow,
+                    k_min,
+                    k_max,
+                    n_heads,
+                    h,
+                    |i| &v[i * d + hd..i * d + hd + head_dim],
+                    head_dim,
+                    &mut row[hd..hd + head_dim],
+                );
             }
         };
         if t >= 8 {
@@ -729,13 +678,7 @@ impl Encoder {
         let h = transpose(&h, 2 * d, t);
         // GLU: gate * sigmoid(value)
         let mut glu = vec![0.0f32; t * d];
-        for tt in 0..t {
-            for i in 0..d {
-                let gate = h[tt * 2 * d + i];
-                let val = h[tt * 2 * d + d + i];
-                glu[tt * d + i] = gate * (1.0 + (-val).exp()).recip();
-            }
-        }
+        crate::simd_kernel::glu_from(&h, d, &mut glu);
         dmp("enc_glu.bin", &glu);
         // depthwise conv with left pad (conv_context_left, 0)
         let mut conv = Vec::new();
@@ -747,10 +690,9 @@ impl Encoder {
                 &conv[tt * d..(tt + 1) * d],
                 &mut ln[tt * d..(tt + 1) * d],
             );
-            for i in 0..d {
-                conv[tt * d + i] =
-                    ln[tt * d + i] * (1.0 + (-ln[tt * d + i]).exp()).recip(); // silu
-            }
+            let ln_slice = &mut ln[tt * d..(tt + 1) * d];
+            crate::simd_kernel::silu_into(ln_slice);
+            conv[tt * d..(tt + 1) * d].copy_from_slice(ln_slice);
         }
         dmp("enc_convln.bin", &conv);
         let ct = transpose(&conv, t, d);

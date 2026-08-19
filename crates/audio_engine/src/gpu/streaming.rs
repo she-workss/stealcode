@@ -167,11 +167,7 @@ impl GpuStreamingEncoder {
         // stays in sync for any batch size; the final tail (`fin`)
         // computes all `f(tail)` frames and the decoder consumes them,
         // so the transcript ends where the offline encode does.
-        let t_new = if fin {
-            s + t_enc_offline(t1 - t0)
-        } else {
-            e
-        };
+        let t_new = if fin { s + t_enc_offline(t1 - t0) } else { e };
         if t_new <= s {
             return Ok(());
         }
@@ -292,7 +288,12 @@ impl GpuStreamingEncoder {
                 left_chunks,
                 conv_left,
             );
-            downloads.extend([(out.clone(), act), (glu_new, act), (k_new, act), (v_new, act)]);
+            downloads.extend([
+                (out.clone(), act),
+                (glu_new, act),
+                (k_new, act),
+                (v_new, act),
+            ]);
             prev_out = Some(out);
         }
         let t_rec_ms = t_rec.elapsed().as_secs_f64() * 1e3;
@@ -306,7 +307,8 @@ impl GpuStreamingEncoder {
         let mut out_new: Vec<f32> = Vec::new();
         for b in 0..n_layers {
             let no = bytes_to_f32(&dl.next().expect("out download"), c * d);
-            let glu_new = bytes_to_f32(&dl.next().expect("glu download"), c * d);
+            let glu_new =
+                bytes_to_f32(&dl.next().expect("glu download"), c * d);
             let k_new = bytes_to_f32(&dl.next().expect("k download"), c * d);
             let v_new = bytes_to_f32(&dl.next().expect("v download"), c * d);
             self.blocks[b].extend_from_slice(&no);

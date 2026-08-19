@@ -13,7 +13,7 @@
 //!
 //! Matrices are consumed as `[out, in]` row-major against activations
 //! in transposed `[in, T]` layout (see `Lin::forward_t`), so a forward
-//! is one sgemm (matrixmultiply, multi-threaded).
+//! is one sgemm (the portable std::simd kernel, multi-threaded).
 
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
@@ -21,28 +21,17 @@ use rayon::prelude::*;
 use crate::sgemm_kernel;
 
 /// C = A @ B (row-major, `c` accumulates nothing: beta = 0) via the
-/// dedicated AVX2 kernel, or matrixmultiply as fallback.
+/// portable std::simd kernel. All three operands are contiguous
+/// row-major (a `[m, k]`, b `[k, n]`, c `[m, n]`).
 #[allow(unsafe_code)]
 unsafe fn gemm(
     m: usize,
     k: usize,
     n: usize,
     a: *const f32,
-    rsa: isize,
-    _csa: isize,
     b: *const f32,
-    rsb: isize,
-    _csb: isize,
     c: *mut f32,
-    rsc: isize,
-    _csc: isize,
 ) {
-    debug_assert_eq!(rsa, k as isize);
-    debug_assert_eq!(_csa, 1);
-    debug_assert_eq!(rsb, n as isize);
-    debug_assert_eq!(_csb, 1);
-    debug_assert_eq!(rsc, n as isize);
-    debug_assert_eq!(_csc, 1);
     // SAFETY: `a`/`b`/`c` are valid, aligned pointers to m*k, k*n and
     // m*n initialized/writable elements respectively (callers pass
     // pointers derived from live, correctly sized slices).
@@ -132,6 +121,29 @@ impl Q8Mat {
     /// Raw quantized block bytes (m rows x `padded_row`).
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Concatenate two matrices side-by-side per row (block-aligned):
+    /// `result[j] = a[j] ++ b[j]`, so one matvec over `[x; h]` covers
+    /// both. Requires equal row counts/shape/variant and a `row_len`
+    /// that is a multiple of 32 (so the combined row stays
+    /// block-aligned). Returns `None` otherwise - callers fall back to
+    /// two separate matvecs.
+    pub fn concat_rows(a: &Q8Mat, b: &Q8Mat) -> Option<Q8Mat> {
+        if a.rows != b.rows || a.row_len != b.row_len || a.variant != b.variant
+        {
+            return None;
+        }
+        if a.row_len % 32 != 0 {
+            return None;
+        }
+        let irow = a.padded_row;
+        let mut bytes = Vec::with_capacity(a.rows * 2 * irow);
+        for j in 0..a.rows {
+            bytes.extend_from_slice(&a.bytes[j * irow..(j + 1) * irow]);
+            bytes.extend_from_slice(&b.bytes[j * irow..(j + 1) * irow]);
+        }
+        Q8Mat::new(bytes, a.rows, 2 * a.row_len, a.variant).ok()
     }
 
     /// Bytes per row (blocks_per_row * block_bytes).
@@ -277,13 +289,11 @@ impl Lin {
         y: &mut [f32],
         bias: Option<&[f32]>,
     ) {
-        for j in 0..out {
-            let row = &f[j * inp..(j + 1) * inp];
-            let mut acc = 0.0f32;
-            for i in 0..inp {
-                acc += row[i] * x[i];
+        crate::simd_kernel::f32_matvec(f, inp, out, x, y);
+        if let Some(b) = bias {
+            for j in 0..out {
+                y[j] += b[j];
             }
-            y[j] = acc + bias.map_or(0.0, |b| b[j]);
         }
     }
 
@@ -313,20 +323,7 @@ impl Lin {
             // SAFETY: all three buffers are writable/sized m*k, k*n, m*n
             // and disjoint; the slices outlive the call.
             unsafe {
-                gemm(
-                    m,
-                    k,
-                    n,
-                    f.as_ptr(),
-                    k as isize,
-                    1,
-                    x_t.as_ptr(),
-                    n as isize,
-                    1,
-                    y_t.as_mut_ptr(),
-                    n as isize,
-                    1,
-                );
+                gemm(m, k, n, f.as_ptr(), x_t.as_ptr(), y_t.as_mut_ptr());
             }
         }
         if let Some(b) = &self.bias {
@@ -425,14 +422,8 @@ impl Conv2d {
                     c_in,
                     spatial,
                     self.w.as_ptr(),
-                    c_in as isize,
-                    1,
                     xt.as_ptr(),
-                    spatial as isize,
-                    1,
                     y_t.as_mut_ptr(),
-                    spatial as isize,
-                    1,
                 );
             }
             if !self.b.is_empty() {
@@ -568,22 +559,23 @@ impl Conv1dDw {
     ) {
         let t_out = t + self.pad_left + self.pad_right - self.kh + 1;
         let keep = t_out.saturating_sub(skip);
-        out.resize(keep * self.dim, 0.0);
-        for ot in skip..t_out {
-            let t0 = ot as isize - self.pad_left as isize;
-            for c in 0..self.dim {
-                let mut acc = 0.0f32;
-                for k in 0..self.kh {
-                    let ti = t0 + k as isize;
-                    if ti < 0 || ti as usize >= t {
-                        continue;
-                    }
-                    acc +=
-                        x[ti as usize * self.dim + c] * self.w[c * self.kh + k];
-                }
-                out[(ot - skip) * self.dim + c] = acc;
-            }
+        // The SIMD kernel computes the full `t_out` rows, so size the
+        // buffer accordingly, then shift the kept window to the front.
+        out.resize(t_out * self.dim, 0.0);
+        crate::simd_kernel::dwconv_forward(
+            x,
+            t,
+            self.dim,
+            self.kh,
+            self.pad_left,
+            self.pad_right,
+            &self.w,
+            out,
+        );
+        if skip > 0 {
+            out.copy_within(skip * self.dim..t_out * self.dim, 0);
         }
+        out.truncate(keep * self.dim);
     }
 }
 
@@ -602,20 +594,13 @@ impl std::fmt::Debug for LayerNorm {
 
 impl LayerNorm {
     pub fn forward(&self, x: &[f32], out: &mut [f32]) {
-        let mut mean = 0.0f32;
-        for &v in x {
-            mean += v;
-        }
-        mean /= self.dim as f32;
-        let mut var = 0.0f32;
-        for &v in x {
-            var += (v - mean) * (v - mean);
-        }
-        var /= self.dim as f32;
-        let inv = 1.0 / (var + self.eps).sqrt();
-        for i in 0..self.dim {
-            out[i] = (x[i] - mean) * inv * self.weight[i] + self.bias[i];
-        }
+        crate::simd_kernel::ln_forward(
+            x,
+            &self.weight,
+            &self.bias,
+            self.eps,
+            out,
+        );
     }
 }
 

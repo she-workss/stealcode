@@ -42,12 +42,8 @@ pub fn transcribe_wav(
     };
     let prompt_id = model.resolve_prompt_id(language)?;
     let st = StreamState::new(&model.decoder);
-    let mut tr = LiveTranscriber::with_encoder(
-        prompt_id,
-        st,
-        senc,
-        mode.batch_mel(),
-    );
+    let mut tr =
+        LiveTranscriber::with_encoder(prompt_id, st, senc, mode.batch_mel());
     tr.push(model, pcm)?;
     tr.flush(model)?;
     let text = tr.text(model);

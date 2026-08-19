@@ -1,6 +1,7 @@
 //! Per-phase timing of `encode()` (enabled via STEALCODE_PHASE_TIMING=1).
 
 use std::{
+    path::PathBuf,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -8,10 +9,20 @@ use std::{
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static ACC: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
 static LAST: Mutex<Option<(Instant, &'static str)>> = Mutex::new(None);
+static DUMP_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 pub(crate) fn enabled() -> bool {
     *ENABLED
         .get_or_init(|| std::env::var_os("STEALCODE_PHASE_TIMING").is_some())
+}
+
+/// Activation dump directory (STEALCODE_DUMP_DIR), read once.
+pub(crate) fn dump_dir() -> Option<&'static PathBuf> {
+    DUMP_DIR
+        .get_or_init(|| {
+            std::env::var_os("STEALCODE_DUMP_DIR").map(PathBuf::from)
+        })
+        .as_ref()
 }
 
 pub(crate) fn tick(name: &'static str) {

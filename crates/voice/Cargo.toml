@@ -6,6 +6,10 @@ authors.workspace = true
 homepage.workspace = true
 license.workspace = true
 
+[features]
+default = []
+gpu = ["audio_engine/gpu"]
+
 [dependencies]
 anyhow.workspace = true
 audio_engine.workspace = true
@@ -13,9 +17,6 @@ cpal = { version = "0.18", default-features = false }
 paths.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
-
-[features]
-gpu = ["audio_engine/gpu"]
 
 [lints]
 workspace = true

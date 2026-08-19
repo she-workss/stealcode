@@ -21,9 +21,12 @@ codegen-backend = "llvm"
 codegen-backend = "llvm"
 
 [unstable]
-# build-std = ["std", "panic_abort"]
-# build-std-features = ["optimize_for_size"]
-checksum-freshness = true
+build-std = ["alloc", "compiler_builtins", "core", "panic_unwind", "std"]
+build-std-features = [
+    # "backtrace",
+    "optimize_for_size",
+]
+# checksum-freshness = true
 codegen-backend = true
 feature-unification = true
 profile-hint-mostly-unused = true
@@ -31,41 +34,29 @@ profile-hint-mostly-unused = true
 [resolver]
 feature-unification = "workspace"
 
-[profile.dev]
-codegen-backend = "cranelift"
+# [profile.dev]
+# codegen-backend = "cranelift"
 
-[target.'cfg(windows)']
+[target.'cfg(all())']
 rustflags = [
-    "--cfg=windows_slim_errors",
     "--cfg=tokio_unstable",
-    "-Clink-arg=-fuse-ld=lld",
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
     "-Znext-solver=globally",
     # "-Zlocation-detail=none",
 ]
+
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-Ctarget-cpu=x86-64-v3"]
+
+[target.'cfg(windows)']
+rustflags = ["--cfg=windows_slim_errors", "-Clink-arg=-fuse-ld=lld"]
 
 [target.'cfg(target_os = "linux")']
 linker = "clang"
-rustflags = [
-    "--cfg=tokio_unstable",
-    "-Clink-arg=-fuse-ld=mold",
-    "-Zcache-proc-macros",
-    "-Zshare-generics=y",
-    "-Zthreads=0",
-    "-Znext-solver=globally",
-    # "-Zlocation-detail=none",
-]
+rustflags = ["-Clink-arg=-fuse-ld=mold"]
 
 [target.'cfg(target_os = "macos")']
 linker = "clang"
-rustflags = [
-    "--cfg=tokio_unstable",
-    "-Clink-arg=-fuse-ld=lld",
-    "-Zcache-proc-macros",
-    "-Zshare-generics=y",
-    "-Zthreads=0",
-    "-Znext-solver=globally",
-    # "-Zlocation-detail=none",
-]
+rustflags = ["-Clink-arg=-fuse-ld=lld"]
