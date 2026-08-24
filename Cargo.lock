@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "audio_engine"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "cpal 0.18.1",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "auto_update"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "auto_update_helper"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "tempfile",
@@ -1328,7 +1328,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "auto_update",
@@ -3556,7 +3556,7 @@ dependencies = [
 
 [[package]]
 name = "gui"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "auto_update",
@@ -6075,7 +6075,7 @@ dependencies = [
 
 [[package]]
 name = "paths"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "dirs",
  "utils",
@@ -6994,7 +6994,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "release_channel"
-version = "0.14.29"
+version = "0.14.30"
 
 [[package]]
 name = "renderdoc-sys"
@@ -7723,7 +7723,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "axum",
@@ -7737,7 +7737,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "paths",
@@ -7964,7 +7964,7 @@ dependencies = [
 
 [[package]]
 name = "sound"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "rodio",
 ]
@@ -8422,7 +8422,7 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "paths",
  "tracing",
@@ -9026,7 +9026,7 @@ dependencies = [
 
 [[package]]
 name = "ttfx"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "clap",
  "ratatui",
@@ -9036,7 +9036,7 @@ dependencies = [
 
 [[package]]
 name = "tui"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "auto_update",
@@ -9262,7 +9262,7 @@ dependencies = [
 
 [[package]]
 name = "utils"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "dirs",
@@ -9354,7 +9354,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voice"
-version = "0.14.29"
+version = "0.14.30"
 dependencies = [
  "anyhow",
  "audio_engine",
