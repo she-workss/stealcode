@@ -30,7 +30,7 @@ default-members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.14.36"
+version = "0.14.37"
 edition = "2024"
 authors = ["he-thinks"]
 homepage = "https://github.com/he-thinks/stealcode"
