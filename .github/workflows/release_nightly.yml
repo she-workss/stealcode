@@ -32,10 +32,11 @@ jobs:
           fi
 
       - name: Skip when no new commits
-        if: steps.changes.outputs.commits == 0
+        if: steps.changes.outputs.commits == '0'
         run: echo "No new commits since the latest -pre tag; nothing to build." && exit 0
 
       - name: Dispatch nightly bump
+        if: steps.changes.outputs.commits != '0'
         run: |
           gh workflow run bump_stealcode_version.yml \
             --repo "$GITHUB_REPOSITORY" \

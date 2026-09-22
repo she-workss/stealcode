@@ -3,38 +3,47 @@
 //! target by LLVM.
 //!
 //! Vector width: with `S = 16` f32 lanes the vectorized ops are
-//! 512-bit on AVX-512 and 2×256-bit on AVX2. This file deliberately
-//! ships only two x86 tiers — `avx2+fma` and baseline (SSE2) — and no
-//! AVX-512 tier: the target machines guarantee AVX2/SSE but not
-//! AVX-512, and AVX2 performance is sufficient (see the dispatch
-//! notes below). With the workspace baseline `-Ctarget-cpu=x86-64-v3`
-//! (AVX2+FMA) the baseline path already lowers `Simd::<f32, 16>` to
-//! 2×256-bit, so on AVX2 machines the two tiers generate identical
-//! code; the runtime dispatch still matters on SSE2-only machines and
-//! on non-x86 targets (NEON/SVE).
+//! 512-bit on AVX-512 and 2×256-bit on AVX2. The `std::simd` helpers
+//! deliberately ship only two x86 tiers - `avx2+fma` and baseline
+//! (SSE2) - because their `std::simd` codegen already saturates the
+//! 256-bit pipelines and the target machines guarantee AVX2/SSE but not
+//! AVX-512 (see the dispatch notes below). With the workspace baseline
+//! `-Ctarget-cpu=x86-64-v3` (AVX2+FMA) the baseline path already lowers
+//! `Simd::<f32, 16>` to 2×256-bit, so on AVX2 machines the two tiers
+//! generate identical code; the runtime dispatch still matters on
+//! SSE2-only machines and on non-x86 targets (NEON/SVE).
 //!
-//! Q8 path (`q8_gemm_simd`): there is no VNNI (`vpdpbusd`) equivalent
-//! in `std::simd`, so the dot product uses the int8 → int16 → int32
-//! widen chain. Each weight block is loaded once per row and fanned
-//! out over the `n` columns; each (row, column) accumulator holds 8
-//! partial sums over `k mod 8` (an 8-lane f32 vector in a stack
-//! buffer), so no horizontal reduce runs per block. The int16 product
-//! of two q8 values fits i16 (127² + 127² < 32767), so each block's
-//! 32 products are folded pairwise in i16 before widening to f32 —
-//! one fewer wide conversion than the plain i32 widen chain. Rows are
-//! streamed sequentially in contiguous chunks (one weight stream per
-//! rayon task, no per-task allocations) with a software prefetch of
-//! the next row, which keeps the hardware prefetcher engaged for the
-//! thin streaming batches. `n == 1` rows keep a single register
-//! accumulator (no memory round-trip per block).
+//! Q8 path (`q8_gemm_simd`): three x86 tiers, dispatched at runtime.
+//! The AVX-512-VNNI tier (`avx512vnni+avx512vl`, `vpdpbusd`) is taken on
+//! Zen 4 / Ice Lake and newer: one `dpbusd` per (block, column) with the
+//! weight block loaded once and fanned out over an 8-column register
+//! tile. Its dot is exact with no correction (`dpbusd(|w|, sign(w)*xq)`
+//! == `sum(w*xq)`). The AVX2 tier uses the int8 → int16 → int32 widen
+//! chain (`sign`/`maddubs`/`madd`) and reads each weight row once per
+//! 4-column tile; it is the fallback when AVX-512-VNNI is absent. The
+//! portable `std::simd` tier keeps the int16 pairwise fold. All tiers
+//! fan each weight block out over the `n` columns and horizontally
+//! reduce once per (row, column); rows stream sequentially in contiguous
+//! chunks (one weight stream per rayon task, no per-task allocations)
+//! with a software prefetch of the next row. A block-ahead weight-stream
+//! prefetch was tried and measured slower (the hardware prefetcher
+//! already tracks the sequential stream), so it is not kept.
 //!
 //! f32 path (`gemm_simd_into`): pure `mul_add` on f32, which `std::simd`
 //! expresses natively. On AVX2 the 16-lane row kernel processes 16
 //! columns at once as 2×256-bit with 17 loads per 256 FMA (4.25 B/FMA
-//! of L1 traffic) — half the L1 bytes per FMA of the manual 8×8 AVX2
+//! of L1 traffic) - half the L1 bytes per FMA of the manual 8×8 AVX2
 //! tile (16 × 32 B per 64 FMA = 8 B/FMA), so the portable f32 kernel
 //! competes head-to-head with the hand-written AVX2 path.
 
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::{
+    __m256i, _mm_cvtph_ps, _mm_cvtss_f32, _mm_set1_epi16, _mm256_abs_epi8,
+    _mm256_cvtepi32_ps, _mm256_dpbusd_epi32, _mm256_fmadd_ps,
+    _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16,
+    _mm256_set1_epi16, _mm256_set1_ps, _mm256_setzero_ps, _mm256_setzero_si256,
+    _mm256_sign_epi8, _mm256_storeu_ps,
+};
 #[cfg(target_arch = "x86_64")]
 use std::is_x86_feature_detected;
 use std::simd::{StdFloat, prelude::*};
@@ -46,20 +55,47 @@ use crate::sgemm_kernel::{quantize_col, read_q8_scale};
 const L: usize = 32;
 const S: usize = 16;
 
+/// Decode an f16 block scale to f32. On `x86_64` this is one
+/// `vcvtph2ps` (the calling chunk kernels carry `f16c` in their
+/// `#[target_feature]` list and `q8_gemm_simd_q` only dispatches to them
+/// when the CPU has F16C); other targets use the scalar decoder. The
+/// GEMM hot loops read one scale per (row, block, tile), so the x86 path
+/// must not be the branchy `gguf::f16_to_f32`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "f16c")]
+#[allow(unsafe_code)]
+#[inline]
+unsafe fn scale_from_f16(h: u16) -> f32 {
+    // SAFETY: the caller's `#[target_feature(enable = "f16c")]` (and the
+    // runtime `f16c` check in `q8_gemm_simd_q`) guarantees
+    // `_mm_cvtph_ps` is available; it widens the low half to f32.
+    _mm_cvtss_f32(_mm_cvtph_ps(_mm_set1_epi16(h as i16)))
+}
+
+/// Non-x86 fallback: software f16 decode. Kept on the same name so the
+/// chunk kernels read identically on every target.
+#[cfg(not(target_arch = "x86_64"))]
+#[allow(dead_code, clippy::inline_always)]
+#[inline(always)]
+fn scale_from_f16(h: u16) -> f32 {
+    crate::gguf::f16_to_f32(h)
+}
+
 /// Generates a safe dispatcher for a `std::simd` kernel:
 ///
 /// - on x86_64, if `avx2 + fma` are detected at runtime the work goes to
 ///   `$avx2` (compiled with `#[target_feature(enable = "avx2,fma")]` so LLVM
 ///   lowers the `std::simd` ops to 256-bit vectors even when the crate baseline
 ///   is SSE2, i.e. without `-Ctarget-cpu=native`);
-/// - otherwise `$impl` runs (baseline codegen: SSE2 on x86, NEON/SVE on ARM) —
+/// - otherwise `$impl` runs (baseline codegen: SSE2 on x86, NEON/SVE on ARM) -
 ///   correct everywhere, just slower.
 ///
-/// There is deliberately no AVX-512 tier (see the module docs): the
-/// target machines guarantee AVX2 but not AVX-512, and the AVX2 tier
-/// is sufficient. The GEMMs (`q8_gemm_simd`, `gemm_simd_into`) and
-/// `softmax_v` do not use this macro — their rayon splits must stay
-/// outside the `#[target_feature]` boundary (see their dispatchers).
+/// There is deliberately no AVX-512 tier for the `std::simd` helpers:
+/// the target machines guarantee AVX2 but not AVX-512, and the AVX2 tier
+/// is sufficient (the hand-written Q8 VNNI tier is separate). The GEMMs
+/// (`q8_gemm_simd`, `gemm_simd_into`) and `softmax_v` do not use this
+/// macro - their rayon splits must stay outside the `#[target_feature]`
+/// boundary (see their dispatchers).
 macro_rules! dispatch_avx2 {
     ($pub:ident, $impl:ident, $avx2:ident, $ret:ty, [$($arg:ident: $ty:ty),*]) => {
         pub fn $pub($($arg: $ty),*) -> $ret {
@@ -83,8 +119,11 @@ macro_rules! dispatch_avx2 {
 
 /// `y[m, n] = W[m, k] @ x[k, n]` in the Q8 block layout (see
 /// `sgemm_kernel::q8_gemm` for the format). Requires `m % 8 == 0`,
-/// `k % 32 == 0`, `n <= 16`; other shapes fall back to the scalar
-/// kernel in `sgemm_kernel`.
+/// `k % 32 == 0`; `n` is tiled in chunks of 16 columns. Other shapes
+/// fall back to the scalar kernel in `sgemm_kernel`. `wscales`, when
+/// `Some`, holds the precomputed per-block f16 weight scale bits
+/// (`m x k/32` row-major, see `Q8Mat`); the hot loop widens one with
+/// [`scale_from_f16`] instead of the branchy `read_q8_scale` decode.
 #[allow(
     clippy::too_many_arguments,
     clippy::manual_is_multiple_of,
@@ -98,18 +137,21 @@ pub fn q8_gemm_simd(
     k: usize,
     n: usize,
     w: &[u8],
+    wscales: Option<&[u16]>,
     padded_row: usize,
     block_bytes: usize,
     qoff: usize,
     x: &[f32],
     y: &mut [f32],
 ) {
-    debug_assert!(m % 8 == 0 && k % L == 0 && n <= 16);
+    debug_assert!(m % 8 == 0 && k % L == 0);
     if m == 0 || k == 0 || n == 0 {
         return;
     }
-    if m % 8 != 0 || k % L != 0 || n > 16 {
-        // Shapes outside the 8-row/32-block/16-column fast path.
+    if m % 8 != 0 || k % L != 0 {
+        // Shapes outside the 8-row/32-block fast path. Wide batches
+        // (n > 16) stay on the SIMD path via 16-column tiling inside
+        // the chunk kernel.
         crate::sgemm_kernel::q8_gemm_scalar(
             m,
             k,
@@ -123,49 +165,54 @@ pub fn q8_gemm_simd(
         );
         return;
     }
-    let nblocks = k / L;
-    let mut xq = vec![0i8; n * k];
-    let mut dx = vec![0.0f32; n * nblocks];
-    if n * nblocks >= 1024 {
-        xq.par_chunks_mut(k)
-            .zip(dx.par_chunks_mut(nblocks))
-            .enumerate()
-            .for_each(|(nj, (xqrow, dxrow))| {
+    crate::pool::install(|| {
+        let nblocks = k / L;
+        let mut xq = vec![0i8; n * k];
+        let mut dx = vec![0.0f32; n * nblocks];
+        if n * nblocks >= 1024 {
+            xq.par_chunks_mut(k)
+                .zip(dx.par_chunks_mut(nblocks))
+                .enumerate()
+                .for_each(|(nj, (xqrow, dxrow))| {
+                    quantize_col(x, nj, k, n, nblocks, xqrow, dxrow);
+                });
+        } else {
+            for nj in 0..n {
+                let (xqrow, dxrow) = (
+                    &mut xq[nj * k..(nj + 1) * k],
+                    &mut dx[nj * nblocks..(nj + 1) * nblocks],
+                );
                 quantize_col(x, nj, k, n, nblocks, xqrow, dxrow);
-            });
-    } else {
-        for nj in 0..n {
-            let (xqrow, dxrow) = (
-                &mut xq[nj * k..(nj + 1) * k],
-                &mut dx[nj * nblocks..(nj + 1) * nblocks],
-            );
-            quantize_col(x, nj, k, n, nblocks, xqrow, dxrow);
+            }
         }
-    }
-    q8_gemm_simd_q(
-        m,
-        k,
-        n,
-        w,
-        padded_row,
-        block_bytes,
-        qoff,
-        &xq,
-        &dx,
-        nblocks,
-        y,
-    );
+        q8_gemm_simd_q(
+            m,
+            k,
+            n,
+            w,
+            wscales,
+            padded_row,
+            block_bytes,
+            qoff,
+            &xq,
+            &dx,
+            nblocks,
+            y,
+        );
+    });
 }
 
 /// Kernel half of `q8_gemm_simd` over pre-quantized activations
 /// (`xq`/`dx` produced by `sgemm_kernel::quantize_col`). Exposed so
 /// callers sharing one input across several matrices (attention q/k/v)
 /// quantize once and reuse the result.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn q8_gemm_simd_q(
     m: usize,
     k: usize,
     n: usize,
     w: &[u8],
+    wscales: Option<&[u16]>,
     padded_row: usize,
     block_bytes: usize,
     qoff: usize,
@@ -181,16 +228,45 @@ pub(crate) fn q8_gemm_simd_q(
     // rows (short streams drop to DRAM latency-bound speeds, long ones
     // starve the other cores; 32-96 keeps all cores busy at m = 768..
     // 4352 while leaving the hardware prefetcher enough lead).
-    let threads = std::thread::available_parallelism()
-        .map(|x| x.get())
-        .unwrap_or(1)
-        .max(1);
+    let threads = rayon::current_num_threads().max(1);
     let per_thread = m.div_ceil(threads);
     let chunk_rows = per_thread.clamp(32, 96).div_ceil(8) * 8;
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            // SAFETY: the avx2+fma feature set was runtime-verified
+        if is_x86_feature_detected!("avx512vnni")
+            && is_x86_feature_detected!("avx512vl")
+            && is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("fma")
+            && is_x86_feature_detected!("f16c")
+        {
+            // SAFETY: the avx512vnni+avx512vl+avx2+fma+f16c feature set
+            // was runtime-verified above; ypart is a disjoint chunk of y.
+            y.par_chunks_mut(chunk_rows * n).enumerate().for_each(
+                |(ci, ypart)| unsafe {
+                    q8_gemm_simd_chunk_vnni(
+                        ci,
+                        chunk_rows,
+                        k,
+                        n,
+                        nblocks,
+                        padded_row,
+                        block_bytes,
+                        qoff,
+                        w,
+                        wscales,
+                        xq,
+                        dx,
+                        ypart,
+                    );
+                },
+            );
+            return;
+        }
+        if is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("fma")
+            && is_x86_feature_detected!("f16c")
+        {
+            // SAFETY: the avx2+fma+f16c feature set was runtime-verified
             // above; ypart is a disjoint chunk of y.
             y.par_chunks_mut(chunk_rows * n).enumerate().for_each(
                 |(ci, ypart)| unsafe {
@@ -204,6 +280,7 @@ pub(crate) fn q8_gemm_simd_q(
                         block_bytes,
                         qoff,
                         w,
+                        wscales,
                         xq,
                         dx,
                         ypart,
@@ -226,6 +303,7 @@ pub(crate) fn q8_gemm_simd_q(
                 block_bytes,
                 qoff,
                 w,
+                wscales,
                 xq,
                 dx,
                 ypart,
@@ -245,15 +323,18 @@ pub(crate) fn q8_gemm_simd_q(
 /// vector in a stack buffer), so no horizontal reduce runs per block
 /// and the int8 chain stays in registers. The int16 product of two
 /// q8 values fits i16 (127² + 127² < 32767), so the block's 32
-/// products are folded pairwise in i16 before widening to f32 —
+/// products are folded pairwise in i16 before widening to f32 -
 /// one fewer wide conversion than the plain i32 widen chain.
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 /// Software-prefetch the next row's first cache lines (and its page
 /// walk) while the current row's blocks are still streaming: the
 /// 34 B/block stride is too irregular for the hardware prefetcher to
 /// track at DRAM/L3 latencies, so the per-block loads otherwise stall
-/// the pipeline. One `prefetch_read_data` per row is enough — it opens
-/// the row's line stream and walks its page early.
+/// the pipeline. One `prefetch_read_data` per row is enough - it opens
+/// the row's line stream and walks its page early. A wider next-row
+/// prefetch (4-8 lines) and a block-ahead weight-stream prefetch were
+/// both measured: the former is neutral, the latter ~12% slower, so the
+/// single line is kept.
 #[inline(always)]
 fn prefetch_next_row(
     w: &[u8],
@@ -283,6 +364,7 @@ fn q8_gemm_simd_chunk_impl(
     block_bytes: usize,
     qoff: usize,
     w: &[u8],
+    wscales: Option<&[u16]>,
     xq: &[i8],
     dx: &[f32],
     ypart: &mut [f32],
@@ -299,10 +381,17 @@ fn q8_gemm_simd_chunk_impl(
         for i in 0..rows {
             prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
             let rowbase = (i0 + i) * padded_row;
+            // ponytail: precomputed row scales are one mul-free lookup;
+            // without them this is the profile's read_q8_scale+f16 decode.
+            let sbase = (i0 + i) * nblocks;
             let mut acc = Simd::<f32, 8>::splat(0.0);
             for b in 0..nblocks {
                 let wbase = rowbase + b * block_bytes;
-                let dw = read_q8_scale(w, wbase, block_bytes);
+                // The portable kernel can run without F16C: software decode.
+                let dw = match wscales {
+                    Some(s) => crate::gguf::f16_to_f32(s[sbase + b]),
+                    None => read_q8_scale(w, wbase, block_bytes),
+                };
                 // SAFETY: b < nblocks, each row is padded_row bytes:
                 // the 32 i8 values at wbase + qoff are within w.
                 let wq = unsafe {
@@ -333,68 +422,95 @@ fn q8_gemm_simd_chunk_impl(
     for i in 0..rows {
         prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
         let rowbase = (i0 + i) * padded_row;
-        let arow = &mut acc[..n * 8];
-        arow.fill(0.0);
-        for b in 0..nblocks {
-            let wbase = rowbase + b * block_bytes;
-            let dw = read_q8_scale(w, wbase, block_bytes);
-            // SAFETY: b < nblocks, each row is padded_row bytes: the
-            // 32 i8 values at wbase + qoff are within w.
-            let wq = unsafe {
-                Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
-                    w.as_ptr().add(wbase + qoff) as *const i8,
-                    L,
-                ))
-            };
-            let w16 = wq.cast::<i16>();
-            for nj in 0..n {
-                // SAFETY: nj < n, b < nblocks, k % 32 == 0: the 32 i8
-                // values at nj * k + b * L are within xq's n * k
-                // elements.
-                let xqj = unsafe {
+        let sbase = (i0 + i) * nblocks;
+        // 16-column tiles so wide batches stay on the SIMD path instead
+        // of falling back to scalar (the profile's 4576ms scalar share);
+        // weight blocks reload per tile.
+        // ponytail: reload-per-tile, not a transposed weight copy.
+        for nj0 in (0..n).step_by(16) {
+            let nt = (n - nj0).min(16);
+            let arow = &mut acc[..nt * 8];
+            arow.fill(0.0);
+            for b in 0..nblocks {
+                let wbase = rowbase + b * block_bytes;
+                // The portable kernel can run without F16C: software decode.
+                let dw = match wscales {
+                    Some(s) => crate::gguf::f16_to_f32(s[sbase + b]),
+                    None => read_q8_scale(w, wbase, block_bytes),
+                };
+                // SAFETY: b < nblocks, each row is padded_row bytes: the
+                // 32 i8 values at wbase + qoff are within w.
+                let wq = unsafe {
                     Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
-                        xq.as_ptr().add(nj * k + b * L) as *const i8,
+                        w.as_ptr().add(wbase + qoff) as *const i8,
                         L,
                     ))
                 };
-                // i16 pairwise fold: lane j gets p[j] + p[j + 16],
-                // which fits i16 (see the docs).
-                let p16 = w16 * xqj.cast::<i16>();
-                let p = p16.extract::<0, 16>() + p16.extract::<16, 16>();
-                let p32 = p.cast::<i32>().cast::<f32>();
-                // 8 partial sums over k mod 8: lane j gets the sum of
-                // lanes j, j + 8 of p32.
-                let s8 = p32.extract::<0, 8>() + p32.extract::<8, 8>();
-                let s = dw * dx[nj * nblocks + b];
-                // SAFETY: nj < n: arow has n * 8 elements.
+                let w16 = wq.cast::<i16>();
+                for tj in 0..nt {
+                    let nj = nj0 + tj;
+                    // SAFETY: nj < n, b < nblocks, k % 32 == 0: the 32 i8
+                    // values at nj * k + b * L are within xq's n * k
+                    // elements.
+                    let xqj = unsafe {
+                        Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
+                            xq.as_ptr().add(nj * k + b * L) as *const i8,
+                            L,
+                        ))
+                    };
+                    // i16 pairwise fold: lane j gets p[j] + p[j + 16],
+                    // which fits i16 (see the docs).
+                    let p16 = w16 * xqj.cast::<i16>();
+                    let p = p16.extract::<0, 16>() + p16.extract::<16, 16>();
+                    let p32 = p.cast::<i32>().cast::<f32>();
+                    // 8 partial sums over k mod 8: lane j gets the sum of
+                    // lanes j, j + 8 of p32.
+                    let s8 = p32.extract::<0, 8>() + p32.extract::<8, 8>();
+                    let s = dw * dx[nj * nblocks + b];
+                    // SAFETY: tj < nt: arow has nt * 8 elements.
+                    let a8 = unsafe {
+                        Simd::<f32, 8>::from_slice(std::slice::from_raw_parts(
+                            arow.as_ptr().add(tj * 8),
+                            8,
+                        ))
+                    };
+                    let r8 = s8.mul_add(Simd::<f32, 8>::splat(s), a8);
+                    arow[tj * 8..tj * 8 + 8].copy_from_slice(&r8.to_array());
+                }
+            }
+            for tj in 0..nt {
+                let nj = nj0 + tj;
+                // SAFETY: tj < nt: arow has nt * 8 elements.
                 let a8 = unsafe {
                     Simd::<f32, 8>::from_slice(std::slice::from_raw_parts(
-                        arow.as_ptr().add(nj * 8),
+                        arow.as_ptr().add(tj * 8),
                         8,
                     ))
                 };
-                let r8 = s8.mul_add(Simd::<f32, 8>::splat(s), a8);
-                arow[nj * 8..nj * 8 + 8].copy_from_slice(&r8.to_array());
-            }
-        }
-        for nj in 0..n {
-            // SAFETY: nj < n: arow has n * 8 elements.
-            let a8 = unsafe {
-                Simd::<f32, 8>::from_slice(std::slice::from_raw_parts(
-                    arow.as_ptr().add(nj * 8),
-                    8,
-                ))
-            };
-            // SAFETY: i < rows, nj < n: ypart has rows * n elements.
-            unsafe {
-                *ypart.get_unchecked_mut(i * n + nj) = a8.reduce_sum();
+                // SAFETY: i < rows, nj < n: ypart has rows * n elements.
+                unsafe {
+                    *ypart.get_unchecked_mut(i * n + nj) = a8.reduce_sum();
+                }
             }
         }
     }
 }
 
+/// AVX2 + FMA implementation of the per-chunk Q8 GEMM body. Same
+/// chunking and semantics as [`q8_gemm_simd_chunk_impl`] (`rows =
+/// ypart.len() / n`, `i0 = ci * chunk_rows`, the last chunk may have
+/// fewer rows), but the block dot and its accumulator stay in 256-bit
+/// registers instead of a stack `Simd` buffer.
+///
+/// Per 32-value block the dot is the exact `maddubs` chain (see
+/// [`avx2_tile`]). For `n > 1` the columns are processed in register
+/// tiles of up to 4 (`n = 7` -> 4 + 3) so each weight block is loaded
+/// once per (row, block) and fanned out over the tile's columns with no
+/// per-block stack round-trip; `n == 1` uses the same helper with a
+/// single accumulator. All loads are unaligned: `wbase + qoff` and
+/// `nj * k + b * 32` are arbitrary byte offsets.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
+#[target_feature(enable = "avx2,fma,f16c")]
 #[allow(unsafe_code, clippy::too_many_arguments)]
 unsafe fn q8_gemm_simd_chunk_avx2(
     ci: usize,
@@ -406,24 +522,381 @@ unsafe fn q8_gemm_simd_chunk_avx2(
     block_bytes: usize,
     qoff: usize,
     w: &[u8],
+    wscales: Option<&[u16]>,
     xq: &[i8],
     dx: &[f32],
     ypart: &mut [f32],
 ) {
-    q8_gemm_simd_chunk_impl(
-        ci,
-        chunk_rows,
-        k,
-        n,
-        nblocks,
-        padded_row,
-        block_bytes,
-        qoff,
-        w,
-        xq,
-        dx,
-        ypart,
-    );
+    let i0 = ci * chunk_rows;
+    let rows = ypart.len() / n;
+    if n == 1 {
+        // SAFETY: rows == ypart.len(): each chunk writes rows scalars.
+        let yrow =
+            unsafe { std::slice::from_raw_parts_mut(ypart.as_mut_ptr(), rows) };
+        for i in 0..rows {
+            prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
+            let rowbase = (i0 + i) * padded_row;
+            let sbase = (i0 + i) * nblocks;
+            avx2_tile::<1>(
+                w,
+                wscales,
+                xq,
+                dx,
+                yrow,
+                rowbase,
+                sbase,
+                i,
+                0,
+                k,
+                1,
+                nblocks,
+                block_bytes,
+                qoff,
+            );
+        }
+        return;
+    }
+    for i in 0..rows {
+        prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
+        let rowbase = (i0 + i) * padded_row;
+        let sbase = (i0 + i) * nblocks;
+        let mut nj = 0;
+        while nj + 4 <= n {
+            avx2_tile::<4>(
+                w,
+                wscales,
+                xq,
+                dx,
+                ypart,
+                rowbase,
+                sbase,
+                i,
+                nj,
+                k,
+                n,
+                nblocks,
+                block_bytes,
+                qoff,
+            );
+            nj += 4;
+        }
+        // Tail columns: dispatch on the remainder so the accumulators
+        // stay in registers (NT is a compile-time lane count).
+        match n - nj {
+            1 => avx2_tile::<1>(
+                w,
+                wscales,
+                xq,
+                dx,
+                ypart,
+                rowbase,
+                sbase,
+                i,
+                nj,
+                k,
+                n,
+                nblocks,
+                block_bytes,
+                qoff,
+            ),
+            2 => avx2_tile::<2>(
+                w,
+                wscales,
+                xq,
+                dx,
+                ypart,
+                rowbase,
+                sbase,
+                i,
+                nj,
+                k,
+                n,
+                nblocks,
+                block_bytes,
+                qoff,
+            ),
+            3 => avx2_tile::<3>(
+                w,
+                wscales,
+                xq,
+                dx,
+                ypart,
+                rowbase,
+                sbase,
+                i,
+                nj,
+                k,
+                n,
+                nblocks,
+                block_bytes,
+                qoff,
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// One row's `NT`-column output tile (`NT = 1..=4`) of the AVX2 Q8
+/// kernel: `NT` `__m256` accumulators live in registers across the whole
+/// k-block loop, so each weight block is loaded once and fanned out over
+/// the tile's activation columns.
+///
+/// The block dot is exact (no i16 saturation): `sign_epi8` turns the
+/// weight into its `u8` magnitude `|w|` (including the `-128` byte, which
+/// maps to the unsigned `0x80` = 128) and flips the activation signs to
+/// match, so `maddubs` (unsigned x signed) produces the 16 pairwise `i16`
+/// products `w * x`. The activation is the signed operand because
+/// `quantize_col` keeps it in `[-127, 127]` (negating `-127` cannot
+/// overflow), whereas the weight can be `-128`. `madd` sums the pairs to
+/// 8 `i32` partials (four products each, `|sum| <= 4*128*127`, no
+/// overflow), and `cvtepi32_ps` widens to f32. The `NT` accumulators are
+/// scaled by `dw * dx` with one FMA per block and horizontally summed
+/// once at the end; the lane grouping differs from
+/// [`q8_gemm_simd_chunk_impl`] but the total is the same.
+#[cfg(target_arch = "x86_64")]
+#[allow(
+    unsafe_code,
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::cast_ptr_alignment,
+    clippy::inline_always
+)]
+#[inline(always)]
+fn avx2_tile<const NT: usize>(
+    w: &[u8],
+    wscales: Option<&[u16]>,
+    xq: &[i8],
+    dx: &[f32],
+    ypart: &mut [f32],
+    rowbase: usize,
+    sbase: usize,
+    row: usize,
+    nj0: usize,
+    k: usize,
+    n: usize,
+    nblocks: usize,
+    block_bytes: usize,
+    qoff: usize,
+) {
+    // SAFETY: `nj0 + NT <= n` (caller), `b < nblocks` and each row spans
+    // padded_row bytes, so every 32-byte load below is in bounds; the
+    // avx2+fma feature set is enabled by the calling `#[target_feature]`
+    // fn, into which this helper is always inlined.
+    unsafe {
+        let zero = _mm256_setzero_ps();
+        let mut acc = [zero; NT];
+        for b in 0..nblocks {
+            let wbase = rowbase + b * block_bytes;
+            let dw = match wscales {
+                Some(s) => scale_from_f16(s[sbase + b]),
+                None => read_q8_scale(w, wbase, block_bytes),
+            };
+            let wb = _mm256_loadu_si256(
+                w.as_ptr().add(wbase + qoff).cast::<__m256i>(),
+            );
+            for tj in 0..NT {
+                let xv = _mm256_loadu_si256(
+                    xq.as_ptr().add((nj0 + tj) * k + b * L).cast::<__m256i>(),
+                );
+                // |w| * (x with the sign of w) == x * w lane-wise;
+                // maddubs treats its first operand as unsigned, and the
+                // weight must be the unsigned one (its -128 byte cannot
+                // be negated in i8, while xq stays in [-127, 127]).
+                let sx = _mm256_sign_epi8(wb, wb);
+                let sw = _mm256_sign_epi8(xv, wb);
+                let q16 = _mm256_maddubs_epi16(sx, sw);
+                let q32 = _mm256_madd_epi16(q16, _mm256_set1_epi16(1));
+                let f = _mm256_cvtepi32_ps(q32);
+                let s = dw * dx[(nj0 + tj) * nblocks + b];
+                acc[tj] = _mm256_fmadd_ps(_mm256_set1_ps(s), f, acc[tj]);
+            }
+        }
+        for tj in 0..NT {
+            let mut lanes = [0.0f32; 8];
+            _mm256_storeu_ps(lanes.as_mut_ptr(), acc[tj]);
+            ypart[row * n + nj0 + tj] = lanes.into_iter().sum();
+        }
+    }
+}
+
+/// AVX-512-VNNI + AVX-512VL implementation of the per-chunk Q8 GEMM
+/// body. Same chunking and semantics as [`q8_gemm_simd_chunk_avx2`]
+/// (`rows = ypart.len() / n`, `i0 = ci * chunk_rows`, the last chunk may
+/// have fewer rows), but the block dot is one `vpdpbusd` per (block,
+/// column) instead of the `sign`/`maddubs`/`madd` chain, and each weight
+/// block is loaded once and fanned out over an 8-column register tile.
+///
+/// Tile width: 8 columns rather than 16 because the activation columns
+/// are `k` floats apart and `k` is a power of two, so a 16-wide tile
+/// aliases the `k = 4096` columns into a single L1 set (a 14-way
+/// conflict); 8 columns fit the 8-way L1 and measured fastest. On this
+/// Zen 4 the tier is ~1.4x the AVX2 tier on the streaming encoder
+/// shapes (fewer dot uops and one weight load per 8 columns instead of
+/// one per 4); `vpdpbusd` is latency-bound (~5 cycles), so the gain
+/// comes from the lower load count, not the fused op.
+///
+/// Exact dot without a correction: `dpbusd` wants an unsigned first
+/// operand and a signed second. `|w|` (unsigned, 0..=128) times
+/// `sign(w) * xq` (signed) equals `w * xq` exactly, so no per-block
+/// activation sum / correction is needed (the `w XOR 0x80` unsigned
+/// trick, by contrast, adds `128 * sum(xq)` and needs a correction that
+/// measured ~1.4x slower here). `xq` stays in `[-127, 127]` so negating
+/// it cannot overflow.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512vnni,avx512vl,avx2,fma,f16c")]
+#[allow(unsafe_code, clippy::too_many_arguments)]
+unsafe fn q8_gemm_simd_chunk_vnni(
+    ci: usize,
+    chunk_rows: usize,
+    k: usize,
+    n: usize,
+    nblocks: usize,
+    padded_row: usize,
+    block_bytes: usize,
+    qoff: usize,
+    w: &[u8],
+    wscales: Option<&[u16]>,
+    xq: &[i8],
+    dx: &[f32],
+    ypart: &mut [f32],
+) {
+    let i0 = ci * chunk_rows;
+    let rows = ypart.len() / n;
+    for i in 0..rows {
+        prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
+        let rowbase = (i0 + i) * padded_row;
+        let sbase = (i0 + i) * nblocks;
+        let mut nj = 0;
+        macro_rules! tile {
+            ($nt:literal) => {
+                vnni_tile::<$nt>(
+                    w,
+                    wscales,
+                    xq,
+                    dx,
+                    ypart,
+                    rowbase,
+                    sbase,
+                    i,
+                    nj,
+                    k,
+                    n,
+                    nblocks,
+                    block_bytes,
+                    qoff,
+                )
+            };
+        }
+        while nj + 8 <= n {
+            tile!(8);
+            nj += 8;
+        }
+        // Remainder columns (< the 8-wide step): one narrow tile keeps
+        // the accumulators in registers (NT is a compile-time lane
+        // count).
+        match n - nj {
+            1 => tile!(1),
+            2 => tile!(2),
+            3 => tile!(3),
+            4 => tile!(4),
+            5 => tile!(5),
+            6 => tile!(6),
+            7 => tile!(7),
+            _ => {}
+        }
+    }
+}
+
+/// One row's `NT`-column output tile (`NT = 1..=8`, the widest the
+/// chunk kernel uses) of the VNNI Q8 kernel. The `NT` f32 accumulators
+/// live in registers (`ymm16..31` are available under `avx512vl`) across
+/// the whole k-block loop, so each weight block is loaded once and fanned
+/// out over the tile's columns. The i32 accumulator is reset per block
+/// (one `dpbusd` per block, no cross-block i32 accumulation) because
+/// every block has its own scale. The column loop is macro-unrolled so
+/// every accumulator is a constant-indexed array slot LLVM promotes to a
+/// register (a runtime `for tj in 0..NT` spills the whole tile to the
+/// stack).
+#[cfg(target_arch = "x86_64")]
+#[allow(
+    unsafe_code,
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::cast_ptr_alignment,
+    clippy::inline_always
+)]
+#[inline(always)]
+fn vnni_tile<const NT: usize>(
+    w: &[u8],
+    wscales: Option<&[u16]>,
+    xq: &[i8],
+    dx: &[f32],
+    ypart: &mut [f32],
+    rowbase: usize,
+    sbase: usize,
+    row: usize,
+    nj0: usize,
+    k: usize,
+    n: usize,
+    nblocks: usize,
+    block_bytes: usize,
+    qoff: usize,
+) {
+    // SAFETY: `nj0 + NT <= n` (caller), `b < nblocks` and each row spans
+    // padded_row bytes, so every 32-byte load below is in bounds; the
+    // avx512vnni+avx512vl+avx2+fma feature set is enabled by the calling
+    // `#[target_feature]` fn, into which this helper is always inlined.
+    unsafe {
+        let zero = _mm256_setzero_si256();
+        macro_rules! body {
+            ($($tj:literal),*) => {{
+                let mut acc = [_mm256_setzero_ps(); 16];
+                for b in 0..nblocks {
+                    let wbase = rowbase + b * block_bytes;
+                    let dw = match wscales {
+                        Some(s) => scale_from_f16(s[sbase + b]),
+                        None => read_q8_scale(w, wbase, block_bytes),
+                    };
+                    // |w| is the unsigned dpbusd operand and sign(w)*xq
+                    // the signed one, so |w| * sign(w)*xq == w * xq
+                    // exactly - no unsigned-weight correction needed.
+                    let wb = _mm256_loadu_si256(
+                        w.as_ptr().add(wbase + qoff).cast::<__m256i>(),
+                    );
+                    let wu = _mm256_abs_epi8(wb);
+                    $({
+                        let xv = _mm256_loadu_si256(
+                            xq.as_ptr()
+                                .add((nj0 + $tj) * k + b * L)
+                                .cast::<__m256i>(),
+                        );
+                        let xw = _mm256_sign_epi8(xv, wb);
+                        let raw = _mm256_dpbusd_epi32(zero, wu, xw);
+                        let f = _mm256_cvtepi32_ps(raw);
+                        let s = dw * dx[(nj0 + $tj) * nblocks + b];
+                        acc[$tj] =
+                            _mm256_fmadd_ps(f, _mm256_set1_ps(s), acc[$tj]);
+                    })*
+                }
+                $({
+                    let mut lanes = [0.0f32; 8];
+                    _mm256_storeu_ps(lanes.as_mut_ptr(), acc[$tj]);
+                    ypart[row * n + nj0 + $tj] = lanes.into_iter().sum();
+                })*
+            }};
+        }
+        match NT {
+            1 => body!(0),
+            2 => body!(0, 1),
+            3 => body!(0, 1, 2),
+            4 => body!(0, 1, 2, 3),
+            5 => body!(0, 1, 2, 3, 4),
+            6 => body!(0, 1, 2, 3, 4, 5),
+            7 => body!(0, 1, 2, 3, 4, 5, 6),
+            8 => body!(0, 1, 2, 3, 4, 5, 6, 7),
+            _ => {}
+        }
+    }
 }
 
 /// `c[m, n] = a[m, k] @ b[k, n]` (all row-major), portable twin of
@@ -433,7 +906,7 @@ unsafe fn q8_gemm_simd_chunk_avx2(
 ///  - 8-row × 8-column tiles (`gemm_tile8`): each k-chunk loads 8 `a` row
 ///    vectors and 8 `b` column vectors (from the `[n, k]` transpose), then fans
 ///    each `a` element out over the 8 `b` vectors via a lane-broadcast
-///    `swizzle_dyn` + `mul_add` — 16 loads per 64 FMAs (0.25 loads/FMA), the
+///    `swizzle_dyn` + `mul_add` - 16 loads per 64 FMAs (0.25 loads/FMA), the
 ///    same ratio as the hand-written AVX2 kernel; on AVX2 the 16-lane FMAs
 ///    lower to 2×256-bit (equal width to the arch kernel's 256-bit ones);
 ///  - a 1×S row kernel for the remainder rows/columns (and any shape that is
@@ -459,37 +932,41 @@ pub fn gemm_simd_into(
     debug_assert_eq!(a.len(), m * k);
     debug_assert_eq!(b.len(), k * n);
     debug_assert_eq!(c.len(), m * n);
-    let mut bt = Vec::new();
-    if n % S != 0 || m % 8 != 0 {
-        bt.resize(n * k, 0.0f32);
-        for kk in 0..k {
-            let src = &b[kk * n..(kk + 1) * n];
-            for nn in 0..n {
-                bt[nn * k + kk] = src[nn];
+    crate::pool::install(|| {
+        let mut bt = Vec::new();
+        if n % S != 0 || m % 8 != 0 {
+            bt.resize(n * k, 0.0f32);
+            for kk in 0..k {
+                let src = &b[kk * n..(kk + 1) * n];
+                for nn in 0..n {
+                    bt[nn * k + kk] = src[nn];
+                }
             }
         }
-    }
-    let chunk_rows = 256usize.min(m).max(1);
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            // SAFETY: the avx2+fma feature set was runtime-verified
-            // above; cpart is a disjoint chunk of c.
-            c.par_chunks_mut(chunk_rows * n).enumerate().for_each(
-                |(ci, cpart)| unsafe {
-                    gemm_simd_chunk_avx2(
-                        ci, chunk_rows, k, n, a, b, &bt, cpart,
-                    );
-                },
-            );
-            return;
+        let chunk_rows = 256usize.min(m).max(1);
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2")
+                && is_x86_feature_detected!("fma")
+            {
+                // SAFETY: the avx2+fma feature set was runtime-verified
+                // above; cpart is a disjoint chunk of c.
+                c.par_chunks_mut(chunk_rows * n).enumerate().for_each(
+                    |(ci, cpart)| unsafe {
+                        gemm_simd_chunk_avx2(
+                            ci, chunk_rows, k, n, a, b, &bt, cpart,
+                        );
+                    },
+                );
+                return;
+            }
         }
-    }
-    c.par_chunks_mut(chunk_rows * n)
-        .enumerate()
-        .for_each(|(ci, cpart)| {
-            gemm_simd_chunk_impl(ci, chunk_rows, k, n, a, b, &bt, cpart);
-        });
+        c.par_chunks_mut(chunk_rows * n)
+            .enumerate()
+            .for_each(|(ci, cpart)| {
+                gemm_simd_chunk_impl(ci, chunk_rows, k, n, a, b, &bt, cpart);
+            });
+    });
 }
 
 /// Per-chunk rows `[ci * chunk_rows, ci * chunk_rows + rows)` of
@@ -536,11 +1013,11 @@ unsafe fn gemm_simd_chunk_avx2(
 }
 
 /// 8 rows × 16 columns tile of `c` for rows `[i0, i0 + 8)` (n >= 16).
-/// The `S` lanes of each accumulator vector are the tile's COLUMNS —
+/// The `S` lanes of each accumulator vector are the tile's COLUMNS -
 /// the same structure as a hand-written 8×8 AVX2 kernel: per k-chunk
 /// (S k-values) load the 8 `a` row vectors and, for each of the S
 /// k-offsets, one `b` row vector (16 contiguous floats at b row
-/// `kk + t`, columns `j..j + S` — no transpose needed), then fan each
+/// `kk + t`, columns `j..j + S` - no transpose needed), then fan each
 /// `a` element out over the 16 columns with a `splat` `mul_add`.
 /// 8 + S vector loads per chunk of 8×S FMAs; on AVX2 the 16-lane FMAs
 /// lower to 2×256-bit.
@@ -812,6 +1289,51 @@ dispatch_avx2!(
     [x: &[f32], w: &[f32], b: &[f32], eps: f32, out: &mut [f32]]
 );
 
+/// Vectorized `exp(x)` using only SIMD ops (LLVM lowers `Simd::exp` to
+/// one scalar libm `expf` call per lane, which shows up in the encoder
+/// profile).
+///
+/// `x` is clamped to `[-87.3, 88.0]`: below the lower bound `exp`
+/// saturates to 0 and above the upper bound it overflows f32, and the
+/// silu/glu/softmax call sites only need exp for arguments where those
+/// tails are already saturated. The upper bound is 88.0 rather than the
+/// f32 limit (~88.72) because `k = round(x * LOG2E)` reaches 128 for
+/// `x >= 88.38`, and `2^128` cannot be assembled from an f32 exponent
+/// field (it becomes +inf); 88.0 keeps `k <= 127`.
+///
+/// Range reduction: `k = round(x * LOG2E)`, `r = x - k * LN2` with
+/// `|r| <= 0.347`, so `exp(x) = 2^k * exp(r)`. `exp(r)` is evaluated
+/// with the degree-7 Taylor polynomial (relative error < 1e-8 on that
+/// interval) and `2^k` is assembled from the biased exponent bits,
+/// `((k + 127) << 23)` reinterpreted as f32. Max relative error over the
+/// clamped range is below 1e-6.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn exp_simd(x: Simd<f32, S>) -> Simd<f32, S> {
+    // exp(r) = sum r^j / j! for j in 0..=7, Horner from the r^7 term
+    // down (degree-7 Taylor, relative error < 1e-8 on |r| <= 0.347).
+    const C: [f32; 8] = [
+        1.0,
+        1.0,
+        1.0 / 2.0,
+        1.0 / 6.0,
+        1.0 / 24.0,
+        1.0 / 120.0,
+        1.0 / 720.0,
+        1.0 / 5040.0,
+    ];
+    let x = x.simd_max(Simd::splat(-87.3)).simd_min(Simd::splat(88.0));
+    let k = (x * Simd::splat(std::f32::consts::LOG2_E)).round();
+    let r = x - k * Simd::splat(std::f32::consts::LN_2);
+    let mut poly = Simd::splat(C[7]);
+    for c in (0..7).rev() {
+        poly = poly.mul_add(r, Simd::splat(C[c]));
+    }
+    let ki = k.cast::<i32>();
+    let bits = ((ki + Simd::splat(127)) * Simd::splat(1 << 23)).cast::<u32>();
+    poly * Simd::<f32, S>::from_bits(bits)
+}
+
 /// Silu (swish) in place: `v = v * sigmoid(v)`.
 #[inline(always)]
 fn silu_into_impl(v: &mut [f32]) {
@@ -825,7 +1347,7 @@ fn silu_into_impl(v: &mut [f32]) {
             ))
         };
         let res = x.mul_add(
-            (Simd::<f32, S>::splat(1.0) + (-x).exp()).recip(),
+            (Simd::<f32, S>::splat(1.0) + exp_simd(-x)).recip(),
             Simd::<f32, S>::splat(0.0),
         );
         v[i..i + S].copy_from_slice(&res.to_array());
@@ -888,7 +1410,7 @@ fn glu_from_impl(h: &[f32], d: usize, out: &mut [f32]) {
                 ))
             };
             let res = gate.mul_add(
-                (Simd::<f32, S>::splat(1.0) + (-val).exp()).recip(),
+                (Simd::<f32, S>::splat(1.0) + exp_simd(-val)).recip(),
                 Simd::<f32, S>::splat(0.0),
             );
             out[obase + i..obase + i + S].copy_from_slice(&res.to_array());
@@ -1154,7 +1676,7 @@ unsafe fn softmax_v_avx2<'a, F>(
 /// 1D depthwise conv: `out[ot * dim + c] = sum_k x[(ot - pad_left + k)
 /// * dim + c] * w[c * kh + k]` for `ot in 0..t_out`, `t_out =
 /// t + pad_left + pad_right - kh + 1`. The `w` rows (one per channel)
-/// are loaded once per (ot, channel-chunk) — the `kh`-length dot is
+/// are loaded once per (ot, channel-chunk) - the `kh`-length dot is
 /// one S-lane `mul_add` chain when `kh <= S`.
 #[inline(always)]
 fn dwconv_forward_impl(
@@ -1345,7 +1867,27 @@ mod tests {
         }
         let mut y = vec![0.0f32; m * n];
         let mut y_ref = vec![0.0f32; m * n];
-        q8_gemm_simd(m, k, n, &w, padded_row, block_bytes, 2, &x, &mut y);
+        // Precomputed scales (the Q8Mat production path): decode from
+        // the stored bytes so values match the oracle bit-for-bit.
+        let scales: Vec<u16> = (0..m * nblocks)
+            .map(|bi| {
+                let b =
+                    (bi / nblocks) * padded_row + (bi % nblocks) * block_bytes;
+                u16::from_le_bytes([w[b], w[b + 1]])
+            })
+            .collect();
+        q8_gemm_simd(
+            m,
+            k,
+            n,
+            &w,
+            Some(&scales),
+            padded_row,
+            block_bytes,
+            2,
+            &x,
+            &mut y,
+        );
         q8_gemm_scalar(m, k, n, &w, padded_row, block_bytes, 2, &x, &mut y_ref);
         for i in 0..m * n {
             let d = (y[i] - y_ref[i]).abs();
@@ -1380,6 +1922,8 @@ mod tests {
         run_case(64, 512, 8);
         run_case(128, 2048, 16);
         run_case(512, 2048, 16);
+        run_case(64, 512, 20);
+        run_case(32, 512, 33);
     }
 
     fn gemm_run_case(m: usize, k: usize, n: usize) {

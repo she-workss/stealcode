@@ -62,7 +62,6 @@ impl Default for TuiConfig {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use serde_json::json;
 

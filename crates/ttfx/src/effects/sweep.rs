@@ -1,12 +1,10 @@
 //! sweep, ported from effects/effect_sweep.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
         parse_character_group, parse_color, parse_gradient_direction,
-        parse_gradient_steps, parse_symbol,
     },
     engine::{
         animation::{ExistingColorHandling, VisualParams},
@@ -22,39 +20,58 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SweepConfig {
     /// Space separated list of symbols to use for the sweep shimmer.
-    #[arg(long = "sweep-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["█", "▓", "▒", "░"])]
     pub sweep_symbols: Vec<String>,
 
     /// Direction of the first sweep, revealing uncolored characters.
-    #[arg(long = "first-sweep-direction", default_value = "column_right_to_left",
-          value_parser = parse_character_group)]
     pub first_sweep_direction: CharacterGroup,
 
     /// Direction of the second sweep, coloring the characters.
-    #[arg(long = "second-sweep-direction", default_value = "column_left_to_right",
-          value_parser = parse_character_group)]
     pub second_sweep_direction: CharacterGroup,
 
     /// Space separated, unquoted, list of colors for the character gradient
     /// (applied from bottom to top).
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "ffffff"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["8"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for SweepConfig {
+    fn default() -> Self {
+        Self {
+            sweep_symbols: vec![
+                "█".to_string(),
+                "▓".to_string(),
+                "▒".to_string(),
+                "░".to_string(),
+            ],
+            first_sweep_direction: parse_character_group(
+                "column_right_to_left",
+            )
+            .expect("valid literal"),
+            second_sweep_direction: parse_character_group(
+                "column_left_to_right",
+            )
+            .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("ffffff").expect("valid color"),
+            ],
+            final_gradient_steps: vec![8],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Sweep {
     config: SweepConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

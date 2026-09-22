@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::CommandFactory;
 use settings::Settings;
 use tracing::debug;
@@ -86,8 +87,6 @@ pub(crate) async fn run_app(
 /// specific tagged release instead of "latest" (see
 /// `commands::CliCommands::Upgrade`).
 async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
-    use anyhow::Context;
-
     let current_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .context("CARGO_PKG_VERSION is not valid semver")?;
     let channel = release_channel::ReleaseChannel::current();
@@ -97,7 +96,6 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
         std::env::var("STEALCODE_GH_TOKEN").ok(),
     );
     let client = reqwest::Client::new();
-
     let release = match &target {
         Some(version) => {
             auto_update::fetch_release_by_version(&client, &source, version)
@@ -117,7 +115,6 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
             release
         }
     };
-
     let new_version = if target.is_some() {
         // An explicit target version is installed even if it isn't
         // "newer" - the person asked for that exact version.
@@ -129,27 +126,22 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
             channel,
         )?
     };
-
     let Some(new_version) = new_version else {
         println!("StealCode is already up to date ({current_version}).");
         return Ok(());
     };
-
     let download_dir = paths::temp_dir();
     auto_update::apply_release_asset(&client, &source, &release, &download_dir)
         .await?;
-
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         println!("Updated to {new_version}. Restart StealCode.");
     }
-
     #[cfg(target_os = "windows")]
     {
         println!(
             "Update to {new_version} prepared. Restart StealCode to apply."
         );
     }
-
     Ok(())
 }

@@ -542,7 +542,6 @@ impl<'a> Iterator for RelPathAncestors<'a> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use std::assert_matches;
 

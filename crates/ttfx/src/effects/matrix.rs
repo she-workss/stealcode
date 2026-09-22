@@ -11,14 +11,11 @@
 //! the lists hold indices. No observable set iteration beyond the
 //! engine-canonical active_characters (docs/ordering-inventory.md).
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_float, parse_positive_int, parse_positive_int_range,
-        parse_symbol,
+        parse_color, parse_gradient_direction, parse_positive_int_range,
     },
     engine::{
         animation::{Animation, ExistingColorHandling, VisualParams},
@@ -35,80 +32,95 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct MatrixConfig {
     /// Color for the bottom of the rain column.
-    #[arg(long = "highlight-color", default_value = "dbffdb", value_parser = parse_color)]
     pub highlight_color: Color,
 
     /// Space separated, unquoted, list of colors for the rain gradient. Colors
     /// are selected from the gradient randomly. If only one color is provided,
     /// the characters will be displayed in that color.
-    #[arg(long = "rain-color-gradient", num_args = 1.., value_parser = parse_color,
-          default_values = ["92be92", "185318"])]
     pub rain_color_gradient: Vec<Color>,
 
     /// Space separated, unquoted, list of symbols to use for the rain.
-    #[arg(long = "rain-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = [
-              "2", "5", "9", "8", "Z", "*", ")", ":", ".", "\"", "=", "+", "-", "¦", "|", "_",
-              "ｦ", "ｱ", "ｳ", "ｴ", "ｵ", "ｶ", "ｷ", "ｹ", "ｺ", "ｻ", "ｼ", "ｽ", "ｾ", "ｿ", "ﾀ", "ﾂ",
-              "ﾃ", "ﾅ", "ﾆ", "ﾇ", "ﾈ", "ﾊ", "ﾋ", "ﾎ", "ﾏ", "ﾐ", "ﾑ", "ﾒ", "ﾓ", "ﾔ", "ﾕ", "ﾗ",
-              "ﾘ", "ﾜ",
-          ])]
     pub rain_symbols: Vec<String>,
 
     /// Range for the speed of the falling rain as determined by the delay
     /// between rows. Actual delay is randomly selected from the range.
-    #[arg(long = "rain-fall-delay-range", default_value = "2-15", value_parser = parse_positive_int_range)]
     pub rain_fall_delay_range: (i64, i64),
 
     /// Range of frames to wait between adding new rain columns.
-    #[arg(long = "rain-column-delay-range", default_value = "3-9", value_parser = parse_positive_int_range)]
     pub rain_column_delay_range: (i64, i64),
 
     /// Time, in seconds, to display the rain effect before transitioning to
     /// the input text.
-    #[arg(long = "rain-time", default_value_t = 15, value_parser = parse_positive_int)]
     pub rain_time: i64,
 
     /// Chance of swapping a character's symbol on each tick.
-    #[arg(long = "symbol-swap-chance", default_value_t = 0.005, value_parser = parse_positive_float)]
     pub symbol_swap_chance: f64,
 
     /// Chance of swapping a character's color on each tick.
-    #[arg(long = "color-swap-chance", default_value_t = 0.001, value_parser = parse_positive_float)]
     pub color_swap_chance: f64,
 
     /// Number of frames to wait between resolving the next group of
     /// characters. This is used to adjust the speed of the final resolve
     /// phase.
-    #[arg(long = "resolve-delay", default_value_t = 3, value_parser = parse_positive_int)]
     pub resolve_delay: i64,
 
     /// Space separated, unquoted, list of colors for the character gradient
     /// (applied from bottom to top). If only one color is provided, the
     /// characters will be displayed in that color.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["92be92", "336b33"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of the number of gradient steps to use.
     /// More steps will create a smoother and longer gradient animation.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "final-gradient-frames", default_value_t = 3, value_parser = parse_positive_int)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "radial", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for MatrixConfig {
+    fn default() -> Self {
+        Self {
+            highlight_color: parse_color("dbffdb").expect("valid literal"),
+            rain_color_gradient: vec![
+                parse_color("92be92").expect("valid color"),
+                parse_color("185318").expect("valid color"),
+            ],
+            rain_symbols: vec![
+                "2", "5", "9", "8", "Z", "*", ")", ":", ".", "\"", "=", "+",
+                "-", "¦", "|", "_", "ｦ", "ｱ", "ｳ", "ｴ", "ｵ", "ｶ", "ｷ", "ｹ",
+                "ｺ", "ｻ", "ｼ", "ｽ", "ｾ", "ｿ", "ﾀ", "ﾂ", "ﾃ", "ﾅ", "ﾆ", "ﾇ",
+                "ﾈ", "ﾊ", "ﾋ", "ﾎ", "ﾏ", "ﾐ", "ﾑ", "ﾒ", "ﾓ", "ﾔ", "ﾕ", "ﾗ",
+                "ﾘ", "ﾜ",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            rain_fall_delay_range: parse_positive_int_range("2-15")
+                .expect("valid literal"),
+            rain_column_delay_range: parse_positive_int_range("3-9")
+                .expect("valid literal"),
+            rain_time: 15,
+            symbol_swap_chance: 0.005,
+            color_swap_chance: 0.001,
+            resolve_delay: 3,
+            final_gradient_stops: vec![
+                parse_color("92be92").expect("valid color"),
+                parse_color("336b33").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 3,
+            final_gradient_direction: parse_gradient_direction("radial")
+                .expect("valid literal"),
+        }
+    }
+}
 /// Animation.set_appearance shorthand (upstream
 /// character.animation.set_appearance).
 fn set_appearance(
@@ -135,6 +147,7 @@ enum ColumnPhase {
 }
 
 /// MatrixIterator.RainColumn.
+#[derive(Debug)]
 struct RainColumn {
     characters: Vec<CharId>,
     pending_characters: Vec<CharId>,
@@ -444,6 +457,7 @@ enum Phase {
     Resolve,
 }
 
+#[derive(Debug)]
 pub struct Matrix {
     config: MatrixConfig,
     /// Column arena; pending/active/full hold indices (identity semantics).

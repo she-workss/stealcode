@@ -1,13 +1,9 @@
 //! expand, ported from effects/effect_expand.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
         character::CharId,
@@ -23,31 +19,42 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ExpandConfig {
     /// Easing function to use for character movement.
-    #[arg(long = "expand-easing", default_value = "in_out_quart", value_parser = parse_easing)]
     pub expand_easing: Easing,
 
     /// Movement speed of the characters.
-    #[arg(long = "movement-speed", default_value_t = 0.35, value_parser = parse_positive_float)]
     pub movement_speed: f64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for ExpandConfig {
+    fn default() -> Self {
+        Self {
+            expand_easing: parse_easing("in_out_quart").expect("valid literal"),
+            movement_speed: 0.35,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Expand {
     config: ExpandConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

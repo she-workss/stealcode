@@ -127,10 +127,82 @@ jobs:
             target/stealcode-linux-*.tar.gz
           if-no-files-found: error
 
+  bundle_android:
+    needs: create_release
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86
+          - x86_64
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.create_release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.abi }}
+          save-if: always()
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mold
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Make gradlew executable
+        run: chmod +x crates/mobile/assets/android/gradle/gradlew
+
+      - name: Decode release keystore
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/stealcode-release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/stealcode-release.jks" >> "$GITHUB_ENV"
+
+      - name: Warn when release signing is not configured
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - the APK will be signed with the debug key"
+
+      - name: Build APK
+        run: just abi=${{ matrix.abi }} android-release
+
+      - name: Rename APK for the release
+        run: mv target/android/outputs/apk/release/stealcode.apk "StealCode-${{ matrix.abi }}.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: stealcode-android-${{ matrix.abi }}
+          path: StealCode-${{ matrix.abi }}.apk
+          if-no-files-found: error
+
   upload_release_assets:
     needs:
       - create_release
       - bundle
+      - bundle_android
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -154,7 +226,7 @@ jobs:
     steps:
       - name: Validate expected assets are present
         run: |
-          EXPECTED='["StealCode-x86_64.exe", "StealCode-aarch64.exe", "StealCode-aarch64.dmg", "StealCode-x86_64.dmg", "stealcode-linux-x86_64.tar.gz", "stealcode-linux-aarch64.tar.gz"]'
+          EXPECTED='["StealCode-x86_64.exe", "StealCode-aarch64.exe", "StealCode-aarch64.dmg", "StealCode-x86_64.dmg", "stealcode-linux-x86_64.tar.gz", "stealcode-linux-aarch64.tar.gz", "StealCode-arm64-v8a.apk", "StealCode-armeabi-v7a.apk", "StealCode-x86.apk", "StealCode-x86_64.apk"]'
           ACTUAL=$(gh release view "${{ needs.create_release.outputs.tag }}" --repo she-workss/stealcode --json assets -q '[.assets[].name]')
           MISSING=$(echo "$EXPECTED" | jq -r --argjson actual "$ACTUAL" '. - $actual | .[]')
           if [ -n "$MISSING" ]; then

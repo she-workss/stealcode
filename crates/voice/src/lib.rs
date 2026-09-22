@@ -348,7 +348,7 @@ fn process_stream(
     }
     let Some(m) = model.as_mut() else { return };
     if live.is_none() {
-        match m.live(LatencyMode::Standard) {
+        match m.live(LatencyMode::UltraLow) {
             Ok(tr) => *live = Some(tr),
             Err(e) => {
                 let _ = tx_event

@@ -1,12 +1,10 @@
 //! swarm, ported from effects/effect_swarm.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_ratio, parse_positive_int_range,
+        parse_color, parse_gradient_direction, parse_positive_int_range,
     },
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
@@ -25,44 +23,54 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SwarmConfig {
     /// Space separated, unquoted, list of colors for the swarms.
-    #[arg(long = "base-color", num_args = 1.., value_parser = parse_color,
-          default_values = ["31a0d4"])]
     pub base_color: Vec<Color>,
 
     /// Color for the character flash. Characters flash when moving.
-    #[arg(long = "flash-color", default_value = "f2ea79", value_parser = parse_color)]
     pub flash_color: Color,
 
     /// Percent of total characters in each swarm.
-    #[arg(long = "swarm-size", default_value_t = 0.1, value_parser = parse_non_negative_ratio)]
     pub swarm_size: f64,
 
     /// Percent of characters in a swarm that move as a group.
-    #[arg(long = "swarm-coordination", default_value_t = 0.80, value_parser = parse_non_negative_ratio)]
     pub swarm_coordination: f64,
 
     /// Range of the number of areas where characters will swarm.
-    #[arg(long = "swarm-area-count-range", default_value = "2-4", value_parser = parse_positive_int_range)]
     pub swarm_area_count_range: (i64, i64),
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["31b900", "f0ff65"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "horizontal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            base_color: vec![parse_color("31a0d4").expect("valid color")],
+            flash_color: parse_color("f2ea79").expect("valid literal"),
+            swarm_size: 0.1,
+            swarm_coordination: 0.80,
+            swarm_area_count_range: parse_positive_int_range("2-4")
+                .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("31b900").expect("valid color"),
+                parse_color("f0ff65").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("horizontal")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Swarm {
     config: SwarmConfig,
     swarms: Vec<Vec<CharId>>,

@@ -179,7 +179,7 @@ fn bench_softmax(c: &mut Criterion) {
     let v: Vec<f32> = (0..BAND * HEAD_DIM)
         .map(|i| ((i * 23) % 67) as f32 / 37.0 - 0.5)
         .collect();
-    let mut out = vec![0.0f32; HEAD_DIM];
+    let out = vec![0.0f32; HEAD_DIM];
     let v_at = |i: usize| &v[i * HEAD_DIM..(i + 1) * HEAD_DIM];
     let mut group = c.benchmark_group("softmax_61x64");
     group.throughput(Throughput::Elements((BAND * HEAD_DIM) as u64));

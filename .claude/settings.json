@@ -1,0 +1,20 @@
+{
+    "permissions": {
+        "allow": [
+            "Bash(cargo *)",
+            "Bash(rg *)",
+            "Bash(uv *)",
+            "Bash(./target/*)",
+            "Bash(git status *)",
+            "Bash(git diff *)",
+            "Bash(git log *)",
+            "PowerShell(cargo *)",
+            "PowerShell(rg *)",
+            "PowerShell(uv *)",
+            "PowerShell(.\\target\\*)",
+            "PowerShell(git status *)",
+            "PowerShell(git diff *)",
+            "PowerShell(git log *)"
+        ]
+    }
+}

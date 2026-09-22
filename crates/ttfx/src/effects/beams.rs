@@ -1,12 +1,10 @@
 //! beams, ported from effects/effect_beams.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_int, parse_positive_int_range, parse_symbol,
+        parse_color, parse_gradient_direction, parse_positive_int_range,
     },
     engine::{
         animation::{Animation, ExistingColorHandling, VisualParams},
@@ -19,74 +17,94 @@ use crate::{
     utils::graphics::{Color, ColorPair, Gradient, GradientDirection},
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BeamsConfig {
     /// Symbols to use for the beam effect when moving along a row. Strings
     /// will be used in sequence to create an animation.
-    #[arg(long = "beam-row-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["▂", "▁", "_"])]
     pub beam_row_symbols: Vec<String>,
 
     /// Symbols to use for the beam effect when moving along a column. Strings
     /// will be used in sequence to create an animation.
-    #[arg(long = "beam-column-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["▌", "▍", "▎", "▏"])]
     pub beam_column_symbols: Vec<String>,
 
     /// Number of frames to wait before adding the next group of beams. Beams
     /// are added in groups of size random(1, 5).
-    #[arg(long = "beam-delay", default_value_t = 6, value_parser = parse_positive_int)]
     pub beam_delay: i64,
 
     /// Speed range of the beam when moving along a row.
-    #[arg(long = "beam-row-speed-range", default_value = "15-60", value_parser = parse_positive_int_range)]
     pub beam_row_speed_range: (i64, i64),
 
     /// Speed range of the beam when moving along a column.
-    #[arg(long = "beam-column-speed-range", default_value = "9-15", value_parser = parse_positive_int_range)]
     pub beam_column_speed_range: (i64, i64),
 
     /// Space separated, unquoted, list of colors for the beam, a gradient will
     /// be created between the colors.
-    #[arg(long = "beam-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffffff", "00D1FF", "8A008A"])]
     pub beam_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, numbers for the of gradient steps to use.
-    #[arg(long = "beam-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["2", "6"])]
     pub beam_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "beam-gradient-frames", default_value_t = 2, value_parser = parse_positive_int)]
     pub beam_gradient_frames: i64,
 
     /// Space separated, unquoted, list of colors for the wipe gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "ffffff"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "final-gradient-frames", default_value_t = 4, value_parser = parse_positive_int)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 
     /// Speed of the final wipe as measured in diagonal groups activated per
     /// frame.
-    #[arg(long = "final-wipe-speed", default_value_t = 3, value_parser = parse_positive_int)]
     pub final_wipe_speed: i64,
 }
 
+impl Default for BeamsConfig {
+    fn default() -> Self {
+        Self {
+            beam_row_symbols: vec![
+                "▂".to_string(),
+                "▁".to_string(),
+                "_".to_string(),
+            ],
+            beam_column_symbols: vec![
+                "▌".to_string(),
+                "▍".to_string(),
+                "▎".to_string(),
+                "▏".to_string(),
+            ],
+            beam_delay: 6,
+            beam_row_speed_range: parse_positive_int_range("15-60")
+                .expect("valid literal"),
+            beam_column_speed_range: parse_positive_int_range("9-15")
+                .expect("valid literal"),
+            beam_gradient_stops: vec![
+                parse_color("ffffff").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("8A008A").expect("valid color"),
+            ],
+            beam_gradient_steps: vec![2, 6],
+            beam_gradient_frames: 2,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("ffffff").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 4,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+            final_wipe_speed: 3,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Direction {
     Row,
@@ -95,6 +113,7 @@ enum Direction {
 
 /// BeamsIterator.Group state (get_next_character lives on Beams for hooks
 /// access).
+#[derive(Debug)]
 struct Group {
     characters: Vec<CharId>,
     direction: Direction,
@@ -109,6 +128,7 @@ enum Phase {
     Complete,
 }
 
+#[derive(Debug)]
 pub struct Beams {
     config: BeamsConfig,
     pending_groups: Vec<Group>,

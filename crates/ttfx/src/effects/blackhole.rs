@@ -1,12 +1,9 @@
 //! blackhole, ported from effects/effect_blackhole.py.
 
-use clap::Args;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
         character::CharId,
@@ -24,33 +21,48 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BlackholeConfig {
     /// Color for the stars that comprise the blackhole border.
-    #[arg(long = "blackhole-color", default_value = "ffffff", value_parser = parse_color)]
     pub blackhole_color: Color,
 
     /// List of colors from which character colors will be chosen and applied
     /// after the explosion, but before the cooldown to final color.
-    #[arg(long = "star-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffcc0d", "ff7326", "ff194d", "bf2669", "702a8c", "049dbf"])]
     pub star_colors: Vec<Color>,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "ffffff"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["9"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for BlackholeConfig {
+    fn default() -> Self {
+        Self {
+            blackhole_color: parse_color("ffffff").expect("valid literal"),
+            star_colors: vec![
+                parse_color("ffcc0d").expect("valid color"),
+                parse_color("ff7326").expect("valid color"),
+                parse_color("ff194d").expect("valid color"),
+                parse_color("bf2669").expect("valid color"),
+                parse_color("702a8c").expect("valid color"),
+                parse_color("049dbf").expect("valid color"),
+            ],
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("ffffff").expect("valid color"),
+            ],
+            final_gradient_steps: vec![9],
+            final_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Forming,
@@ -60,6 +72,7 @@ enum Phase {
     Complete,
 }
 
+#[derive(Debug)]
 pub struct Blackhole {
     config: BlackholeConfig,
     blackhole_chars: Vec<CharId>,

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+  "formatter": true,
+  "mcp": {
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "zvec_grep": {
+      "type": "local",
+      "command": [
+        "zg",
+        "server",
+        "--stdio"
+      ],
+      "enabled": true,
+      "timeout": 600000
+    },
+    "gdb": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "mcp-gdb"
+      ],
+      "enabled": true
+    },
+    "samply": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "mcp-samply"
+      ],
+      "enabled": true,
+      "timeout": 600000
+    },
+    "renderdoc": {
+      "type": "local",
+      "command": [
+        "renderdoc-mcp"
+      ],
+      "enabled": true
+    }
+  },
+  "plugin": [
+    "@upstash/context7-opencode"
+  ]
+}

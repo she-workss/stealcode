@@ -7,7 +7,7 @@ pub mod live;
 pub(crate) mod timing;
 pub mod weights;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 pub use config::ModelConfig;
@@ -35,7 +35,10 @@ pub struct Nemotron {
 
 impl Nemotron {
     pub fn load(path: &Path) -> Result<Self> {
-        let gguf = crate::gguf::Gguf::open(path)?;
+        // Shared once here; every mapped `Q8Mat` holds a clone, so
+        // dropping the model drops the last reference and unmaps the
+        // file (no global/static keeps it alive).
+        let gguf = Arc::new(crate::gguf::Gguf::open(path)?);
         let cfg = ModelConfig::from_gguf(&gguf)?;
 
         let fb = gguf

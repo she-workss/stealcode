@@ -15,6 +15,8 @@
 //! in transposed `[in, T]` layout (see `Lin::forward_t`), so a forward
 //! is one sgemm (the portable std::simd kernel, multi-threaded).
 
+use std::{ops::Range, sync::Arc};
+
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 
@@ -61,13 +63,49 @@ impl Q8Variant {
     }
 }
 
+/// Where a `Q8Mat`'s quantized bytes live: an owned heap buffer (fused/
+/// concatenated matrices, tests, benches) or a slice of the GGUF file
+/// mapping. The `Arc` keeps the mapping alive for as long as any mapped
+/// matrix references it, so dropping the model drops the last reference
+/// and unmaps the file.
+enum Q8Bytes {
+    Owned(Vec<u8>),
+    /// Weights stay in the GGUF mapping; the `Arc` keeps it alive.
+    Mapped {
+        gguf: Arc<Gguf>,
+        range: Range<usize>,
+    },
+}
+
+impl Q8Bytes {
+    #[inline]
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Mapped { gguf, range } => gguf.mapped_slice(range.clone()),
+        }
+    }
+}
+
 /// A quantized matrix: `rows` x `row_len` values, stored as per-32
 /// blocks (each row padded to a multiple of 32 elements). Weights stay
 /// quantized for the whole lifetime - both `matvec` and `forward_t` run
 /// the int8 vec-dot kernel directly on the stored bytes, so no f32
 /// dequantization (and no multi-GB cache) is ever built.
+///
+/// The bytes are either owned or borrowed from the GGUF mapping (see
+/// [`Q8Bytes`]): a model loaded straight from a file keeps every matrix
+/// mapped, so loading costs no 640 MB heap copy. Fused/concatenated
+/// matrices (`concat_rows`/`concat_vert`) are always owned.
 pub struct Q8Mat {
-    bytes: Vec<u8>,
+    bytes: Q8Bytes,
+    /// Precomputed per-block f16 scales (`rows x row_len.div_ceil(32)`,
+    /// row-major, f16 bits). The GEMM hot loop decoded the same f16
+    /// scales on every batch (`read_q8_scale` 377ms + `f16_to_f32` 297ms
+    /// excl. in the live_desktop profile); decoding once at load removes
+    /// that per-batch repeat for a few MB of RAM. f16 (not f32) halves
+    /// the precomputed scales' footprint.
+    scales: Vec<u16>,
     rows: usize,
     row_len: usize,
     padded_row: usize,
@@ -82,7 +120,7 @@ impl std::fmt::Debug for Q8Mat {
             self.rows,
             self.row_len,
             self.variant,
-            self.bytes.len()
+            self.bytes.as_slice().len()
         )
     }
 }
@@ -101,13 +139,78 @@ impl Q8Mat {
                 bytes.len()
             );
         }
-        Ok(Self {
-            bytes,
+        Ok(Self::from_bytes(
+            Q8Bytes::Owned(bytes),
             rows,
             row_len,
             padded_row,
             variant,
-        })
+        ))
+    }
+
+    /// Build a `Q8Mat` whose bytes stay in the GGUF mapping. `range` is
+    /// the absolute file range from `Gguf::tensor_range`; the `Arc`
+    /// keeps the mapping alive. Validated for the expected byte length
+    /// (like [`Self::new`]) and for staying within the mapping.
+    pub fn from_mapped(
+        gguf: Arc<Gguf>,
+        range: Range<usize>,
+        rows: usize,
+        row_len: usize,
+        variant: Q8Variant,
+    ) -> Result<Self> {
+        let padded_row = row_len.div_ceil(32) * variant.block_bytes();
+        if range.len() != rows * padded_row {
+            bail!(
+                "Q8Mat: {} bytes != {rows} rows x {padded_row} (row_len {row_len})",
+                range.len()
+            );
+        }
+        if range.end > gguf.len() {
+            bail!(
+                "Q8Mat: mapped range {}..{} exceeds GGUF mapping ({} bytes)",
+                range.start,
+                range.end,
+                gguf.len()
+            );
+        }
+        Ok(Self::from_bytes(
+            Q8Bytes::Mapped { gguf, range },
+            rows,
+            row_len,
+            padded_row,
+            variant,
+        ))
+    }
+
+    fn from_bytes(
+        bytes: Q8Bytes,
+        rows: usize,
+        row_len: usize,
+        padded_row: usize,
+        variant: Q8Variant,
+    ) -> Self {
+        let nblocks = row_len.div_ceil(32);
+        let bb = variant.block_bytes();
+        let data = bytes.as_slice();
+        let mut scales = Vec::with_capacity(rows * nblocks);
+        for j in 0..rows {
+            for blk in 0..nblocks {
+                scales.push(read_block_scale_bits(
+                    data,
+                    j * padded_row + blk * bb,
+                    variant,
+                ));
+            }
+        }
+        Self {
+            bytes,
+            scales,
+            rows,
+            row_len,
+            padded_row,
+            variant,
+        }
     }
 
     pub fn rows(&self) -> usize {
@@ -120,7 +223,7 @@ impl Q8Mat {
 
     /// Raw quantized block bytes (m rows x `padded_row`).
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_slice()
     }
 
     /// Concatenate two matrices side-by-side per row (block-aligned):
@@ -138,12 +241,29 @@ impl Q8Mat {
             return None;
         }
         let irow = a.padded_row;
+        let (abytes, bbytes) = (a.bytes.as_slice(), b.bytes.as_slice());
         let mut bytes = Vec::with_capacity(a.rows * 2 * irow);
         for j in 0..a.rows {
-            bytes.extend_from_slice(&a.bytes[j * irow..(j + 1) * irow]);
-            bytes.extend_from_slice(&b.bytes[j * irow..(j + 1) * irow]);
+            bytes.extend_from_slice(&abytes[j * irow..(j + 1) * irow]);
+            bytes.extend_from_slice(&bbytes[j * irow..(j + 1) * irow]);
         }
         Q8Mat::new(bytes, a.rows, 2 * a.row_len, a.variant).ok()
+    }
+
+    /// Stack two matrices vertically (concatenate along the output
+    /// dimension): `result` is `a`'s rows followed by `b`'s, so one GEMM
+    /// over the shared input computes both. Requires equal
+    /// `row_len`/`variant`. Returns `None` otherwise - callers fall back
+    /// to separate GEMMs.
+    #[must_use]
+    pub fn concat_vert(a: &Self, b: &Self) -> Option<Self> {
+        if a.row_len != b.row_len || a.variant != b.variant {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity((a.rows + b.rows) * a.padded_row);
+        bytes.extend_from_slice(a.bytes.as_slice());
+        bytes.extend_from_slice(b.bytes.as_slice());
+        Self::new(bytes, a.rows + b.rows, a.row_len, a.variant).ok()
     }
 
     /// Bytes per row (blocks_per_row * block_bytes).
@@ -167,7 +287,8 @@ impl Q8Mat {
             self.rows,
             self.row_len,
             1,
-            &self.bytes,
+            self.bytes.as_slice(),
+            Some(&self.scales),
             self.padded_row,
             bb,
             qoff,
@@ -194,7 +315,8 @@ impl Q8Mat {
             self.rows,
             self.row_len,
             t,
-            &self.bytes,
+            self.bytes.as_slice(),
+            Some(&self.scales),
             self.padded_row,
             bb,
             qoff,
@@ -215,12 +337,13 @@ impl Q8Mat {
         };
         out.clear();
         out.reserve(self.rows * self.row_len);
+        let bytes = self.bytes.as_slice();
         for j in 0..self.rows {
             let base = j * self.padded_row;
             for blk in 0..blocks_per_row {
                 let b = base + blk * bb;
-                let d = read_block_scale(&self.bytes, b, &self.variant);
-                let vals = &self.bytes[b + qoff..b + bb];
+                let d = read_block_scale(bytes, b, &self.variant);
+                let vals = &bytes[b + qoff..b + bb];
                 let in_row = blk * 32;
                 let keep = 32usize.min(self.row_len.saturating_sub(in_row));
                 for i in 0..keep {
@@ -243,6 +366,46 @@ fn read_block_scale(bytes: &[u8], b: usize, variant: &Q8Variant) -> f32 {
             f16_to_f32(u16::from_le_bytes([bytes[b], bytes[b + 1]]))
         }
     }
+}
+
+/// Per-block scale in f16 bits for the `Q8Mat::scales` table. Q8F16
+/// blocks already store f16 bits, so this is a raw copy; `Q8_0` stores
+/// an f32 and converts once at load (cold path). The f32->f16
+/// conversion truncates the mantissa (drops the low 13 bits); it does
+/// not round to nearest.
+const fn read_block_scale_bits(
+    bytes: &[u8],
+    b: usize,
+    variant: Q8Variant,
+) -> u16 {
+    match variant {
+        Q8Variant::Q8_0 => f32_to_f16_bits(f32::from_le_bytes([
+            bytes[b],
+            bytes[b + 1],
+            bytes[b + 2],
+            bytes[b + 3],
+        ])),
+        Q8Variant::Q8F16 => u16::from_le_bytes([bytes[b], bytes[b + 1]]),
+    }
+}
+
+/// f32 -> IEEE-754 half bits. The conversion truncates: the low 13
+/// mantissa bits are dropped (no round-to-nearest), subnormals are
+/// truncated to zero and overflow becomes infinity. Only used for
+/// `Q8_0`'s f32 block scales at load (this model's Q8F16 blocks store
+/// half bits directly), where the values are small normal numbers.
+const fn f32_to_f16_bits(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+    let mant = (bits >> 13) & 0x3ff;
+    if exp <= 0 {
+        return sign;
+    }
+    if exp >= 31 {
+        return sign | 0x7c00;
+    }
+    sign | ((exp as u16) << 10) | (mant as u16)
 }
 
 /// A linear layer with optional bias, stored as Q8_0/Q8F16 or f32.
@@ -452,39 +615,43 @@ impl Conv2d {
         if spatial >= 8 {
             // Parallel over spatial positions: each thread writes the
             // adjacent c_out channels of one pixel (no false sharing).
-            out.par_chunks_mut(c_out)
-                .enumerate()
-                .for_each(|(sp, slot)| {
-                    let (ot, of) = (sp / f_out, sp % f_out);
-                    let t0 = (ot * self.stride_t) as isize;
-                    let f0 = (of * self.stride_f) as isize;
-                    for oc in 0..c_out {
-                        let ic0 = (oc % self.groups) * in_groups;
-                        let wbase = oc * in_groups * self.kh * self.kw;
-                        let mut acc = b[oc];
-                        for ic in 0..in_groups {
-                            let ic_abs = ic0 + ic;
-                            for kt in 0..self.kh {
-                                let ti = t0 + kt as isize - pt_l;
-                                if ti < 0 || ti >= t_in as isize {
-                                    continue;
-                                }
-                                for kf in 0..self.kw {
-                                    let fi = f0 + kf as isize - pf_l;
-                                    if fi < 0 || fi >= f_in as isize {
+            crate::pool::install(|| {
+                out.par_chunks_mut(c_out)
+                    .enumerate()
+                    .for_each(|(sp, slot)| {
+                        let (ot, of) = (sp / f_out, sp % f_out);
+                        let t0 = (ot * self.stride_t) as isize;
+                        let f0 = (of * self.stride_f) as isize;
+                        for oc in 0..c_out {
+                            let ic0 = (oc % self.groups) * in_groups;
+                            let wbase = oc * in_groups * self.kh * self.kw;
+                            let mut acc = b[oc];
+                            for ic in 0..in_groups {
+                                let ic_abs = ic0 + ic;
+                                for kt in 0..self.kh {
+                                    let ti = t0 + kt as isize - pt_l;
+                                    if ti < 0 || ti >= t_in as isize {
                                         continue;
                                     }
-                                    let wi = (ic * self.kh + kt) * self.kw + kf;
-                                    let xi = (ti as usize * f_in + fi as usize)
-                                        * c_in
-                                        + ic_abs;
-                                    acc += x[xi] * w[wbase + wi];
+                                    for kf in 0..self.kw {
+                                        let fi = f0 + kf as isize - pf_l;
+                                        if fi < 0 || fi >= f_in as isize {
+                                            continue;
+                                        }
+                                        let wi =
+                                            (ic * self.kh + kt) * self.kw + kf;
+                                        let xi = (ti as usize * f_in
+                                            + fi as usize)
+                                            * c_in
+                                            + ic_abs;
+                                        acc += x[xi] * w[wbase + wi];
+                                    }
                                 }
                             }
+                            slot[oc] = acc;
                         }
-                        slot[oc] = acc;
-                    }
-                });
+                    });
+            });
         } else {
             for oc in 0..c_out {
                 let ic0 = (oc % self.groups) * in_groups;
@@ -638,7 +805,7 @@ impl BatchNorm1d {
 /// stored [in, out] tensor the gguf dims are `[out_len, rows]`; for
 /// [out, in] they are `[in_len, rows]`.
 pub fn load_lin(
-    gguf: &Gguf,
+    gguf: &Arc<Gguf>,
     name: &str,
     inp: usize,
     out: usize,
@@ -672,13 +839,20 @@ pub fn load_lin(
         }
     };
     let q = if meta.dtype == 7 || meta.dtype == 8 {
-        let data = gguf.tensor_data(meta)?;
         let variant = if meta.dtype == 8 {
             Q8Variant::Q8F16
         } else {
             Q8Variant::Q8_0
         };
-        Some(Q8Mat::new(data.to_vec(), rows, row_len, variant)?)
+        // Zero-copy: the matrix borrows its bytes from the GGUF mapping
+        // (the `Arc` keeps the map alive) instead of copying ~640 MB.
+        Some(Q8Mat::from_mapped(
+            Arc::clone(gguf),
+            gguf.tensor_range(meta)?,
+            rows,
+            row_len,
+            variant,
+        )?)
     } else {
         None
     };

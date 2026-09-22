@@ -19,14 +19,10 @@
 
 use std::collections::VecDeque;
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_int, parse_positive_int,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -63,68 +59,87 @@ fn parse_etch_pattern(s: &str) -> Result<EtchPattern, String> {
     crate::effects::common::parse_character_group(s).map(EtchPattern::Group)
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct LaserEtchConfig {
     /// Pattern used to etch the text.
-    #[arg(long = "etch-pattern", default_value = "algorithm", value_parser = parse_etch_pattern)]
     pub etch_pattern: EtchPattern,
 
     /// Along with etch_delay, determines the speed at which the characters are
     /// etched onto the terminal. This value specifies the number of characters
     /// to etch simultaneously.
-    #[arg(long = "etch-speed", default_value_t = 1, value_parser = parse_positive_int)]
     pub etch_speed: i64,
 
     /// Along with etch_speed, determines the speed at which the characters are
     /// etched onto the terminal. This values specifies the number of frames to
     /// wait before etching the next set of characters.
-    #[arg(long = "etch-delay", default_value_t = 1, value_parser = parse_non_negative_int)]
     pub etch_delay: i64,
 
     /// Space separated, unquoted, list of colors for the gradient used to cool
     /// the characters after etching.
-    #[arg(long = "cool-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffe680", "ff7b00"])]
     pub cool_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of colors for the laser gradient.
-    #[arg(long = "laser-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffffff", "376cff"])]
     pub laser_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of colors for the spark cooling
     /// gradient.
-    #[arg(long = "spark-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffffff", "ffe680", "ff7b00", "1a0900"])]
     pub spark_gradient_stops: Vec<Color>,
 
     /// Number of frames to display each spark cooling gradient step. Increase
     /// to slow down the rate of cooling.
-    #[arg(long = "spark-cooling-frames", default_value_t = 7, value_parser = parse_positive_int)]
     pub spark_cooling_frames: i64,
 
     /// Space separated, unquoted, list of colors for the character gradient
     /// (applied across the canvas).
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "ffffff"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["8"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "final-gradient-frames", default_value_t = 4, value_parser = parse_positive_int)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for LaserEtchConfig {
+    fn default() -> Self {
+        Self {
+            etch_pattern: parse_etch_pattern("algorithm")
+                .expect("valid literal"),
+            etch_speed: 1,
+            etch_delay: 1,
+            cool_gradient_stops: vec![
+                parse_color("ffe680").expect("valid color"),
+                parse_color("ff7b00").expect("valid color"),
+            ],
+            laser_gradient_stops: vec![
+                parse_color("ffffff").expect("valid color"),
+                parse_color("376cff").expect("valid color"),
+            ],
+            spark_gradient_stops: vec![
+                parse_color("ffffff").expect("valid color"),
+                parse_color("ffe680").expect("valid color"),
+                parse_color("ff7b00").expect("valid color"),
+                parse_color("1a0900").expect("valid color"),
+            ],
+            spark_cooling_frames: 7,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("ffffff").expect("valid color"),
+            ],
+            final_gradient_steps: vec![8],
+            final_gradient_frames: 4,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 /// LaserEtchIterator.Laser state (methods live on LaserEtch for hooks access).
+#[derive(Debug)]
 struct Laser {
     position: Coord,
     beam_chars: Vec<CharId>,
@@ -166,6 +181,7 @@ fn has_input_colors(ctx: &EngineCtx, id: CharId) -> bool {
     anim.input_fg_color.is_some() || anim.input_bg_color.is_some()
 }
 
+#[derive(Debug)]
 pub struct LaserEtch {
     config: LaserEtchConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

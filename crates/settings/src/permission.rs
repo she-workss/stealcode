@@ -45,7 +45,6 @@ pub enum PermissionSettings {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use serde_json::json;
 

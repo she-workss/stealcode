@@ -4,15 +4,10 @@
 //! No observable set iteration beyond the engine-canonical active_characters
 //! (docs/ordering-inventory.md); the effect consumes no RNG at all.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_non_negative_int, parse_non_negative_ratio,
-        parse_positive_float, parse_symbol,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::ExistingColorHandling,
         character::CharId,
@@ -31,66 +26,76 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OrbittingVolleyConfig {
     /// Symbol for the top launcher.
-    #[arg(long = "top-launcher-symbol", default_value = "█", value_parser = parse_symbol)]
     pub top_launcher_symbol: String,
 
     /// Symbol for the right launcher.
-    #[arg(long = "right-launcher-symbol", default_value = "█", value_parser = parse_symbol)]
     pub right_launcher_symbol: String,
 
     /// Symbol for the bottom launcher.
-    #[arg(long = "bottom-launcher-symbol", default_value = "█", value_parser = parse_symbol)]
     pub bottom_launcher_symbol: String,
 
     /// Symbol for the left launcher.
-    #[arg(long = "left-launcher-symbol", default_value = "█", value_parser = parse_symbol)]
     pub left_launcher_symbol: String,
 
     /// Orbitting speed of the launchers.
-    #[arg(long = "launcher-movement-speed", default_value_t = 0.8, value_parser = parse_positive_float)]
     pub launcher_movement_speed: f64,
 
     /// Speed of the launched characters.
-    #[arg(long = "character-movement-speed", default_value_t = 1.5, value_parser = parse_positive_float)]
     pub character_movement_speed: f64,
 
     /// Percent of total input characters each launcher will fire per volley.
     /// Lower limit of one character.
-    #[arg(long = "volley-size", default_value_t = 0.03, value_parser = parse_non_negative_ratio)]
     pub volley_size: f64,
 
     /// Number of animation ticks to wait between volleys of characters.
-    #[arg(long = "launch-delay", default_value_t = 30, value_parser = parse_non_negative_int)]
     pub launch_delay: i64,
 
     /// Easing function to use for launched character movement.
-    #[arg(long = "character-easing", default_value = "out_sine", value_parser = parse_easing)]
     pub character_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["FFA15C", "44D492"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "radial", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for OrbittingVolleyConfig {
+    fn default() -> Self {
+        Self {
+            top_launcher_symbol: "█".to_string(),
+            right_launcher_symbol: "█".to_string(),
+            bottom_launcher_symbol: "█".to_string(),
+            left_launcher_symbol: "█".to_string(),
+            launcher_movement_speed: 0.8,
+            character_movement_speed: 1.5,
+            volley_size: 0.03,
+            launch_delay: 30,
+            character_easing: parse_easing("out_sine").expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("FFA15C").expect("valid color"),
+                parse_color("44D492").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("radial")
+                .expect("valid literal"),
+        }
+    }
+}
 /// OrbittingVolleyIterator.Launcher.
+#[derive(Debug)]
 struct Launcher {
     character: CharId,
     magazine: Vec<CharId>,
 }
 
+#[derive(Debug)]
 pub struct OrbittingVolley {
     config: OrbittingVolleyConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

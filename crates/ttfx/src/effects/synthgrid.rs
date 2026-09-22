@@ -8,14 +8,10 @@
 //! No observable set iteration beyond the engine-canonical active_characters
 //! (docs/ordering-inventory.md).
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_ratio, parse_symbol,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -39,59 +35,73 @@ use crate::{
 /// Callback id: update_group_tracker(group_number) - decrements the tracker.
 const CB_UPDATE_GROUP_TRACKER: u32 = 0;
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SynthGridConfig {
     /// Space separated, unquoted, list of colors for the grid gradient.
-    #[arg(long = "grid-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["CC00CC", "ffffff"])]
     pub grid_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of the number of gradient steps to use.
     /// More steps will create a smoother and longer gradient animation.
-    #[arg(long = "grid-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub grid_gradient_steps: Vec<i64>,
 
     /// Direction of the gradient for the grid color.
-    #[arg(long = "grid-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub grid_gradient_direction: GradientDirection,
 
     /// Space separated, unquoted, list of colors for the text gradient.
-    #[arg(long = "text-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub text_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of the number of gradient steps to use.
     /// More steps will create a smoother and longer gradient animation.
-    #[arg(long = "text-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub text_gradient_steps: Vec<i64>,
 
     /// Direction of the gradient for the text color.
-    #[arg(long = "text-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub text_gradient_direction: GradientDirection,
 
     /// Symbol to use for grid row lines.
-    #[arg(long = "grid-row-symbol", default_value = "─", value_parser = parse_symbol)]
     pub grid_row_symbol: String,
 
     /// Symbol to use for grid column lines.
-    #[arg(long = "grid-column-symbol", default_value = "│", value_parser = parse_symbol)]
     pub grid_column_symbol: String,
 
     /// Space separated, unquoted, list of characters for the text generation
     /// animation.
-    #[arg(long = "text-generation-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["░", "▒", "▓"])]
     pub text_generation_symbols: Vec<String>,
 
     /// Maximum percentage of blocks to have active at any given time. For
     /// example, if set to 0.1, 10 percent of the blocks will be active at any
     /// given time.
-    #[arg(long = "max-active-blocks", default_value_t = 0.1, value_parser = parse_positive_ratio)]
     pub max_active_blocks: f64,
 }
 
+impl Default for SynthGridConfig {
+    fn default() -> Self {
+        Self {
+            grid_gradient_stops: vec![
+                parse_color("CC00CC").expect("valid color"),
+                parse_color("ffffff").expect("valid color"),
+            ],
+            grid_gradient_steps: vec![12],
+            grid_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+            text_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            text_gradient_steps: vec![12],
+            text_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+            grid_row_symbol: "─".to_string(),
+            grid_column_symbol: "│".to_string(),
+            text_generation_symbols: vec![
+                "░".to_string(),
+                "▒".to_string(),
+                "▓".to_string(),
+            ],
+            max_active_blocks: 0.1,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Direction {
     Horizontal,
@@ -99,6 +109,7 @@ enum Direction {
 }
 
 /// GridLine (module-level class in effect_synthgrid.py).
+#[derive(Debug)]
 struct GridLine {
     direction: Direction,
     collapsed_characters: Vec<CharId>,
@@ -161,6 +172,7 @@ enum Phase {
     Complete,
 }
 
+#[derive(Debug)]
 pub struct SynthGrid {
     config: SynthGridConfig,
     pending_groups: Vec<(i64, Vec<CharId>)>,

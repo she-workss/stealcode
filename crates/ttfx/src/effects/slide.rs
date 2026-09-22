@@ -1,13 +1,9 @@
 //! slide, ported from effects/effect_slide.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_non_negative_int, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -44,52 +40,64 @@ fn parse_slide_grouping(s: &str) -> Result<SlideGrouping, String> {
     })
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SlideConfig {
     /// Speed of the characters.
-    #[arg(long = "movement-speed", default_value_t = 0.8, value_parser = parse_positive_float)]
     pub movement_speed: f64,
 
     /// Direction to group characters.
-    #[arg(long = "grouping", default_value = "row", value_parser = parse_slide_grouping)]
     pub grouping: SlideGrouping,
 
     /// Number of frames to wait before adding the next group of characters.
-    #[arg(long = "gap", default_value_t = 2, value_parser = parse_non_negative_int)]
     pub gap: i64,
 
     /// Reverse the direction of the characters.
-    #[arg(long = "reverse-direction")]
     pub reverse_direction: bool,
 
     /// Merge the character groups originating from either side of the
     /// terminal.
-    #[arg(long = "merge")]
     pub merge: bool,
 
     /// Easing function to use for character movement.
-    #[arg(long = "movement-easing", default_value = "in_out_quad", value_parser = parse_easing)]
     pub movement_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the character gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["833ab4", "fd1d1d", "fcb045"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step.
-    #[arg(long = "final-gradient-frames", default_value_t = 6)]
     pub final_gradient_frames: i64,
 
     /// Direction of the gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for SlideConfig {
+    fn default() -> Self {
+        Self {
+            movement_speed: 0.8,
+            grouping: parse_slide_grouping("row").expect("valid literal"),
+            gap: 2,
+            reverse_direction: false,
+            merge: false,
+            movement_easing: parse_easing("in_out_quad")
+                .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("833ab4").expect("valid color"),
+                parse_color("fd1d1d").expect("valid color"),
+                parse_color("fcb045").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 6,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Slide {
     config: SlideConfig,
     pending_groups: Vec<Vec<CharId>>,

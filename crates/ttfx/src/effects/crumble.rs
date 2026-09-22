@@ -1,12 +1,9 @@
 //! crumble, ported from effects/effect_crumble.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{
             Animation, ExistingColorHandling, SyncMetric, VisualParams,
@@ -25,23 +22,31 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct CrumbleConfig {
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["5CE1FF", "FF8C00"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for CrumbleConfig {
+    fn default() -> Self {
+        Self {
+            final_gradient_stops: vec![
+                parse_color("5CE1FF").expect("valid color"),
+                parse_color("FF8C00").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Stage {
     Falling,
@@ -50,6 +55,7 @@ enum Stage {
     Complete,
 }
 
+#[derive(Debug)]
 pub struct Crumble {
     config: CrumbleConfig,
     pending_chars: Vec<CharId>,
@@ -58,7 +64,7 @@ pub struct Crumble {
     max_fall_delay: i64,
     min_fall_delay: i64,
     reset: bool,
-    fall_group_maxsize: i64,
+    fall_group_max_size: i64,
     stage: Stage,
     unvacuumed_chars: Vec<CharId>,
 }
@@ -73,7 +79,7 @@ impl Crumble {
             max_fall_delay: 0,
             min_fall_delay: 0,
             reset: false,
-            fall_group_maxsize: 1,
+            fall_group_max_size: 1,
             stage: Stage::Falling,
             unvacuumed_chars: Vec::new(),
         }
@@ -480,7 +486,7 @@ impl Effect for Crumble {
         self.max_fall_delay = 12;
         self.min_fall_delay = 9;
         self.reset = false;
-        self.fall_group_maxsize = 1;
+        self.fall_group_max_size = 1;
         self.stage = Stage::Falling;
         self.unvacuumed_chars = ctx.terminal.input_characters.clone();
         ctx.rng.shuffle(&mut self.unvacuumed_chars);
@@ -496,7 +502,7 @@ impl Effect for Crumble {
                             // Determine the size of the next group of falling
                             // characters
                             let fall_group_size =
-                                ctx.rng.randint(1, self.fall_group_maxsize);
+                                ctx.rng.randint(1, self.fall_group_max_size);
                             // Add the next group of falling characters to the
                             // animating characters list
                             for _ in 0..fall_group_size {
@@ -518,7 +524,7 @@ impl Effect for Crumble {
                             if ctx.rng.randint(1, 10) > 4 {
                                 // 60% chance to modify the fall delay and group
                                 // size
-                                self.fall_group_maxsize += 1;
+                                self.fall_group_max_size += 1;
                                 self.min_fall_delay =
                                     std::cmp::max(0, self.min_fall_delay - 1);
                                 self.max_fall_delay =

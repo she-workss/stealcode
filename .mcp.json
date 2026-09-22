@@ -1,0 +1,33 @@
+{
+  "mcpServers": {
+    "gdb": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-gdb"
+      ]
+    },
+    "samply": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-samply"
+      ]
+    },
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "zvec_grep": {
+      "command": "zg",
+      "args": [
+        "server",
+        "--stdio"
+      ]
+    },
+    "renderdoc-mcp": {
+      "command": "renderdoc-mcp",
+      "args": []
+    }
+  }
+}

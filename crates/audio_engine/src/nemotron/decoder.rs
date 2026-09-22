@@ -10,6 +10,8 @@
 //!     token, swap state. max_symbols_per_step caps consecutive tokens (then
 //!     step += 1).
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use tracing::debug;
 
@@ -75,7 +77,7 @@ pub struct GreedyDecoder {
 }
 
 impl LstmLayer {
-    fn load(gguf: &Gguf, i: usize, hidden: usize) -> Result<Self> {
+    fn load(gguf: &Arc<Gguf>, i: usize, hidden: usize) -> Result<Self> {
         let p = format!("decoder.prediction.dec_rnn.lstm.ih_l{i}");
         let h = format!("decoder.prediction.dec_rnn.lstm.hh_l{i}");
         let ih = load_lin(gguf, &p, hidden, 4 * hidden)?;
@@ -118,7 +120,7 @@ impl LstmLayer {
 }
 
 impl Predictor {
-    fn load(gguf: &Gguf, cfg: &RnntConfig) -> Result<Self> {
+    fn load(gguf: &Arc<Gguf>, cfg: &RnntConfig) -> Result<Self> {
         let hidden = cfg.pred_hidden;
         let embed = {
             let m = gguf.tensor("decoder.prediction.embed.weight").context(
@@ -218,7 +220,7 @@ impl Predictor {
 }
 
 impl Joint {
-    fn load(gguf: &Gguf, cfg: &RnntConfig) -> Result<Self> {
+    fn load(gguf: &Arc<Gguf>, cfg: &RnntConfig) -> Result<Self> {
         // joint.enc.weight gguf dims (1024, 640) -> rows = 640, len = 1024.
         let enc = load_lin(gguf, "joint.enc", 1024, 0)?;
         let pred = load_lin(gguf, "joint.pred", cfg.joint_dim, cfg.joint_dim)?;
@@ -235,7 +237,7 @@ impl Joint {
 }
 
 impl GreedyDecoder {
-    pub fn load(gguf: &Gguf, cfg: &RnntConfig) -> Result<Self> {
+    pub fn load(gguf: &Arc<Gguf>, cfg: &RnntConfig) -> Result<Self> {
         Ok(Self {
             predictor: Predictor::load(gguf, cfg)?,
             joint: Joint::load(gguf, cfg)?,

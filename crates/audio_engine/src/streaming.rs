@@ -479,10 +479,20 @@ fn block_new(
     let mut v_new = Vec::new();
     let mut q_new = Vec::new();
     let t_a = Instant::now();
-    b.attn_k.forward_t(scratch, ln_new_t, c, &mut k_new);
-    b.attn_v.forward_t(scratch, ln_new_t, c, &mut v_new);
-    let lnst = transpose_into(&ln_new, c, d, trans);
-    b.attn_q.forward_t(scratch, lnst, c, &mut q_new);
+    if let Some(qkv) = &b.attn_qkv {
+        // Fused q/k/v: one [3d, c] GEMM over the shared input (the old
+        // path transposed `ln_new` a second time for q; not needed here).
+        let mut fused = Vec::new();
+        qkv.forward_t(scratch, ln_new_t, c, &mut fused);
+        q_new.extend_from_slice(&fused[..d * c]);
+        k_new.extend_from_slice(&fused[d * c..2 * d * c]);
+        v_new.extend_from_slice(&fused[2 * d * c..3 * d * c]);
+    } else {
+        b.attn_k.forward_t(scratch, ln_new_t, c, &mut k_new);
+        b.attn_v.forward_t(scratch, ln_new_t, c, &mut v_new);
+        let lnst = transpose_into(&ln_new, c, d, trans);
+        b.attn_q.forward_t(scratch, lnst, c, &mut q_new);
+    }
     let k_new = transpose(&k_new, d, c);
     let v_new = transpose(&v_new, d, c);
     let q_new = transpose(&q_new, d, c);
@@ -530,10 +540,12 @@ fn block_new(
             );
         }
     } else {
-        scores
-            .par_chunks_mut(band * n_heads)
-            .enumerate()
-            .for_each(|(qi, row)| score_row(qi, row));
+        crate::pool::install(|| {
+            scores
+                .par_chunks_mut(band * n_heads)
+                .enumerate()
+                .for_each(|(qi, row)| score_row(qi, row));
+        });
     }
     dmp0("senc_b0_scores", &scores);
     acc.push(("scores", t_a.elapsed()));
@@ -560,11 +572,9 @@ fn block_new(
                 |kk| {
                     let fr = k_lo + kk;
                     if fr < s {
-                        &v_v_in[krel(fr) * d + hd
-                            ..krel(fr) * d + hd + head_dim]
+                        &v_v_in[krel(fr) * d + hd..krel(fr) * d + hd + head_dim]
                     } else {
-                        &v_new[(fr - s) * d + hd
-                            ..(fr - s) * d + hd + head_dim]
+                        &v_new[(fr - s) * d + hd..(fr - s) * d + hd + head_dim]
                     }
                 },
                 head_dim,
@@ -581,11 +591,13 @@ fn block_new(
             );
         }
     } else {
-        scores
-            .par_chunks_mut(band * n_heads)
-            .zip(attn_out.par_chunks_mut(d))
-            .enumerate()
-            .for_each(|(qi, (srow, row))| softmax_row(qi, srow, row));
+        crate::pool::install(|| {
+            scores
+                .par_chunks_mut(band * n_heads)
+                .zip(attn_out.par_chunks_mut(d))
+                .enumerate()
+                .for_each(|(qi, (srow, row))| softmax_row(qi, srow, row));
+        });
     }
     acc.push(("softmax", t_a.elapsed()));
     let at = transpose_into(&attn_out, c, d, trans);

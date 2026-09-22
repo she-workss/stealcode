@@ -1,13 +1,9 @@
 //! errorcorrect, ported from effects/effect_errorcorrect.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_float, parse_positive_int,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
         character::CharId,
@@ -20,48 +16,58 @@ use crate::{
     utils::graphics::{Color, ColorPair, Gradient, GradientDirection},
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ErrorCorrectConfig {
     /// Percent of characters that are in the wrong position. This is a float
     /// between 0 and 1.0.
-    #[arg(long = "error-pairs", default_value_t = 0.1, value_parser = parse_positive_float)]
     pub error_pairs: f64,
 
     /// Number of frames between swaps.
-    #[arg(long = "swap-delay", default_value_t = 6, value_parser = parse_positive_int)]
     pub swap_delay: i64,
 
     /// Color for the characters that are in the wrong position.
-    #[arg(long = "error-color", default_value = "e74c3c", value_parser = parse_color)]
     pub error_color: Color,
 
     /// Color for the characters once corrected, this is a gradient from
     /// error-color and fades to final-color.
-    #[arg(long = "correct-color", default_value = "45bf55", value_parser = parse_color)]
     pub correct_color: Color,
 
     /// Speed of the characters while moving to the correct position.
-    #[arg(long = "movement-speed", default_value_t = 0.9, value_parser = parse_positive_float)]
     pub movement_speed: f64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for ErrorCorrectConfig {
+    fn default() -> Self {
+        Self {
+            error_pairs: 0.1,
+            swap_delay: 6,
+            error_color: parse_color("e74c3c").expect("valid literal"),
+            correct_color: parse_color("45bf55").expect("valid literal"),
+            movement_speed: 0.9,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 const BLOCK_WIPE_START: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 const BLOCK_WIPE_END: [&str; 7] = ["▇", "▆", "▅", "▄", "▃", "▂", "▁"];
 
+#[derive(Debug)]
 pub struct ErrorCorrect {
     config: ErrorCorrectConfig,
     swapped: Vec<(CharId, CharId)>,

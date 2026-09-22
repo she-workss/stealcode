@@ -1,0 +1,18 @@
+[package]
+name = "gpui_thinking_orbs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui-pre = { version = "0.3", default-features = false, features = [
+    "profiler",
+] }
+
+[dev-dependencies]
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "9504b4658d57c59024a664f22b5ab55e070a24b4", default-features = false }
+
+[lints]
+workspace = true

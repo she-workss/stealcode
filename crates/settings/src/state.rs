@@ -52,7 +52,6 @@ pub fn now_secs() -> f64 {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

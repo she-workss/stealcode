@@ -8,18 +8,18 @@ use std::{
 };
 
 use anyhow::Context as _;
-#[cfg(feature = "voice")]
-use gpui::Entity;
 use gpui::{
-    App, AsyncApp, Bounds, Context, IntoElement, Render, SharedString,
+    App, AsyncApp, Bounds, Context, Entity, IntoElement, Render, SharedString,
     TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div,
     point, prelude::*, px, size,
 };
+use gpui_fps::fps_monitor;
 #[cfg(feature = "voice")]
-use gpui_component::button::ButtonVariants;
+use gpui_kit::component::button::ButtonVariants;
 #[cfg(feature = "voice")]
-use gpui_component::input::{Textarea, TextareaState};
-use gpui_component::{Disableable, Root, StyledExt, button::Button};
+use gpui_kit::component::input::{Textarea, TextareaState};
+use gpui_kit::component::{Disableable, Root, StyledExt, button::Button};
+use gpui_thinking_orbs::{OrbSize, OrbState, ThinkingOrb};
 use settings::Settings;
 use sound::sounds::SoundName;
 use tracing::error;
@@ -170,6 +170,7 @@ struct StealcodeApp {
     #[cfg(feature = "voice")]
     voice_input: Entity<TextareaState>,
     updates: UpdateManager,
+    orb: Entity<ThinkingOrb>,
 }
 
 impl StealcodeApp {
@@ -213,6 +214,11 @@ impl StealcodeApp {
         .detach();
 
         let updates = UpdateManager::new(true);
+        let orb = cx.new(|_| {
+            ThinkingOrb::new()
+                .state(OrbState::Composing)
+                .size(OrbSize::Large)
+        });
 
         Self {
             #[cfg(feature = "voice")]
@@ -220,6 +226,7 @@ impl StealcodeApp {
             #[cfg(feature = "voice")]
             voice_input,
             updates,
+            orb,
         }
     }
 }
@@ -227,7 +234,7 @@ impl StealcodeApp {
 impl Render for StealcodeApp {
     fn render(
         &mut self,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         #[cfg(feature = "voice")]
@@ -246,6 +253,10 @@ impl Render for StealcodeApp {
             .items_center()
             .justify_center()
             .child("Hello, World!")
+            .child(self.orb.clone())
+            .when(cfg!(debug_assertions), |this| {
+                this.child(fps_monitor(window, cx))
+            })
             .child(
                 Button::new("show_notification_btn")
                     .label("Show notification")
@@ -253,13 +264,17 @@ impl Render for StealcodeApp {
                         show_notification();
                     }),
             )
-            .child(div().flex().flex_wrap().gap_2().justify_center().children(
-                SoundName::ALL.into_iter().map(|sound| {
-                    Button::new(sound.label())
-                        .label(sound.label())
-                        .on_click(move |_, _, _| sound::engine::play(sound))
-                }),
-            ))
+            .child(
+                div().flex().flex_wrap().gap_2().justify_center().children(
+                    SoundName::ALL.into_iter().map(|sound| {
+                        Button::new(sound.label())
+                            .label(sound.label())
+                            .on_click(move |_, _, _| {
+                                sound::engine::play(sound)
+                            })
+                    }),
+                ),
+            )
             .child({
                 #[cfg(feature = "voice")]
                 {
@@ -288,9 +303,9 @@ impl Render for StealcodeApp {
             })
             .child(
                 div()
-                    .v_flex()
-                    .gap_2()
-                    .w(px(420.))
+                .v_flex()
+                .gap_2()
+                .w(px(420.))
                     .child(
                         div()
                             .flex()
@@ -347,7 +362,7 @@ impl Render for StealcodeApp {
                                     )),
                             ),
                     )
-                    .child(SharedString::from(&self.updates.status)),
+                    .child(SharedString::from(&self.updates.status))
             )
     }
 }
@@ -390,10 +405,7 @@ fn open_app_window(
             }),
             ..Default::default()
         },
-        |window, cx| {
-            let view = cx.new(|cx| StealcodeApp::new(window, cx));
-            cx.new(|cx| Root::new(view, window, cx))
-        },
+        desktop_root,
     );
     match result {
         Ok(handle) => {
@@ -426,6 +438,7 @@ fn setup_windows_app_id() {
     };
 }
 
+// Desktop entry point (tray + hidden-window shell).
 pub fn run_desktop(
     _settings: &Settings,
     _project: Option<&Path>,
@@ -439,7 +452,7 @@ pub fn run_desktop(
     if auto_update::apply_staged_update_on_startup()? {
         std::process::exit(0);
     }
-    gpui_platform::application().run(move |cx| {
+    gpui_kit::application().run(move |cx| {
         // Apply a silent update finished while running as we exit. The
         // subscription must stay alive for the hook (same leak trick as the
         // tray icon); renaming a running exe is legal on Windows, so the
@@ -457,7 +470,7 @@ pub fn run_desktop(
             }
         })
         .detach();
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -531,4 +544,9 @@ pub fn run_desktop(
         open_app_window(&main_window_handle, cx);
     });
     Ok(())
+}
+
+fn desktop_root(window: &mut Window, cx: &mut App) -> Entity<Root> {
+    let view = cx.new(|cx| StealcodeApp::new(window, cx));
+    cx.new(|cx| Root::new(view, window, cx))
 }

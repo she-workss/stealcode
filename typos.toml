@@ -1,4 +1,6 @@
 [default.extend-words]
-ratatui = "ratatui"
-fo = "fo"
 ba = "ba"
+easer = "easer"
+fo = "fo"
+ot = "ot"
+ratatui = "ratatui"

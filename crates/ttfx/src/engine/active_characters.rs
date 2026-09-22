@@ -12,7 +12,7 @@ const WORD_BITS: usize = u64::BITS as usize;
 const PROMOTE_LEN: usize = 128;
 const DEMOTE_LEN: usize = 64;
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ActiveCharacters {
     sparse: Vec<CharId>,
     words: Vec<u64>,
@@ -198,11 +198,13 @@ impl ActiveCharacters {
     }
 }
 
+#[derive(Debug)]
 pub struct Iter<'a> {
     inner: IterInner<'a>,
     len: usize,
 }
 
+#[derive(Debug)]
 enum IterInner<'a> {
     Sparse(std::slice::Iter<'a, CharId>),
     Dense {

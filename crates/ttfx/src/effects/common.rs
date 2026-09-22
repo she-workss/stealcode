@@ -1,4 +1,4 @@
-//! Shared clap value parsers for effect configs (argutils validators).
+//! Shared value parsers for effect configs (argutils validators).
 
 use crate::utils::{
     easing::Easing,

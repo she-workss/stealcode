@@ -156,6 +156,7 @@ impl FrameCell {
     }
 }
 
+#[derive(Debug)]
 pub struct Terminal {
     pub config: TerminalConfig,
     pub canvas: Canvas,

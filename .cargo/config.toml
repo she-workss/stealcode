@@ -1,5 +1,5 @@
 [alias]
-nt = "nextest run --all-targets --all-features --status-level fail --no-fail-fast"
+nt = "nextest run --all-targets --all-features --no-tests pass --status-level fail --no-fail-fast"
 
 [env]
 # Fix incorrect bindings generation with Cranelift on Windows:
@@ -9,33 +9,59 @@ AWS_LC_SYS_NO_U1_BINDINGS = "1"
 [build]
 incremental = true
 
-# Fix linking error with Cranelift and `-Clink-arg=-fuse-ld=lld` on Windows
-# (pulp 0.22.3)
-[profile.dev.package.pulp]
-codegen-backend = "llvm"
-
-# audio_engine's AVX2 kernels use intrinsics Cranelift doesn't implement
-# (`psign.b`, `permps`), which trap at runtime in dev builds. Build it
-# with LLVM so dev examples/apps actually run.
-[profile.dev.package.audio_engine]
-codegen-backend = "llvm"
-
 [unstable]
-build-std = ["alloc", "compiler_builtins", "core", "panic_unwind", "std"]
-build-std-features = [
-    # "backtrace",
-    "optimize_for_size",
-]
-# checksum-freshness = true
+# build-std = ["alloc", "compiler_builtins", "core", "std"]
+# build-std-features = ["backtrace", "optimize_for_size"]
+checksum-freshness = true
 codegen-backend = true
 feature-unification = true
 profile-hint-mostly-unused = true
+# panic-immediate-abort = true
 
 [resolver]
 feature-unification = "workspace"
 
-# [profile.dev]
-# codegen-backend = "cranelift"
+[profile.dev.package]
+# alloc.codegen-backend = "llvm"
+# compiler_builtins.codegen-backend = "llvm"
+# core.codegen-backend = "llvm"
+# panic_abort.codegen-backend = "llvm"
+# panic_unwind.codegen-backend = "llvm"
+# std.codegen-backend = "llvm"
+# Fix linking error with Cranelift and `-Clink-arg=-fuse-ld=lld` on Windows
+# (pulp 0.22.3)
+pulp.codegen-backend = "llvm"
+# audio_engine's AVX2 kernels use intrinsics Cranelift doesn't implement
+# (`psign.b`, `permps`), which trap at runtime in dev builds.
+audio_engine.codegen-backend = "llvm"
+# crc32fast's PCLMULQDQ path uses `llvm.x86.pclmulqdq.256` which Cranelift
+# doesn't implement, crashing dev builds via gui load_icon -> png -> crc32fast.
+crc32fast.codegen-backend = "llvm"
+# audio_engine (llvm) links tracing-core/rayon-core, which default to Cranelift,
+# causing LNK4217 (locally defined symbol imported) via lld-link on Windows.
+tracing-core.codegen-backend = "llvm"
+rayon-core.codegen-backend = "llvm"
+# Keep the wrappers on the same backend as their core crates to avoid
+# reintroducing mixed-backend edges (tracing -> tracing-core, rayon -> rayon-core).
+tracing.codegen-backend = "llvm"
+rayon.codegen-backend = "llvm"
+# rayon-core (llvm) links crossbeam-epoch/deque/utils, which default to Cranelift,
+# causing LNK4217 (HANDLE, UNPROTECTED) via lld-link on Windows.
+crossbeam-epoch.codegen-backend = "llvm"
+crossbeam-deque.codegen-backend = "llvm"
+crossbeam-utils.codegen-backend = "llvm"
+# audio_engine (llvm) links pollster, which defaults to Cranelift,
+# causing LNK4217 (LOCAL_WAKER) via lld-link on Windows.
+pollster.codegen-backend = "llvm"
+
+[profile.dev]
+codegen-backend = "cranelift"
+# panic = "immediate-abort"
+panic = "abort"
+
+[profile.release]
+# panic = "immediate-abort"
+panic = "abort"
 
 [target.'cfg(all())']
 rustflags = [
@@ -43,14 +69,21 @@ rustflags = [
     "-Zcache-proc-macros",
     "-Zshare-generics=y",
     "-Zthreads=0",
-    "-Znext-solver=globally",
     # "-Zlocation-detail=none",
+    # "-Zfmt-debug=none",
 ]
 
 [target.'cfg(target_arch = "x86_64")']
 rustflags = ["-Ctarget-cpu=x86-64-v3"]
 
-[target.'cfg(windows)']
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = [
+    "--cfg=windows_slim_errors",
+    "-Clink-args=/DYNAMICBASE",
+    "-Clink-args=/CETCOMPAT",
+]
+
+[target.'cfg(all(target_os = "windows", target_env = "gnu"))']
 rustflags = ["--cfg=windows_slim_errors", "-Clink-arg=-fuse-ld=lld"]
 
 [target.'cfg(target_os = "linux")']

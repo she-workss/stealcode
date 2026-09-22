@@ -9,13 +9,8 @@
 //! No observable set iteration beyond the engine-canonical active_characters
 //! (docs/ordering-inventory.md).
 
-use clap::Args;
-
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_int, parse_symbol,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{Animation, ExistingColorHandling, Scene, VisualParams},
         character::CharId,
@@ -49,65 +44,80 @@ const CB_RECLAIM_RAIN: u32 = 5;
 /// spark_pool.reclaim_on_event closure.
 const CB_RECLAIM_SPARK: u32 = 6;
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ThunderstormConfig {
     /// Color for the lightning strike.
-    #[arg(long = "lightning-color", default_value = "68A3E8", value_parser = parse_color)]
     pub lightning_color: Color,
 
     /// Color for the text when glowing after a lightning strike.
-    #[arg(long = "glowing-text-color", default_value = "EF5411", value_parser = parse_color)]
     pub glowing_text_color: Color,
 
     /// Number of frames to display each color in the post-lightning text glow
     /// cooling gradient. Increase to slow down the cooling animation.
-    #[arg(long = "text-glow-time", default_value_t = 6, value_parser = parse_positive_int)]
     pub text_glow_time: i64,
 
     /// Symbols to use for the raindrops.
-    #[arg(long = "raindrop-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["\\", ".", ","])]
     pub raindrop_symbols: Vec<String>,
 
     /// Symbols to use for the lightning impact sparks.
-    #[arg(long = "spark-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["*", ".", "'"])]
     pub spark_symbols: Vec<String>,
 
     /// Color for the spark glow after a lightning strike.
-    #[arg(long = "spark-glow-color", default_value = "ff4d00", value_parser = parse_color)]
     pub spark_glow_color: Color,
 
     /// Number of frames to display each color in the post-lightning spark
     /// cooling gradient. Increase to slow down the cooling animation.
-    #[arg(long = "spark-glow-time", default_value_t = 18, value_parser = parse_positive_int)]
     pub spark_glow_time: i64,
 
     /// Duration, in seconds, the storm will occur.
-    #[arg(long = "storm-time", default_value_t = 12, value_parser = parse_positive_int)]
     pub storm_time: i64,
 
     /// Space separated, unquoted, list of colors for the character gradient
     /// (applied across the canvas).
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "final-gradient-frames", default_value_t = 3, value_parser = parse_positive_int)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for ThunderstormConfig {
+    fn default() -> Self {
+        Self {
+            lightning_color: parse_color("68A3E8").expect("valid literal"),
+            glowing_text_color: parse_color("EF5411").expect("valid literal"),
+            text_glow_time: 6,
+            raindrop_symbols: vec![
+                "\\".to_string(),
+                ".".to_string(),
+                ",".to_string(),
+            ],
+            spark_symbols: vec![
+                "*".to_string(),
+                ".".to_string(),
+                "'".to_string(),
+            ],
+            spark_glow_color: parse_color("ff4d00").expect("valid literal"),
+            spark_glow_time: 18,
+            storm_time: 12,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 3,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 /// self.phase string states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -117,6 +127,7 @@ enum Phase {
     Complete,
 }
 
+#[derive(Debug)]
 pub struct Thunderstorm {
     config: ThunderstormConfig,
     delay: i64,
@@ -347,10 +358,14 @@ impl Thunderstorm {
         // in build(), where ctx is available, in upstream __init__ order).
         let rain_pool =
             ParticlePool::new(config.raindrop_symbols.clone(), None, None)
-                .expect("raindrop symbols validated by clap");
+                .expect(
+                    "raindrop symbols validated in ThunderstormConfig::default",
+                );
         let spark_pool =
             ParticlePool::new(config.spark_symbols.clone(), Some(2000), None)
-                .expect("spark symbols validated by clap");
+                .expect(
+                    "spark symbols validated in ThunderstormConfig::default",
+                );
         Thunderstorm {
             config,
             delay: 0,

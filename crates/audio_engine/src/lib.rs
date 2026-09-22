@@ -12,6 +12,7 @@ pub mod gpu;
 pub mod math;
 pub mod model;
 pub mod nemotron;
+mod pool;
 pub mod sgemm_kernel;
 pub mod simd_kernel;
 pub mod streaming;

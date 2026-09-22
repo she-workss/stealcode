@@ -110,7 +110,9 @@ pub trait EffectHooks {
 
 /// Hooks implementation for engine-internal use (no effect callbacks
 /// registered).
+#[derive(Debug)]
 pub struct NoopHooks;
+
 impl EffectHooks for NoopHooks {
     fn dispatch_callback(
         &mut self,
@@ -121,6 +123,7 @@ impl EffectHooks for NoopHooks {
     }
 }
 
+#[derive(Debug)]
 pub struct EngineCtx {
     pub terminal: Terminal,
     pub rng: Rng,

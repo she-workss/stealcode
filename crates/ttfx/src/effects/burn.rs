@@ -9,14 +9,10 @@
 //! deque are ordered upstream lists; BreadthFirst is not used here
 //! (docs/ordering-inventory.md unchanged).
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_ratio,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -42,41 +38,55 @@ const CB_EMIT_SMOKE: u32 = 0;
 /// Callback id: ParticlePool.reclaim_on_event's reclaim closure.
 const CB_RECLAIM_SMOKE: u32 = 1;
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BurnConfig {
     /// Color of the characters before they start to burn.
-    #[arg(long = "starting-color", default_value = "837373", value_parser = parse_color)]
     pub starting_color: Color,
 
     /// Colors transitioned through as the characters burn.
-    #[arg(long = "burn-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffffff", "fff75d", "fe650d", "8A003C", "510100"])]
     pub burn_colors: Vec<Color>,
 
     /// Chance a given character will produce smoke while burning. Use 0 for no
     /// smoke.
-    #[arg(long = "smoke-chance", default_value_t = 0.5, value_parser = parse_non_negative_ratio)]
     pub smoke_chance: f64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["00c3ff", "ffff1c"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for BurnConfig {
+    fn default() -> Self {
+        Self {
+            starting_color: parse_color("837373").expect("valid literal"),
+            burn_colors: vec![
+                parse_color("ffffff").expect("valid color"),
+                parse_color("fff75d").expect("valid color"),
+                parse_color("fe650d").expect("valid color"),
+                parse_color("8A003C").expect("valid color"),
+                parse_color("510100").expect("valid color"),
+            ],
+            smoke_chance: 0.5,
+            final_gradient_stops: vec![
+                parse_color("00c3ff").expect("valid color"),
+                parse_color("ffff1c").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 const BURN_CHAR_ORDER: [&str; 9] =
     ["'", ".", "▖", "▙", "█", "▜", "▀", "▝", "."];
 const SMOKE_SYMBOLS: [&str; 6] = [".", ",", "'", "`", "#", "*"];
 
+#[derive(Debug)]
 pub struct Burn {
     config: BurnConfig,
     character_final_color_map: FxHashMap<CharId, Color>,

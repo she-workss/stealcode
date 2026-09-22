@@ -15,14 +15,14 @@ voice = ["dep:voice"]
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
-gpui = { git = "https://github.com/zed-industries/zed", default-features = false, features = [
+gpui-fps = { version = "0.6", default-features = false }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "9504b4658d57c59024a664f22b5ab55e070a24b4", default-features = false, features = [
+    "component",
+] }
+gpui-pre = { version = "0.3", default-features = false, features = [
     "profiler",
 ] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", default-features = false }
-# gpui-fps = { git = "https://github.com/longbridge/gpui-component", default-features = false }
-gpui_platform = { git = "https://github.com/zed-industries/zed", default-features = false, features = [
-    "font-kit",
-] }
+gpui_thinking_orbs.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 notify-rust = { version = "4", default-features = false }
 release_channel.workspace = true
@@ -30,9 +30,9 @@ semver.workspace = true
 settings.workspace = true
 sound.workspace = true
 tracing.workspace = true
-tray-icon = { version = "0.24", default-features = false, features = [
-    "gtk",
-    "libxdo",
+tray-icon = { version = "0.25", default-features = false, features = [
+    "libappindicator",
+    "muda-libxdo",
 ] }
 voice = { workspace = true, optional = true }
 

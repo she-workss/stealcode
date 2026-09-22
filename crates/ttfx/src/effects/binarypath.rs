@@ -4,14 +4,10 @@
 //! No observable set iteration beyond the engine-canonical active_characters
 //! (docs/ordering-inventory.md).
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_ratio, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{Animation, ExistingColorHandling, VisualParams},
         character::CharId,
@@ -27,40 +23,53 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BinaryPathConfig {
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["00d500", "007500"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "radial", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 
     /// Space separated, unquoted, list of colors for the binary characters.
     /// Character color is randomly assigned from this list.
-    #[arg(long = "binary-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["044E29", "157e38", "45bf55", "95ed87"])]
     pub binary_colors: Vec<Color>,
 
     /// Speed of the binary groups as they travel around the terminal.
-    #[arg(long = "movement-speed", default_value_t = 1.0, value_parser = parse_positive_float)]
     pub movement_speed: f64,
 
     /// Maximum number of binary groups that are active at any given time as a
     /// percentage of the total number of binary groups. Lower this to improve
     /// performance.
-    #[arg(long = "active-binary-groups", default_value_t = 0.08, value_parser = parse_non_negative_ratio)]
     pub active_binary_groups: f64,
 }
 
+impl Default for BinaryPathConfig {
+    fn default() -> Self {
+        Self {
+            final_gradient_stops: vec![
+                parse_color("00d500").expect("valid color"),
+                parse_color("007500").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("radial")
+                .expect("valid literal"),
+            binary_colors: vec![
+                parse_color("044E29").expect("valid color"),
+                parse_color("157e38").expect("valid color"),
+                parse_color("45bf55").expect("valid color"),
+                parse_color("95ed87").expect("valid color"),
+            ],
+            movement_speed: 1.0,
+            active_binary_groups: 0.08,
+        }
+    }
+}
 /// BinaryPathIterator._BinaryRepresentation.
+#[derive(Debug)]
 struct BinaryRepresentation {
     character: CharId,
     binary_characters: Vec<CharId>,
@@ -92,6 +101,7 @@ enum Orientation {
     Row,
 }
 
+#[derive(Debug)]
 pub struct BinaryPath {
     config: BinaryPathConfig,
     pending_binary_representations: Vec<BinaryRepresentation>,

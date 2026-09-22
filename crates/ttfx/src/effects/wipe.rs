@@ -1,12 +1,11 @@
 //! wipe, ported from effects/effect_wipe.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
         parse_character_group, parse_color, parse_easing,
-        parse_gradient_direction, parse_gradient_steps, parse_non_negative_int,
+        parse_gradient_direction,
     },
     engine::{
         animation::{ExistingColorHandling, VisualParams},
@@ -22,40 +21,53 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct WipeConfig {
     /// Direction the text will wipe.
-    #[arg(long = "wipe-direction", default_value = "diagonal_top_left_to_bottom_right",
-          value_parser = parse_character_group)]
     pub wipe_direction: CharacterGroup,
 
     /// Number of frames to wait before adding the next character group.
-    #[arg(long = "wipe-delay", default_value_t = 0, value_parser = parse_non_negative_int)]
     pub wipe_delay: i64,
 
     /// Easing function to use for the wipe effect.
-    #[arg(long = "wipe-ease", default_value = "in_out_circ", value_parser = parse_easing)]
     pub wipe_ease: Easing,
 
     /// Space separated, unquoted, list of colors for the wipe gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["833ab4", "fd1d1d", "fcb045"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step.
-    #[arg(long = "final-gradient-frames", default_value_t = 3)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for WipeConfig {
+    fn default() -> Self {
+        Self {
+            wipe_direction: parse_character_group(
+                "diagonal_top_left_to_bottom_right",
+            )
+            .expect("valid literal"),
+            wipe_delay: 0,
+            wipe_ease: parse_easing("in_out_circ").expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("833ab4").expect("valid color"),
+                parse_color("fd1d1d").expect("valid color"),
+                parse_color("fcb045").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 3,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Wipe {
     config: WipeConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

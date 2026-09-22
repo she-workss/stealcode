@@ -1,0 +1,5 @@
+# CI executes these POSIX sh files on Linux; CRLF would break the gradlew
+# shebang and the justfile parser.
+gradlew text eol=lf
+justfile text eol=lf
+*.sh text eol=lf

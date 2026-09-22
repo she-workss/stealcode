@@ -1,13 +1,9 @@
 //! colorshift, ported from effects/effect_colorshift.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_int,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -23,63 +19,85 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ColorShiftConfig {
     /// Space separated, unquoted, list of colors for the gradient.
-    #[arg(long = "gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["e81416", "ffa500", "faeb36", "79c314", "487de7", "4b369d", "70369d"])]
     pub gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use. More steps will create a smoother
     /// gradient animation.
-    #[arg(long = "gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step. Increase to slow down
     /// the gradient animation.
-    #[arg(long = "gradient-frames", default_value_t = 2, value_parser = parse_positive_int)]
     pub gradient_frames: i64,
 
     /// Do not display the gradient as a wave.
-    #[arg(long = "no-travel")]
     pub no_travel: bool,
 
     /// Direction the gradient travels across the canvas.
-    #[arg(long = "travel-direction", default_value = "radial", value_parser = parse_gradient_direction)]
     pub travel_direction: GradientDirection,
 
     /// Reverse the gradient travel direction.
-    #[arg(long = "reverse-travel-direction")]
     pub reverse_travel_direction: bool,
 
     /// Do not loop the gradient.
-    #[arg(long = "no-loop")]
     pub no_loop: bool,
 
     /// Number of times to cycle the gradient.
-    #[arg(long = "cycles", default_value_t = 3, value_parser = parse_positive_int)]
     pub cycles: i64,
 
     /// Skip the final gradient.
-    #[arg(long = "skip-final-gradient")]
     pub skip_final_gradient: bool,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["e81416", "ffa500", "faeb36", "79c314", "487de7", "4b369d", "70369d"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use for the final gradient.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for ColorShiftConfig {
+    fn default() -> Self {
+        Self {
+            gradient_stops: vec![
+                parse_color("e81416").expect("valid color"),
+                parse_color("ffa500").expect("valid color"),
+                parse_color("faeb36").expect("valid color"),
+                parse_color("79c314").expect("valid color"),
+                parse_color("487de7").expect("valid color"),
+                parse_color("4b369d").expect("valid color"),
+                parse_color("70369d").expect("valid color"),
+            ],
+            gradient_steps: vec![12],
+            gradient_frames: 2,
+            no_travel: false,
+            travel_direction: parse_gradient_direction("radial")
+                .expect("valid literal"),
+            reverse_travel_direction: false,
+            no_loop: false,
+            cycles: 3,
+            skip_final_gradient: false,
+            final_gradient_stops: vec![
+                parse_color("e81416").expect("valid color"),
+                parse_color("ffa500").expect("valid color"),
+                parse_color("faeb36").expect("valid color"),
+                parse_color("79c314").expect("valid color"),
+                parse_color("487de7").expect("valid color"),
+                parse_color("4b369d").expect("valid color"),
+                parse_color("70369d").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ColorShift {
     config: ColorShiftConfig,
     character_final_color_map: FxHashMap<CharId, Color>,

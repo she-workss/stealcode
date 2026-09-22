@@ -1,1 +1,32 @@
+# Claude Code
+.claude/settings.local.json
+
+# Default build folder
 target/
+
+# Android Gradle
+crates/mobile/assets/android/**/.gradle/
+crates/mobile/assets/android/**/build/
+*.apk
+*.so
+
+# Android release signing (never commit the keystore or its passwords)
+keystore.properties
+*.jks
+*.keystore
+*.p12
+
+# iOS / Xcode
+crates/mobile/assets/ios/*.xcodeproj/
+**/xcuserdata/
+
+# Zvec index
+.zvec-grep/
+
+# Logs
+*.log
+
+# Profiler artifacts
+tracy/
+*.tracy
+*.json.gz

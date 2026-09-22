@@ -1306,7 +1306,6 @@ pub fn compare_paths(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::rel_path::rel_path;

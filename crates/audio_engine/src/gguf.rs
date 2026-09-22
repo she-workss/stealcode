@@ -290,14 +290,48 @@ impl Gguf {
         self.tensors.iter().find(|t| t.name == name)
     }
 
-    /// Raw bytes of a tensor (quantized layout as stored).
-    pub fn tensor_data(&self, meta: &TensorMeta) -> Result<&[u8]> {
-        let base = self.data_start + meta.offset as usize;
+    /// Absolute byte range of a tensor's data inside the mapping. Kept
+    /// as a range (not a slice) so callers can hold it past the borrow,
+    /// e.g. `Q8Mat`'s mapped storage. A truncated or corrupt GGUF whose
+    /// computed range overflows or reaches past the mapping is rejected
+    /// here, before any caller indexes the map.
+    pub fn tensor_range(
+        &self,
+        meta: &TensorMeta,
+    ) -> Result<std::ops::Range<usize>> {
+        let base = self
+            .data_start
+            .checked_add(meta.offset as usize)
+            .context("gguf: tensor offset overflow")?;
         let end = base
             .checked_add(self.tensor_bytes(meta)?)
             .context("gguf: tensor offset overflow")?;
+        if end > self.bytes.len() {
+            bail!(
+                "gguf: tensor {} data out of range ({base}..{end}, {} bytes mapped)",
+                meta.name,
+                self.bytes.len()
+            );
+        }
+        Ok(base..end)
+    }
+
+    /// Length in bytes of the memory mapping.
+    pub(crate) fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Slice of the mapping for a range previously produced by
+    /// `tensor_range`.
+    pub(crate) fn mapped_slice(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.bytes[range]
+    }
+
+    /// Raw bytes of a tensor (quantized layout as stored).
+    pub fn tensor_data(&self, meta: &TensorMeta) -> Result<&[u8]> {
+        let range = self.tensor_range(meta)?;
         self.bytes
-            .get(base..end)
+            .get(range)
             .context("gguf: tensor data out of range")
     }
 

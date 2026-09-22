@@ -75,7 +75,6 @@ pub(crate) fn show_error(mut content: String) {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::parse_args;
 

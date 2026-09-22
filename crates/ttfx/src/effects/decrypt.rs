@@ -1,13 +1,9 @@
 //! decrypt, ported from effects/effect_decrypt.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_int,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -20,39 +16,50 @@ use crate::{
     utils::graphics::{Color, ColorPair, Gradient, GradientDirection},
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct DecryptConfig {
     /// Number of characters typed per keystroke.
-    #[arg(long = "typing-speed", default_value_t = 2, value_parser = parse_positive_int)]
     pub typing_speed: i64,
 
     /// Space separated, unquoted, list of colors for the ciphertext. Color
     /// will be randomly selected for each character.
-    #[arg(long = "ciphertext-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["008000", "00cb00", "00ff00"])]
     pub ciphertext_colors: Vec<Color>,
 
     /// Space separated, unquoted, list of colors for the character gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["eda000"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for DecryptConfig {
+    fn default() -> Self {
+        Self {
+            typing_speed: 2,
+            ciphertext_colors: vec![
+                parse_color("008000").expect("valid color"),
+                parse_color("00cb00").expect("valid color"),
+                parse_color("00ff00").expect("valid color"),
+            ],
+            final_gradient_stops: vec![
+                parse_color("eda000").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Typing,
     Decrypting,
 }
 
+#[derive(Debug)]
 pub struct Decrypt {
     config: DecryptConfig,
     typing_pending_chars: Vec<CharId>,

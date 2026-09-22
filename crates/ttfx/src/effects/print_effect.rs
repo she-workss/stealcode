@@ -1,13 +1,9 @@
 //! print, ported from effects/effect_print.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float, parse_positive_int,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -24,37 +20,48 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PrintConfig {
     /// Speed of the print head when performing a carriage return.
-    #[arg(long = "print-head-return-speed", default_value_t = 1.5, value_parser = parse_positive_float)]
     pub print_head_return_speed: f64,
 
     /// Speed of the print head when printing characters.
-    #[arg(long = "print-speed", default_value_t = 2, value_parser = parse_positive_int)]
     pub print_speed: i64,
 
     /// Easing function to use for print head movement.
-    #[arg(long = "print-head-easing", default_value = "in_out_quad", value_parser = parse_easing)]
     pub print_head_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["02b8bd", "c1f0e3", "00ffa0"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for PrintConfig {
+    fn default() -> Self {
+        Self {
+            print_head_return_speed: 1.5,
+            print_speed: 2,
+            print_head_easing: parse_easing("in_out_quad")
+                .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("02b8bd").expect("valid color"),
+                parse_color("c1f0e3").expect("valid color"),
+                parse_color("00ffa0").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+        }
+    }
+}
 /// PrintIterator.Row (plain struct over CharIds; scene/coord setup happens in
 /// Print::make_row so it can borrow the engine).
+#[derive(Debug)]
 struct Row {
     untyped_chars: Vec<CharId>,
     typed_chars: Vec<CharId>,
@@ -83,6 +90,7 @@ impl Row {
 
 const SET_INVISIBLE_CALLBACK: u32 = 0;
 
+#[derive(Debug)]
 pub struct Print {
     config: PrintConfig,
     pending_rows: Vec<Row>,

@@ -256,7 +256,7 @@ impl App {
     }
 }
 
-fn ui(app: &mut App, frame: &mut Frame) {
+fn ui(app: &mut App, frame: &mut Frame<'_>) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -266,7 +266,7 @@ fn ui(app: &mut App, frame: &mut Frame) {
         .constraints([Constraint::Percentage(28), Constraint::Percentage(72)])
         .split(vertical[0]);
 
-    let items: Vec<ListItem> = app
+    let items: Vec<ListItem<'_>> = app
         .names
         .iter()
         .map(|name| ListItem::new(name.as_str()))

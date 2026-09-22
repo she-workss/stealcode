@@ -68,6 +68,7 @@ fn default_starting_char(
 }
 
 /// algo/primssimple.py PrimsSimple.
+#[derive(Debug)]
 pub struct PrimsSimple {
     pub limit_to_text_boundary: bool,
     current_char: CharId,
@@ -142,6 +143,7 @@ pub struct WeightedLink {
 }
 
 /// algo/primsweighted.py PrimsWeighted.
+#[derive(Debug)]
 pub struct PrimsWeighted {
     pub limit_to_text_boundary: bool,
     char_weights: rustc_hash::FxHashMap<CharId, i64>,
@@ -245,6 +247,7 @@ impl PrimsWeighted {
 }
 
 /// algo/recursivebacktracker.py RecursiveBacktracker.
+#[derive(Debug)]
 pub struct RecursiveBacktracker {
     pub limit_to_text_boundary: bool,
     current_char: CharId,
@@ -301,6 +304,7 @@ impl RecursiveBacktracker {
 /// algo/breadthfirst.py BreadthFirst: traverses the linked graph layer by
 /// layer. No randomness of its own; `links` iteration is ascending id (the
 /// canonical order; shim-matched on the Python side).
+#[derive(Debug)]
 pub struct BreadthFirst {
     pub starting_char: CharId,
     frontier: Vec<CharId>,

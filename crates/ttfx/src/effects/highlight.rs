@@ -1,11 +1,8 @@
 //! highlight, ported from effects/effect_highlight.py.
 
-use clap::Args;
-
 use crate::{
     effects::common::{
         parse_character_group, parse_color, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float, parse_positive_int,
     },
     engine::{
         animation::{Animation, ExistingColorHandling, VisualParams},
@@ -21,36 +18,49 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct HighlightConfig {
     /// Brightness of the highlight color.
-    #[arg(long = "highlight-brightness", default_value_t = 1.75, value_parser = parse_positive_float)]
     pub highlight_brightness: f64,
 
     /// Direction the highlight will travel.
-    #[arg(long = "highlight-direction", default_value = "diagonal_bottom_left_to_top_right",
-          value_parser = parse_character_group)]
     pub highlight_direction: CharacterGroup,
 
     /// Width of the highlight. n >= 1
-    #[arg(long = "highlight-width", default_value_t = 8, value_parser = parse_positive_int)]
     pub highlight_width: i64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for HighlightConfig {
+    fn default() -> Self {
+        Self {
+            highlight_brightness: 1.75,
+            highlight_direction: parse_character_group(
+                "diagonal_bottom_left_to_top_right",
+            )
+            .expect("valid literal"),
+            highlight_width: 8,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Highlight {
     config: HighlightConfig,
     easer: Option<SequenceEaser<Vec<CharId>>>,

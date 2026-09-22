@@ -6,14 +6,10 @@
 //! (docs/ordering-inventory.md), matched by a shim patch on
 //! MiddleOutIterator.__next__.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -48,54 +44,65 @@ fn parse_expand_direction(s: &str) -> Result<ExpandDirection, String> {
     })
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct MiddleoutConfig {
     /// Color for the initial text in the center of the canvas.
-    #[arg(long = "starting-color", default_value = "ffffff", value_parser = parse_color)]
     pub starting_color: Color,
 
     /// Direction the text will expand.
-    #[arg(long = "expand-direction", default_value = "vertical", value_parser = parse_expand_direction)]
     pub expand_direction: ExpandDirection,
 
     /// Speed of the characters during the initial expansion of the center
     /// vertical/horiztonal line.
-    #[arg(long = "center-movement-speed", default_value_t = 0.6, value_parser = parse_positive_float)]
     pub center_movement_speed: f64,
 
     /// Speed of the characters during the final full expansion.
-    #[arg(long = "full-movement-speed", default_value_t = 0.6, value_parser = parse_positive_float)]
     pub full_movement_speed: f64,
 
     /// Easing function to use for initial expansion.
-    #[arg(long = "center-easing", default_value = "in_out_sine", value_parser = parse_easing)]
     pub center_easing: Easing,
 
     /// Easing function to use for full expansion.
-    #[arg(long = "full-easing", default_value = "in_out_sine", value_parser = parse_easing)]
     pub full_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for MiddleoutConfig {
+    fn default() -> Self {
+        Self {
+            starting_color: parse_color("ffffff").expect("valid literal"),
+            expand_direction: parse_expand_direction("vertical")
+                .expect("valid literal"),
+            center_movement_speed: 0.6,
+            full_movement_speed: 0.6,
+            center_easing: parse_easing("in_out_sine").expect("valid literal"),
+            full_easing: parse_easing("in_out_sine").expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Center,
     Full,
 }
 
+#[derive(Debug)]
 pub struct Middleout {
     config: MiddleoutConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,

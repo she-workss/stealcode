@@ -2,14 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_float, parse_positive_float,
-        parse_positive_float_range, parse_positive_int,
+        parse_color, parse_gradient_direction, parse_positive_float_range,
     },
     engine::{
         animation::{Animation, ExistingColorHandling},
@@ -27,46 +24,58 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct SpotlightsConfig {
     /// Width of the beam of light as min(width, height) // n of the input
     /// text. Values less than 1 are raised to 1.
-    #[arg(long = "beam-width-ratio", default_value_t = 2.0, value_parser = parse_positive_float)]
     pub beam_width_ratio: f64,
 
     /// Distance from the edge of the beam where the brightness begins to fall
     /// off, as a percentage of total beam width.
-    #[arg(long = "beam-falloff", default_value_t = 0.3, value_parser = parse_non_negative_float)]
     pub beam_falloff: f64,
 
     /// Duration of the search phase, in frames, before the spotlights converge
     /// in the center.
-    #[arg(long = "search-duration", default_value_t = 550, value_parser = parse_positive_int)]
     pub search_duration: i64,
 
     /// Range of speeds for the spotlights during the search phase.
-    #[arg(long = "search-speed-range", default_value = "0.35-0.75", value_parser = parse_positive_float_range)]
     pub search_speed_range: (f64, f64),
 
     /// Number of spotlights to use.
-    #[arg(long = "spotlight-count", default_value_t = 3, value_parser = parse_positive_int)]
     pub spotlight_count: i64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ab48ff", "e7b2b2", "fffebd"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for SpotlightsConfig {
+    fn default() -> Self {
+        Self {
+            beam_width_ratio: 2.0,
+            beam_falloff: 0.3,
+            search_duration: 550,
+            search_speed_range: parse_positive_float_range("0.35-0.75")
+                .expect("valid literal"),
+            spotlight_count: 3,
+            final_gradient_stops: vec![
+                parse_color("ab48ff").expect("valid color"),
+                parse_color("e7b2b2").expect("valid color"),
+                parse_color("fffebd").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Spotlights {
     config: SpotlightsConfig,
     illuminated_chars: BTreeSet<CharId>,

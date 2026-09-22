@@ -2,7 +2,7 @@
 //! n small 1..128). The quantized int8 path (`q8_gemm`) is the
 //! encoder's hot loop and runs entirely on the portable `std::simd`
 //! kernels in `simd_kernel` (one implementation, vectorized by LLVM
-//! for whatever the target supports — AVX2/AVX-512 on x86-64, NEON/
+//! for whatever the target supports - AVX2/AVX-512 on x86-64, NEON/
 //! SVE on ARM, ...). The f32 path (`gemm_into`) uses the same
 //! portable kernels.
 
@@ -101,6 +101,7 @@ pub fn q8_gemm(
     k: usize,
     n: usize,
     w: &[u8],
+    wscales: Option<&[u16]>,
     padded_row: usize,
     block_bytes: usize,
     qoff: usize,
@@ -118,6 +119,7 @@ pub fn q8_gemm(
         k,
         n,
         w,
+        wscales,
         padded_row,
         block_bytes,
         qoff,
@@ -178,25 +180,28 @@ pub fn q8_gemm_scalar(
             }
         }
     } else {
-        y.par_chunks_mut(n).enumerate().for_each(|(i, yrow)| {
-            for nj in 0..n {
-                let mut acc = 0.0f32;
-                for b in 0..nblocks {
-                    let wbase = i * padded_row + b * block_bytes;
-                    let dw = read_q8_scale(w, wbase, block_bytes);
-                    let s = dw * dx[nj * nblocks + b];
-                    let k0 = b * 32;
-                    let len = 32usize.min(k - k0);
-                    let wb = i * padded_row + b * block_bytes + qoff;
-                    let xb = nj * k + k0;
-                    let mut dot = 0.0f32;
-                    for j in 0..len {
-                        dot += (w[wb + j] as i8 as f32) * (xq[xb + j] as f32);
+        crate::pool::install(|| {
+            y.par_chunks_mut(n).enumerate().for_each(|(i, yrow)| {
+                for nj in 0..n {
+                    let mut acc = 0.0f32;
+                    for b in 0..nblocks {
+                        let wbase = i * padded_row + b * block_bytes;
+                        let dw = read_q8_scale(w, wbase, block_bytes);
+                        let s = dw * dx[nj * nblocks + b];
+                        let k0 = b * 32;
+                        let len = 32usize.min(k - k0);
+                        let wb = i * padded_row + b * block_bytes + qoff;
+                        let xb = nj * k + k0;
+                        let mut dot = 0.0f32;
+                        for j in 0..len {
+                            dot +=
+                                (w[wb + j] as i8 as f32) * (xq[xb + j] as f32);
+                        }
+                        acc += s * dot;
                     }
-                    acc += s * dot;
+                    yrow[nj] = acc;
                 }
-                yrow[nj] = acc;
-            }
+            });
         });
     }
 }
@@ -243,7 +248,7 @@ mod tests {
         }
         let mut y = vec![0.0f32; m * n];
         let mut y_ref = vec![0.0f32; m * n];
-        q8_gemm(m, k, n, &w, padded_row, 34, 2, &x, &mut y);
+        q8_gemm(m, k, n, &w, None, padded_row, 34, 2, &x, &mut y);
         q8_gemm_scalar(m, k, n, &w, padded_row, 34, 2, &x, &mut y_ref);
         for i in 0..m * n {
             let d = (y[i] - y_ref[i]).abs();

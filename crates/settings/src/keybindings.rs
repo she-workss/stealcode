@@ -354,7 +354,6 @@ pub fn default_keybindings() -> Keybindings {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

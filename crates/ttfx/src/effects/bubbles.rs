@@ -1,13 +1,9 @@
 //! bubbles, ported from effects/effect_bubbles.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float, parse_positive_int,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -45,54 +41,68 @@ fn parse_pop_condition(s: &str) -> Result<PopCondition, String> {
     })
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct BubblesConfig {
     /// If set, the bubbles will be colored with a rotating rainbow gradient.
-    #[arg(long = "rainbow", default_value_t = false)]
     pub rainbow: bool,
 
     /// Space separated, unquoted, list of colors for the bubbles. Ignored if
     /// --no-rainbow is left as default False.
-    #[arg(long = "bubble-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["d33aff", "7395c4", "43c2a7", "02ff7f"])]
     pub bubble_colors: Vec<Color>,
 
     /// Color for the spray emitted when a bubble pops.
-    #[arg(long = "pop-color", default_value = "ffffff", value_parser = parse_color)]
     pub pop_color: Color,
 
     /// Speed of the floating bubbles.
-    #[arg(long = "bubble-speed", default_value_t = 0.5, value_parser = parse_positive_float)]
     pub bubble_speed: f64,
 
     /// Number of frames between bubbles.
-    #[arg(long = "bubble-delay", default_value_t = 20, value_parser = parse_positive_int)]
     pub bubble_delay: i64,
 
     /// Condition for a bubble to pop.
-    #[arg(long = "pop-condition", default_value = "row", value_parser = parse_pop_condition)]
     pub pop_condition: PopCondition,
 
     /// Easing function to use for character movement after a bubble pops.
-    #[arg(long = "movement-easing", default_value = "in_out_sine", value_parser = parse_easing)]
     pub movement_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["d33aff", "02ff7f"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for BubblesConfig {
+    fn default() -> Self {
+        Self {
+            rainbow: false,
+            bubble_colors: vec![
+                parse_color("d33aff").expect("valid color"),
+                parse_color("7395c4").expect("valid color"),
+                parse_color("43c2a7").expect("valid color"),
+                parse_color("02ff7f").expect("valid color"),
+            ],
+            pop_color: parse_color("ffffff").expect("valid literal"),
+            bubble_speed: 0.5,
+            bubble_delay: 20,
+            pop_condition: parse_pop_condition("row").expect("valid literal"),
+            movement_easing: parse_easing("in_out_sine")
+                .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("d33aff").expect("valid color"),
+                parse_color("02ff7f").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+        }
+    }
+}
 /// BubblesIterator.Bubble state (methods live on Bubbles for hooks access).
+#[derive(Debug)]
 struct Bubble {
     characters: Vec<CharId>,
     radius: i64,
@@ -101,6 +111,7 @@ struct Bubble {
     landed: bool,
 }
 
+#[derive(Debug)]
 pub struct Bubbles {
     config: BubblesConfig,
     bubbles: Vec<Bubble>,

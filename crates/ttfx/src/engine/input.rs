@@ -44,6 +44,7 @@ struct ActiveState {
     standard_fg_parameter: Option<i64>,
 }
 
+#[derive(Debug)]
 pub struct Preprocessor<'a> {
     pub arena: &'a mut Vec<EffectCharacter>,
     pub next_character_id: &'a mut u32,

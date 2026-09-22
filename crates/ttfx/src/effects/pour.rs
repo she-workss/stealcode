@@ -1,13 +1,11 @@
 //! pour, ported from effects/effect_pour.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
         parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_non_negative_int,
-        parse_positive_float_range, parse_positive_int,
+        parse_positive_float_range,
     },
     engine::{
         animation::{ExistingColorHandling, VisualParams},
@@ -47,52 +45,64 @@ fn parse_pour_direction(s: &str) -> Result<PourDirection, String> {
     })
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct PourConfig {
     /// Direction the text will pour.
-    #[arg(long = "pour-direction", default_value = "down", value_parser = parse_pour_direction)]
     pub pour_direction: PourDirection,
 
     /// Number of characters poured in per tick. Increase to speed up the
     /// effect.
-    #[arg(long = "pour-speed", default_value_t = 2, value_parser = parse_positive_int)]
     pub pour_speed: i64,
 
     /// Movement speed range of the characters.
-    #[arg(long = "movement-speed-range", default_value = "0.4-0.6", value_parser = parse_positive_float_range)]
     pub movement_speed_range: (f64, f64),
 
     /// Number of frames to wait between each character in the pour effect.
-    #[arg(long = "gap", default_value_t = 1, value_parser = parse_non_negative_int)]
     pub gap: i64,
 
     /// Color of the characters before the gradient starts.
-    #[arg(long = "starting-color", default_value = "ffffff", value_parser = parse_color)]
     pub starting_color: Color,
 
     /// Space separated, unquoted, list of colors for the character gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step.
-    #[arg(long = "final-gradient-frames", default_value_t = 6)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 
     /// Easing function to use for character movement.
-    #[arg(long = "movement-easing", default_value = "in_quad", value_parser = parse_easing)]
     pub movement_easing: Easing,
 }
 
+impl Default for PourConfig {
+    fn default() -> Self {
+        Self {
+            pour_direction: parse_pour_direction("down")
+                .expect("valid literal"),
+            pour_speed: 2,
+            movement_speed_range: parse_positive_float_range("0.4-0.6")
+                .expect("valid literal"),
+            gap: 1,
+            starting_color: parse_color("ffffff").expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 6,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+            movement_easing: parse_easing("in_quad").expect("valid literal"),
+        }
+    }
+}
+#[derive(Debug)]
 pub struct Pour {
     config: PourConfig,
     pending_groups: Vec<Vec<CharId>>,

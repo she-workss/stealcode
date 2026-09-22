@@ -130,7 +130,6 @@ pub(crate) fn perform_update(app_dir: &Path, launch: bool) -> Result<()> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

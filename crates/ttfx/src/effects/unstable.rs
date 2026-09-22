@@ -1,13 +1,9 @@
 //! unstable, ported from effects/effect_unstable.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, VisualParams},
         character::CharId,
@@ -23,43 +19,52 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct UnstableConfig {
     /// Color transitioned to as the characters become unstable.
-    #[arg(long = "unstable-color", default_value = "ff9200", value_parser = parse_color)]
     pub unstable_color: Color,
 
     /// Easing function to use for character movement during the explosion.
-    #[arg(long = "explosion-ease", default_value = "out_expo", value_parser = parse_easing)]
     pub explosion_ease: Easing,
 
     /// Speed of characters during explosion.
-    #[arg(long = "explosion-speed", default_value_t = 1.0, value_parser = parse_positive_float)]
     pub explosion_speed: f64,
 
     /// Easing function to use for character reassembly.
-    #[arg(long = "reassembly-ease", default_value = "out_expo", value_parser = parse_easing)]
     pub reassembly_ease: Easing,
 
     /// Speed of characters during reassembly.
-    #[arg(long = "reassembly-speed", default_value_t = 1.0, value_parser = parse_positive_float)]
     pub reassembly_speed: f64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for UnstableConfig {
+    fn default() -> Self {
+        Self {
+            unstable_color: parse_color("ff9200").expect("valid literal"),
+            explosion_ease: parse_easing("out_expo").expect("valid literal"),
+            explosion_speed: 1.0,
+            reassembly_ease: parse_easing("out_expo").expect("valid literal"),
+            reassembly_speed: 1.0,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Rumble,
@@ -69,6 +74,7 @@ enum Phase {
 
 const DYNAMIC_NEUTRAL_GRAY: &str = "808080";
 
+#[derive(Debug)]
 pub struct Unstable {
     config: UnstableConfig,
     jumbled_coords: FxHashMap<CharId, Coord>,

@@ -126,10 +126,13 @@ pub enum SoundName {
     Page,
     Loading,
     Ready,
+    Pulse,
+    Scan,
+    Arrival,
 }
 
 impl SoundName {
-    pub const ALL: [SoundName; 14] = [
+    pub const ALL: [SoundName; 17] = [
         SoundName::Chime,
         SoundName::Sparkle,
         SoundName::Droplet,
@@ -144,6 +147,9 @@ impl SoundName {
         SoundName::Page,
         SoundName::Loading,
         SoundName::Ready,
+        SoundName::Pulse,
+        SoundName::Scan,
+        SoundName::Arrival,
     ];
 
     pub fn label(self) -> &'static str {
@@ -162,6 +168,9 @@ impl SoundName {
             SoundName::Page => "page",
             SoundName::Loading => "loading",
             SoundName::Ready => "ready",
+            SoundName::Pulse => "pulse",
+            SoundName::Scan => "scan",
+            SoundName::Arrival => "arrival",
         }
     }
 
@@ -281,16 +290,28 @@ impl SoundName {
                 }),
             },
             SoundName::Whisper => SoundRecipe {
-                master_gain: 0.5,
-                layers: vec![Noise(NoiseLayer {
-                    filter_type: FilterType::LowPass,
-                    filter_frequency: 1200.0,
-                    filter_q: 0.7,
-                    attack: 0.04,
-                    decay: 0.16,
-                    peak: 0.05,
-                    ..Default::default()
-                })],
+                master_gain: 0.48,
+                layers: vec![
+                    Noise(NoiseLayer {
+                        filter_type: FilterType::LowPass,
+                        filter_frequency: 1600.0,
+                        filter_q: 0.7,
+                        attack: 0.025,
+                        decay: 0.13,
+                        peak: 0.04,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 880.0,
+                        glide_to: Some(660.0),
+                        glide_time: Some(0.14),
+                        offset: 0.01,
+                        attack: 0.012,
+                        decay: 0.14,
+                        peak: 0.025,
+                        ..Default::default()
+                    }),
+                ],
                 shimmer: None,
             },
             SoundName::Tick => SoundRecipe {
@@ -506,39 +527,146 @@ impl SoundName {
                 }),
             },
             SoundName::Ready => SoundRecipe {
-                master_gain: 0.45,
+                master_gain: 0.48,
                 layers: vec![
                     Noise(NoiseLayer {
                         filter_type: FilterType::BandPass,
-                        filter_frequency: 3200.0,
-                        filter_q: 1.7,
+                        filter_frequency: 3600.0,
+                        filter_q: 1.8,
                         attack: 0.001,
-                        decay: 0.018,
-                        peak: 0.1,
+                        decay: 0.02,
+                        peak: 0.11,
                         ..Default::default()
                     }),
                     Tone(ToneLayer {
-                        frequency: 659.25,
-                        offset: 0.025,
-                        attack: 0.012,
-                        decay: 0.2,
-                        peak: 0.05,
+                        waveform: Waveform::Triangle,
+                        frequency: 330.0,
+                        glide_to: Some(660.0),
+                        glide_time: Some(0.12),
+                        offset: 0.012,
+                        attack: 0.004,
+                        decay: 0.16,
+                        peak: 0.055,
                         ..Default::default()
                     }),
                     Tone(ToneLayer {
-                        frequency: 987.77,
-                        offset: 0.025,
-                        attack: 0.012,
+                        frequency: 990.0,
+                        offset: 0.13,
+                        attack: 0.004,
                         decay: 0.22,
-                        peak: 0.035,
+                        peak: 0.06,
                         ..Default::default()
                     }),
                 ],
                 shimmer: Some(Shimmer {
-                    delay: 0.13,
-                    feedback: 0.2,
-                    wet: 0.13,
-                    lowpass: 3600.0,
+                    delay: 0.1,
+                    feedback: 0.16,
+                    wet: 0.1,
+                    lowpass: 4200.0,
+                }),
+            },
+            SoundName::Pulse => SoundRecipe {
+                master_gain: 0.42,
+                layers: vec![
+                    Noise(NoiseLayer {
+                        filter_type: FilterType::BandPass,
+                        filter_frequency: 2600.0,
+                        filter_q: 2.4,
+                        attack: 0.001,
+                        decay: 0.022,
+                        peak: 0.08,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        waveform: Waveform::Triangle,
+                        frequency: 620.0,
+                        glide_to: Some(1240.0),
+                        glide_time: Some(0.07),
+                        attack: 0.002,
+                        decay: 0.085,
+                        peak: 0.055,
+                        ..Default::default()
+                    }),
+                ],
+                shimmer: None,
+            },
+            SoundName::Scan => SoundRecipe {
+                master_gain: 0.4,
+                layers: vec![
+                    Tone(ToneLayer {
+                        frequency: 740.0,
+                        attack: 0.002,
+                        decay: 0.055,
+                        peak: 0.05,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 1110.0,
+                        offset: 0.045,
+                        attack: 0.002,
+                        decay: 0.055,
+                        peak: 0.045,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 1665.0,
+                        offset: 0.09,
+                        attack: 0.002,
+                        decay: 0.07,
+                        peak: 0.04,
+                        ..Default::default()
+                    }),
+                ],
+                shimmer: Some(Shimmer {
+                    delay: 0.065,
+                    feedback: 0.16,
+                    wet: 0.1,
+                    lowpass: 4200.0,
+                }),
+            },
+            SoundName::Arrival => SoundRecipe {
+                master_gain: 0.44,
+                layers: vec![
+                    Noise(NoiseLayer {
+                        filter_type: FilterType::LowPass,
+                        filter_frequency: 900.0,
+                        filter_q: 0.8,
+                        attack: 0.05,
+                        decay: 0.24,
+                        peak: 0.035,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 220.0,
+                        glide_to: Some(440.0),
+                        glide_time: Some(0.32),
+                        attack: 0.04,
+                        decay: 0.34,
+                        peak: 0.055,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 659.25,
+                        offset: 0.12,
+                        attack: 0.045,
+                        decay: 0.32,
+                        peak: 0.04,
+                        ..Default::default()
+                    }),
+                    Tone(ToneLayer {
+                        frequency: 987.77,
+                        offset: 0.19,
+                        attack: 0.045,
+                        decay: 0.34,
+                        peak: 0.032,
+                        ..Default::default()
+                    }),
+                ],
+                shimmer: Some(Shimmer {
+                    delay: 0.16,
+                    feedback: 0.28,
+                    wet: 0.18,
+                    lowpass: 3200.0,
                 }),
             },
         }

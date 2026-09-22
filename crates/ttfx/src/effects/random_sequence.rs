@@ -1,13 +1,9 @@
 //! randomsequence, ported from effects/effect_random_sequence.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_positive_float,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::ExistingColorHandling,
         character::CharId,
@@ -19,32 +15,43 @@ use crate::{
     utils::graphics::{Color, ColorPair, Gradient, GradientDirection},
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct RandomSequenceConfig {
     /// Speed of the animation as a percentage of the total number of
     /// characters to reveal in each tick.
-    #[arg(long, default_value_t = 0.007, value_parser = parse_positive_float)]
     pub speed: f64,
 
     /// Space separated, unquoted, list of colors for the final gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step.
-    #[arg(long = "final-gradient-frames", default_value_t = 8)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for RandomSequenceConfig {
+    fn default() -> Self {
+        Self {
+            speed: 0.007,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 8,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct RandomSequence {
     config: RandomSequenceConfig,
     pending_chars: Vec<CharId>,

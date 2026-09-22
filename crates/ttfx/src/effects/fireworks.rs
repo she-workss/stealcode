@@ -1,13 +1,9 @@
 //! fireworks, ported from effects/effect_fireworks.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_gradient_direction, parse_gradient_steps,
-        parse_non_negative_int, parse_non_negative_ratio, parse_symbol,
-    },
+    effects::common::{parse_color, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
         character::CharId,
@@ -25,52 +21,68 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct FireworksConfig {
     /// If set, fireworks explode anywhere in the canvas. Otherwise, fireworks
     /// explode above highest settled row of text.
-    #[arg(long = "explode-anywhere", default_value_t = false)]
     pub explode_anywhere: bool,
 
     /// Space separated list of colors from which firework colors will be
     /// randomly selected.
-    #[arg(long = "firework-colors", num_args = 1.., value_parser = parse_color,
-          default_values = ["88F7E2", "44D492", "F5EB67", "FFA15C", "FA233E"])]
     pub firework_colors: Vec<Color>,
 
     /// Symbol to use for the firework shell.
-    #[arg(long = "firework-symbol", default_value = "o", value_parser = parse_symbol)]
     pub firework_symbol: String,
 
     /// Percent of total characters in each firework shell.
-    #[arg(long = "firework-volume", default_value_t = 0.05, value_parser = parse_non_negative_ratio)]
     pub firework_volume: f64,
 
     /// Number of frames to wait between launching each firework shell. +/-
     /// 0-50 percent randomness is applied to this value.
-    #[arg(long = "launch-delay", default_value_t = 45, value_parser = parse_non_negative_int)]
     pub launch_delay: i64,
 
     /// Maximum distance from the firework shell origin to the explode waypoint
     /// as a percentage of the total canvas width.
-    #[arg(long = "explode-distance", default_value_t = 0.2, value_parser = parse_non_negative_ratio)]
     pub explode_distance: f64,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["8A008A", "00D1FF", "FFFFFF"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "horizontal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for FireworksConfig {
+    fn default() -> Self {
+        Self {
+            explode_anywhere: false,
+            firework_colors: vec![
+                parse_color("88F7E2").expect("valid color"),
+                parse_color("44D492").expect("valid color"),
+                parse_color("F5EB67").expect("valid color"),
+                parse_color("FFA15C").expect("valid color"),
+                parse_color("FA233E").expect("valid color"),
+            ],
+            firework_symbol: "o".to_string(),
+            firework_volume: 0.05,
+            launch_delay: 45,
+            explode_distance: 0.2,
+            final_gradient_stops: vec![
+                parse_color("8A008A").expect("valid color"),
+                parse_color("00D1FF").expect("valid color"),
+                parse_color("FFFFFF").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("horizontal")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Fireworks {
     config: FireworksConfig,
     shells: Vec<Vec<CharId>>,

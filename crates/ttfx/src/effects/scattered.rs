@@ -1,13 +1,9 @@
 //! scattered, ported from effects/effect_scattered.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    effects::common::{
-        parse_color, parse_easing, parse_gradient_direction,
-        parse_gradient_steps, parse_positive_float,
-    },
+    effects::common::{parse_color, parse_easing, parse_gradient_direction},
     engine::{
         animation::{ExistingColorHandling, SyncMetric, VisualParams},
         character::CharId,
@@ -24,35 +20,47 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ScatteredConfig {
     /// Movement speed of the characters.
-    #[arg(long = "movement-speed", default_value_t = 0.5, value_parser = parse_positive_float)]
     pub movement_speed: f64,
 
     /// Easing function to use for character movement.
-    #[arg(long = "movement-easing", default_value = "in_out_back", value_parser = parse_easing)]
     pub movement_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the character gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ff9048", "ab9dff", "bdffea"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Number of frames to display each gradient step.
-    #[arg(long = "final-gradient-frames", default_value_t = 9)]
     pub final_gradient_frames: i64,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "vertical", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for ScatteredConfig {
+    fn default() -> Self {
+        Self {
+            movement_speed: 0.5,
+            movement_easing: parse_easing("in_out_back")
+                .expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("ff9048").expect("valid color"),
+                parse_color("ab9dff").expect("valid color"),
+                parse_color("bdffea").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_frames: 9,
+            final_gradient_direction: parse_gradient_direction("vertical")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Scattered {
     config: ScatteredConfig,
     pending_chars: Vec<CharId>,

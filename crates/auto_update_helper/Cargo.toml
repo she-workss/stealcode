@@ -10,7 +10,7 @@ license.workspace = true
 windows.workspace = true
 
 [[bin]]
-name = "auto_update_helper"
+name = "auto-update-helper"
 path = "src/auto_update_helper.rs"
 doctest = false
 

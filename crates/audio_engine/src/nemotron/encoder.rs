@@ -13,6 +13,8 @@
 //!   * pos_emb computed host-side (sin/cos, div = 10000^(-2k/d)).
 //!   * optional prompt MLP on the encoder output (multilingual).
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 
@@ -20,7 +22,7 @@ use super::{
     config::EncoderConfig,
     timing,
     weights::{
-        Conv1dDw, Conv2d, LayerNorm, Lin, load_conv1d_dw, load_conv2d,
+        Conv1dDw, Conv2d, LayerNorm, Lin, Q8Mat, load_conv1d_dw, load_conv2d,
         load_lin, load_ln,
     },
 };
@@ -56,6 +58,17 @@ pub struct Block {
     pub attn_q: Lin,
     pub attn_k: Lin,
     pub attn_v: Lin,
+    /// Fused q/k/v projection (rows `[0,d)`=q, `[d,2d)`=k, `[2d,3d)`=v),
+    /// built from the three above via `Q8Mat::concat_vert`. `None` when a
+    /// weight isn't Q8, shapes differ, any of the three has a bias, or
+    /// `STEALCODE_QKV_FUSION` is off -> callers fall back to the three
+    /// separate GEMMs.
+    ///
+    /// Trade-off: the fused copy is ~89 MB of extra RAM (the three
+    /// `Q8Mat::scales` tables are dropped once it exists, ~9 MB), bought
+    /// for ~2-4% faster attention. `STEALCODE_QKV_FUSION=0` (or
+    /// `=false`) keeps the three mapped originals and no copy.
+    pub attn_qkv: Option<Lin>,
     pub attn_pos: Lin,
     pub attn_out: Lin,
     /// [n_heads * head_dim], row per head.
@@ -86,7 +99,11 @@ pub struct Encoder {
 }
 
 impl PreEncode {
-    fn load(gguf: &Gguf, channels: usize, _subsampling: usize) -> Result<Self> {
+    fn load(
+        gguf: &Arc<Gguf>,
+        channels: usize,
+        _subsampling: usize,
+    ) -> Result<Self> {
         let p = "encoder.pre_encode.conv";
         // Causal pre_encode: (k-1, s-1) pads on both axes, conv p=0.
         // Each of the three stride-2 convs halves time and freq
@@ -168,7 +185,7 @@ impl PreEncode {
 }
 
 impl Block {
-    fn load(gguf: &Gguf, i: usize, cfg: &EncoderConfig) -> Result<Self> {
+    fn load(gguf: &Arc<Gguf>, i: usize, cfg: &EncoderConfig) -> Result<Self> {
         let p = format!("encoder.layers.{i}");
         let d = cfg.d_model;
         let (d_ff, conv_k) = (cfg.d_ff, cfg.conv_kernel);
@@ -180,9 +197,51 @@ impl Block {
         let ff1_lin2 =
             load_lin(gguf, &format!("{p}.feed_forward1.linear2"), d_ff, d)?;
         let norm_att = load_ln(gguf, &format!("{p}.norm_self_att"), d, LN_EPS)?;
-        let attn_q = load_lin(gguf, &format!("{p}.self_attn.linear_q"), d, d)?;
-        let attn_k = load_lin(gguf, &format!("{p}.self_attn.linear_k"), d, d)?;
-        let attn_v = load_lin(gguf, &format!("{p}.self_attn.linear_v"), d, d)?;
+        let mut attn_q =
+            load_lin(gguf, &format!("{p}.self_attn.linear_q"), d, d)?;
+        let mut attn_k =
+            load_lin(gguf, &format!("{p}.self_attn.linear_k"), d, d)?;
+        let mut attn_v =
+            load_lin(gguf, &format!("{p}.self_attn.linear_v"), d, d)?;
+        // Fuse q/k/v into one [3d, d] GEMM over the same input.
+        // NOTE: `concat_rows` is a horizontal (input-dim) concat; the
+        // output-dim stack below needs `concat_vert`.
+        // Only fuse when none of q/k/v carry a bias: the fused `Lin` has
+        // `bias: None`, so otherwise the bias would be silently dropped and
+        // the three-GEMM fallback (which adds biases) must run instead.
+        // `STEALCODE_QKV_FUSION`: anything but `0`/`false`, default on.
+        let fuse_qkv = std::env::var("STEALCODE_QKV_FUSION")
+            .map_or(true, |v| v != "0" && !v.eq_ignore_ascii_case("false"));
+        let attn_qkv = if fuse_qkv {
+            let fused = match (&attn_q.q, &attn_k.q, &attn_v.q) {
+                (Some(q), Some(k), Some(v))
+                    if attn_q.bias.is_none()
+                        && attn_k.bias.is_none()
+                        && attn_v.bias.is_none() =>
+                {
+                    Q8Mat::concat_vert(q, k)
+                        .and_then(|qk| Q8Mat::concat_vert(&qk, v))
+                        .map(|qkv| Lin {
+                            q: Some(qkv),
+                            f: None,
+                            bias: None,
+                            out: 3 * d,
+                            inp: d,
+                        })
+                }
+                _ => None,
+            };
+            if fused.is_some() {
+                // The fused path replaces them; drop the originals' heap
+                // scales (~9 MB). Their mapped bytes free nothing.
+                attn_q.q = None;
+                attn_k.q = None;
+                attn_v.q = None;
+            }
+            fused
+        } else {
+            None
+        };
         let attn_pos =
             load_lin(gguf, &format!("{p}.self_attn.linear_pos"), d, d)?;
         let attn_out =
@@ -228,6 +287,7 @@ impl Block {
             attn_q,
             attn_k,
             attn_v,
+            attn_qkv,
             attn_pos,
             attn_out,
             pos_u,
@@ -246,7 +306,7 @@ impl Block {
 }
 
 impl Encoder {
-    pub fn load(gguf: &Gguf, cfg: EncoderConfig) -> Result<Self> {
+    pub fn load(gguf: &Arc<Gguf>, cfg: EncoderConfig) -> Result<Self> {
         let pre_encode =
             PreEncode::load(gguf, cfg.conv_channels, cfg.subsampling_factor)?;
         if let (Some(dir), Some(q)) = (timing::dump_dir(), &pre_encode.out.q) {
@@ -568,9 +628,18 @@ impl Encoder {
         let mut k = Vec::new();
         let mut v = Vec::new();
         let mut p = Vec::new();
-        b.attn_q.forward_t(scratch, &xt, t, &mut q); // [d, t]
-        b.attn_k.forward_t(scratch, &xt, t, &mut k);
-        b.attn_v.forward_t(scratch, &xt, t, &mut v);
+        if let Some(qkv) = &b.attn_qkv {
+            // Fused q/k/v: one [3d, t] GEMM over the shared input.
+            let mut fused = Vec::new();
+            qkv.forward_t(scratch, &xt, t, &mut fused);
+            q.extend_from_slice(&fused[..d * t]);
+            k.extend_from_slice(&fused[d * t..2 * d * t]);
+            v.extend_from_slice(&fused[2 * d * t..3 * d * t]);
+        } else {
+            b.attn_q.forward_t(scratch, &xt, t, &mut q); // [d, t]
+            b.attn_k.forward_t(scratch, &xt, t, &mut k);
+            b.attn_v.forward_t(scratch, &xt, t, &mut v);
+        }
         let pet = transpose(pe, 2 * t - 1, d); // pe rows = 2t-1 -> [d, 2t-1]
         b.attn_pos.forward_t(scratch, &pet, 2 * t - 1, &mut p);
         timing::tick("qkv");
@@ -609,10 +678,12 @@ impl Encoder {
             }
         };
         if t >= 8 {
-            scores
-                .par_chunks_mut(t * n_heads)
-                .enumerate()
-                .for_each(|(qq, row)| compute_scores(qq, row));
+            crate::pool::install(|| {
+                scores
+                    .par_chunks_mut(t * n_heads)
+                    .enumerate()
+                    .for_each(|(qq, row)| compute_scores(qq, row));
+            });
         } else {
             for qq in 0..t {
                 compute_scores(qq, &mut scores[qq * t * n_heads..]);
@@ -640,11 +711,15 @@ impl Encoder {
             }
         };
         if t >= 8 {
-            scores
-                .par_chunks_mut(t * n_heads)
-                .zip(attn_out.par_chunks_mut(d))
-                .enumerate()
-                .for_each(|(qq, (srow, row))| softmax_row(qq, srow, row));
+            crate::pool::install(|| {
+                scores
+                    .par_chunks_mut(t * n_heads)
+                    .zip(attn_out.par_chunks_mut(d))
+                    .enumerate()
+                    .for_each(|(qq, (srow, row))| {
+                        softmax_row(qq, srow, row);
+                    });
+            });
         } else {
             for qq in 0..t {
                 softmax_row(

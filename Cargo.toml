@@ -1,10 +1,12 @@
 [workspace]
 members = [
     "crates/audio_engine",
-    "crates/auto_update",
     "crates/auto_update_helper",
+    "crates/auto_update",
     "crates/cli",
+    "crates/gpui_thinking_orbs",
     "crates/gui",
+    "crates/mobile",
     "crates/paths",
     "crates/release_channel",
     "crates/server",
@@ -17,6 +19,7 @@ members = [
     "crates/voice",
 ]
 default-members = [
+    "crates/audio_engine",
     "crates/auto_update",
     "crates/cli",
     "crates/paths",
@@ -47,8 +50,10 @@ axum = { version = "0.8", default-features = false, features = [
     "tokio",
     "tracing",
 ] }
-dirs = { version = "6", default-features = false }
+dirs = { version = "7", default-features = false }
+gpui_thinking_orbs = { path = "crates/gpui_thinking_orbs" }
 gui = { path = "crates/gui" }
+mobile = { path = "crates/mobile" }
 paths = { path = "crates/paths" }
 ratatui = { version = "0.30", default-features = false, features = [
     "termina",
@@ -158,14 +163,19 @@ type_complexity = "allow"
 
 [profile.release]
 opt-level = "s"
-# opt-level = 3
 codegen-units = 1
 strip = true
 lto = true
+# panic = "abort"
 
 [profile.release.package.windows]
 hint-mostly-unused = true
-# panic = "abort"
+
+[profile.rel-with-info]
+inherits = "release"
+opt-level = 3
+strip = false
+debug = true
 
 [profile.dev]
 opt-level = 0
@@ -178,8 +188,12 @@ debug = false
 [profile.dev.package.windows]
 hint-mostly-unused = true
 
+[profile.test]
+inherits = "dev"
+
 [profile.debugging]
 inherits = "dev"
+strip = false
 debug = true
 
 [profile.profiling]

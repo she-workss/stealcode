@@ -13,7 +13,7 @@ ratatui.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_with = { version = "3.22", default-features = false, features = [
+serde_with = { version = "3.23", default-features = false, features = [
     "std",
     "macros",
 ] }

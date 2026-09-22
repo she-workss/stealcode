@@ -1,13 +1,11 @@
 //! waves, ported from effects/effect_waves.py.
 
-use clap::Args;
 use rustc_hash::FxHashMap;
 
 use crate::{
     effects::common::{
         parse_character_group, parse_color, parse_easing,
-        parse_gradient_direction, parse_gradient_steps, parse_positive_int,
-        parse_symbol,
+        parse_gradient_direction,
     },
     engine::{
         animation::{ExistingColorHandling, VisualParams},
@@ -24,55 +22,86 @@ use crate::{
     },
 };
 
-#[derive(Args, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct WavesConfig {
     /// Symbols to use for the wave animation.
-    #[arg(long = "wave-symbols", num_args = 1.., value_parser = parse_symbol,
-          default_values = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂", "▁"])]
     pub wave_symbols: Vec<String>,
 
     /// Space separated, unquoted, list of colors for the character gradient
     /// (applied across the canvas).
-    #[arg(long = "wave-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["f0ff65", "ffb102", "31a0d4", "ffb102", "f0ff65"])]
     pub wave_gradient_stops: Vec<Color>,
 
     /// Space separated, unquoted, list of the number of gradient steps to use.
-    #[arg(long = "wave-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["6"])]
     pub wave_gradient_steps: Vec<i64>,
 
     /// Number of waves to generate. n > 0.
-    #[arg(long = "wave-count", default_value_t = 7, value_parser = parse_positive_int)]
     pub wave_count: i64,
 
     /// The number of frames for each step of the wave.
-    #[arg(long = "wave-length", default_value_t = 2, value_parser = parse_positive_int)]
     pub wave_length: i64,
 
     /// Direction of the wave.
-    #[arg(long = "wave-direction", default_value = "column_left_to_right", value_parser = parse_character_group)]
     pub wave_direction: CharacterGroup,
 
     /// Easing function to use for wave travel.
-    #[arg(long = "wave-easing", default_value = "in_out_sine", value_parser = parse_easing)]
     pub wave_easing: Easing,
 
     /// Space separated, unquoted, list of colors for the final color gradient.
-    #[arg(long = "final-gradient-stops", num_args = 1.., value_parser = parse_color,
-          default_values = ["ffb102", "31a0d4", "f0ff65"])]
     pub final_gradient_stops: Vec<Color>,
 
     /// Number of gradient steps to use.
-    #[arg(long = "final-gradient-steps", num_args = 1.., value_parser = parse_gradient_steps,
-          default_values = ["12"])]
     pub final_gradient_steps: Vec<i64>,
 
     /// Direction of the final gradient.
-    #[arg(long = "final-gradient-direction", default_value = "diagonal", value_parser = parse_gradient_direction)]
     pub final_gradient_direction: GradientDirection,
 }
 
+impl Default for WavesConfig {
+    fn default() -> Self {
+        Self {
+            wave_symbols: vec![
+                "▁".to_string(),
+                "▂".to_string(),
+                "▃".to_string(),
+                "▄".to_string(),
+                "▅".to_string(),
+                "▆".to_string(),
+                "▇".to_string(),
+                "█".to_string(),
+                "▇".to_string(),
+                "▆".to_string(),
+                "▅".to_string(),
+                "▄".to_string(),
+                "▃".to_string(),
+                "▂".to_string(),
+                "▁".to_string(),
+            ],
+            wave_gradient_stops: vec![
+                parse_color("f0ff65").expect("valid color"),
+                parse_color("ffb102").expect("valid color"),
+                parse_color("31a0d4").expect("valid color"),
+                parse_color("ffb102").expect("valid color"),
+                parse_color("f0ff65").expect("valid color"),
+            ],
+            wave_gradient_steps: vec![6],
+            wave_count: 7,
+            wave_length: 2,
+            wave_direction: parse_character_group("column_left_to_right")
+                .expect("valid literal"),
+            wave_easing: parse_easing("in_out_sine").expect("valid literal"),
+            final_gradient_stops: vec![
+                parse_color("ffb102").expect("valid color"),
+                parse_color("31a0d4").expect("valid color"),
+                parse_color("f0ff65").expect("valid color"),
+            ],
+            final_gradient_steps: vec![12],
+            final_gradient_direction: parse_gradient_direction("diagonal")
+                .expect("valid literal"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Waves {
     config: WavesConfig,
     pending_columns: Vec<Vec<CharId>>,
