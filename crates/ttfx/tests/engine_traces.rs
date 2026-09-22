@@ -1,6 +1,6 @@
 //! Engine state-machine traces vs the reference implementation
-//! (tools/goldens/gen_engine_traces.py). Each scenario replays identically and
-//! the full event + state log must match line for line.
+//! (`tools/goldens/gen_engine_traces.py`). Each scenario replays identically
+//! and the full event + state log must match line for line.
 
 use std::collections::BTreeSet;
 
@@ -39,7 +39,7 @@ fn make_ctx() -> EngineCtx {
     ctx
 }
 
-fn chars(ctx: &mut EngineCtx, n: usize) -> Vec<CharId> {
+fn chars(ctx: &EngineCtx, n: usize) -> Vec<CharId> {
     let filter = CharacterFilter::default();
     let mut rng = Rng::seeded(0); // sort is non-random; rng unused
     ctx.terminal.get_characters(
@@ -110,7 +110,7 @@ fn flush(ctx: &mut EngineCtx, log: &mut Vec<String>) {
 fn scenario_motion_basic(log: &mut Vec<String>) {
     log.push("=== scenario_motion_basic ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 2);
+    let ids = chars(&ctx, 2);
     let (a, b) = (ids[0], ids[1]);
     {
         let motion = &mut ctx.terminal.arena[a.0 as usize].motion;
@@ -139,7 +139,7 @@ fn scenario_motion_basic(log: &mut Vec<String>) {
 fn scenario_hold_and_loop(log: &mut Vec<String>) {
     log.push("=== scenario_hold_and_loop ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 2);
+    let ids = chars(&ctx, 2);
     let (a, b) = (ids[0], ids[1]);
     {
         let motion = &mut ctx.terminal.arena[a.0 as usize].motion;
@@ -165,7 +165,7 @@ fn scenario_hold_and_loop(log: &mut Vec<String>) {
 fn scenario_chained_paths_and_events(log: &mut Vec<String>) {
     log.push("=== scenario_chained_paths_and_events ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 1);
+    let ids = chars(&ctx, 1);
     let a = ids[0];
     {
         let motion = &mut ctx.terminal.arena[a.0 as usize].motion;
@@ -215,7 +215,7 @@ fn scenario_chained_paths_and_events(log: &mut Vec<String>) {
 fn scenario_scenes(log: &mut Vec<String>) {
     log.push("=== scenario_scenes ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 3);
+    let ids = chars(&ctx, 3);
     let (a, b, c) = (ids[0], ids[1], ids[2]);
     {
         let ch = &mut ctx.terminal.arena[a.0 as usize];
@@ -306,7 +306,7 @@ fn scenario_scenes(log: &mut Vec<String>) {
 fn scenario_synced_scene(log: &mut Vec<String>) {
     log.push("=== scenario_synced_scene ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 2);
+    let ids = chars(&ctx, 2);
     for (idx, (sync, pid)) in
         [(SyncMetric::Step, "sp"), (SyncMetric::Distance, "dp")]
             .iter()
@@ -338,7 +338,7 @@ fn scenario_synced_scene(log: &mut Vec<String>) {
 fn scenario_scene_events_and_resume(log: &mut Vec<String>) {
     log.push("=== scenario_scene_events_and_resume ===".into());
     let mut ctx = make_ctx();
-    let ids = chars(&mut ctx, 1);
+    let ids = chars(&ctx, 1);
     let a = ids[0];
     {
         let ch = &mut ctx.terminal.arena[a.0 as usize];
@@ -405,7 +405,7 @@ fn engine_traces_match_python() {
     let mut mismatches = 0;
     for i in 0..expected.len().max(log.len()) {
         let e = expected.get(i).copied().unwrap_or("<missing>");
-        let a = log.get(i).map(String::as_str).unwrap_or("<missing>");
+        let a = log.get(i).map_or("<missing>", String::as_str);
         if e != a {
             if mismatches < 8 {
                 eprintln!("line {i}:\n  expected: {e}\n    actual: {a}");

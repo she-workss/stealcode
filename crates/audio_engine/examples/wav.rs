@@ -4,7 +4,7 @@
 //! `live` example.
 //!
 //! Usage:
-//!   cargo run -p audio_engine --example wav -- --model path/to/model.gguf
+//!   cargo run -p `audio_engine` --example wav -- --model path/to/model.gguf
 //! audio.wav
 
 use std::path::Path;
@@ -47,11 +47,11 @@ fn read_wav_16k(path: &str) -> Result<Vec<f32>> {
                 .collect::<Result<_, _>>()?
         }
     };
-    if spec.sample_rate != SAMPLE_RATE {
+    if spec.sample_rate == SAMPLE_RATE {
+        Ok(pcm)
+    } else {
         eprintln!("resampling {} Hz -> 16 kHz", spec.sample_rate);
         Ok(to_mono_16k(&pcm, 1, spec.sample_rate))
-    } else {
-        Ok(pcm)
     }
 }
 

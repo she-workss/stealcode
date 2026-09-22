@@ -1,5 +1,5 @@
 //! Input preprocessing: the mini terminal emulator from
-//! Terminal._preprocess_input_data.
+//! Terminal._`preprocess_input_data`.
 //!
 //! Walks the input codepoint-by-codepoint (one char = one cell, faithfully - no
 //! wcwidth upstream), tracking SGR color state and cursor movement, producing
@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Insertion-ordered Color -> count map (upstream: dict[Color, int]). Iteration
-/// order is behavior for get_input_colors; the population is small, linear
+/// order is behavior for `get_input_colors`; the population is small, linear
 /// scan.
 #[derive(Debug, Default, Clone)]
 pub struct ColorFrequency(pub Vec<(Color, i64)>);
@@ -52,7 +52,7 @@ pub struct Preprocessor<'a> {
     pub config: &'a TerminalConfig,
 }
 
-impl<'a> Preprocessor<'a> {
+impl Preprocessor<'_> {
     /// Returns rows of character ids (top row first, as parsed).
     pub fn preprocess(
         &mut self,
@@ -82,7 +82,7 @@ impl<'a> Preprocessor<'a> {
                             )
                         })?;
                     if final_byte == 'm' {
-                        self.apply_sgr_sequence(
+                        Self::apply_sgr_sequence(
                             &sequence, &params, &mut state,
                         )?;
                     } else if is_supported_private_mode_sequence(&sequence) {
@@ -124,8 +124,7 @@ impl<'a> Preprocessor<'a> {
                     (chars[i], 1)
                 };
                 for _ in 0..count {
-                    let id =
-                        self.build_character(&symbol.to_string(), &state)?;
+                    let id = self.build_character(&symbol.to_string(), &state);
                     screen.insert((row, column), id);
                     max_row = max_row.max(row);
                     max_column = max_column.max(column);
@@ -142,7 +141,7 @@ impl<'a> Preprocessor<'a> {
             for screen_column in 0..=max_column {
                 let id = match screen.get(&(screen_row, screen_column)) {
                     Some(&id) => id,
-                    None => self.build_character(" ", &empty_state)?,
+                    None => self.build_character(" ", &empty_state),
                 };
                 line.push(id);
             }
@@ -159,27 +158,24 @@ impl<'a> Preprocessor<'a> {
             }
             characters.push(line);
         }
-        while characters.last().is_some_and(|line| line.is_empty()) {
+        while characters.last().is_some_and(std::vec::Vec::is_empty) {
             characters.pop();
         }
 
         if characters.is_empty() {
             // Faithful: the fallback character carries the END-of-input active
             // state.
-            let id = self.build_character(" ", &state)?;
+            let id = self.build_character(" ", &state);
             characters.push(vec![id]);
         }
         Ok(characters)
     }
 
-    /// build_character: allocates an id (even for characters later discarded),
-    /// captures active colors, bumps the color frequency at CREATION time (even
-    /// if a later cursor write overwrites the cell - see plan.md §5.13).
-    fn build_character(
-        &mut self,
-        symbol: &str,
-        state: &ActiveState,
-    ) -> Result<CharId, EngineError> {
+    /// `build_character`: allocates an id (even for characters later
+    /// discarded), captures active colors, bumps the color frequency at
+    /// CREATION time (even if a later cursor write overwrites the cell -
+    /// see plan.md §5.13).
+    fn build_character(&mut self, symbol: &str, state: &ActiveState) -> CharId {
         let mut ch =
             EffectCharacter::new(*self.next_character_id, symbol, 0, 0);
         *self.next_character_id += 1;
@@ -212,11 +208,10 @@ impl<'a> Preprocessor<'a> {
         }
         let id = CharId(self.arena.len() as u32);
         self.arena.push(ch);
-        Ok(id)
+        id
     }
 
     fn apply_sgr_sequence(
-        &mut self,
         sequence: &str,
         params_text: &str,
         state: &mut ActiveState,
@@ -313,9 +308,12 @@ impl<'a> Preprocessor<'a> {
                                     ),
                                 );
                             }
-                            let hex: String = (2..5)
-                                .map(|o| format!("{:02X}", parameters[idx + o]))
-                                .collect();
+                            let hex = format!(
+                                "{:02X}{:02X}{:02X}",
+                                parameters[idx + 2],
+                                parameters[idx + 3],
+                                parameters[idx + 4]
+                            );
                             let color = Color::from_hex(&hex)
                                 .map_err(EngineError::Other)?;
                             let (r, g, b) = color.rgb_ints();
@@ -359,7 +357,7 @@ fn xterm_color(code: i64) -> Result<Color, EngineError> {
     }
 }
 
-/// parse_csi_parameters: only digits and ';' allowed; empty fields are 0.
+/// `parse_csi_parameters`: only digits and ';' allowed; empty fields are 0.
 fn parse_csi_parameters(parameters: &str) -> Result<Vec<i64>, EngineError> {
     if parameters.chars().any(|c| !c.is_ascii_digit() && c != ';') {
         return Err(EngineError::UnsupportedAnsiSequence(format!(
@@ -434,7 +432,7 @@ fn apply_cursor_sequence(
     Ok((row.max(0), column.max(0)))
 }
 
-/// Emulates upstream's ansi_escape_sequence_pattern.match at a position, with
+/// Emulates upstream's `ansi_escape_sequence_pattern.match` at a position, with
 /// the same alternation order: OSC, CSI, then `\x1b.` (any char except
 /// newline). Returns the exclusive end index of the match.
 fn match_escape_sequence(chars: &[char], start: usize) -> Option<usize> {
@@ -483,7 +481,8 @@ fn match_escape_sequence(chars: &[char], start: usize) -> Option<usize> {
 }
 
 /// splits a full CSI sequence into (params, intermediates, final) like
-/// csi_sequence_pattern.fullmatch; None if it isn't a well-formed CSI sequence.
+/// `csi_sequence_pattern.fullmatch`; None if it isn't a well-formed CSI
+/// sequence.
 fn split_csi(sequence: &str) -> Option<(String, String, char)> {
     let chars: Vec<char> = sequence.chars().collect();
     if chars.len() < 3 || chars[0] != '\x1b' || chars[1] != '[' {

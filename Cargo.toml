@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "crates/audio_engine",
-    "crates/auto_update_helper",
     "crates/auto_update",
+    "crates/auto_update_helper",
     "crates/cli",
     "crates/gpui_thinking_orbs",
     "crates/gui",
@@ -53,7 +53,6 @@ axum = { version = "0.8", default-features = false, features = [
 dirs = { version = "7", default-features = false }
 gpui_thinking_orbs = { path = "crates/gpui_thinking_orbs" }
 gui = { path = "crates/gui" }
-mobile = { path = "crates/mobile" }
 paths = { path = "crates/paths" }
 ratatui = { version = "0.30", default-features = false, features = [
     "termina",

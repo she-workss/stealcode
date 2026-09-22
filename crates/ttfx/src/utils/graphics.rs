@@ -1,4 +1,4 @@
-//! Color, ColorPair, and Gradient, ported from utils/graphics.py.
+//! Color, `ColorPair`, and Gradient, ported from utils/graphics.py.
 
 use std::{fmt, ops::Deref};
 
@@ -32,7 +32,7 @@ impl RgbString {
         debug_assert!(value.len() <= 7);
         let mut bytes = [0; 7];
         bytes[..value.len()].copy_from_slice(value.as_bytes());
-        RgbString {
+        Self {
             bytes,
             len: value.len() as u8,
         }
@@ -41,7 +41,7 @@ impl RgbString {
     /// Const-evaluable constructor from RGB components (the named palette
     /// constants use this; the resulting hex string matches `from_xterm`).
     const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
-        RgbString {
+        Self {
             bytes: [
                 Self::hex_digit_hi(r),
                 Self::hex_digit_lo(r),
@@ -120,7 +120,7 @@ impl fmt::Debug for Color {
             .field("color_arg", &self.color_arg)
             .field("xterm_color", &self.xterm_color)
             .field("rgb_color", &self.rgb_color)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -138,21 +138,22 @@ impl std::hash::Hash for Color {
 
 impl Color {
     #[allow(non_upper_case_globals)] // names mirror upstream tte's named colors
-    pub const Blue: Color = Color::from_xterm_rgb(4, 0, 0, 128);
+    pub const Blue: Self = Self::from_xterm_rgb(4, 0, 0, 128);
     /// Named xterm-256 colors, usable in `const` positions (the wordmark's
     /// per-letter palette is built from these).
     #[allow(non_upper_case_globals)] // names mirror upstream tte's named colors
-    pub const DarkGray: Color = Color::from_xterm_rgb(8, 128, 128, 128);
+    pub const DarkGray: Self = Self::from_xterm_rgb(8, 128, 128, 128);
     #[allow(non_upper_case_globals)] // names mirror upstream tte's named colors
-    pub const Green: Color = Color::from_xterm_rgb(2, 0, 128, 0);
+    pub const Green: Self = Self::from_xterm_rgb(2, 0, 128, 0);
     #[allow(non_upper_case_globals)] // names mirror upstream tte's named colors
-    pub const Red: Color = Color::from_xterm_rgb(1, 128, 0, 0);
+    pub const Red: Self = Self::from_xterm_rgb(1, 128, 0, 0);
     #[allow(non_upper_case_globals)] // names mirror upstream tte's named colors
-    pub const Yellow: Color = Color::from_xterm_rgb(3, 128, 128, 0);
+    pub const Yellow: Self = Self::from_xterm_rgb(3, 128, 128, 0);
 
+    #[must_use]
     pub fn from_xterm(code: u8) -> Self {
         let rgb_color = RgbString::new(hexterm::xterm_to_hex(code));
-        Color {
+        Self {
             color_arg: ColorArg::Xterm(code),
             xterm_color: Some(code),
             rgb: Self::parse_rgb(&rgb_color),
@@ -163,7 +164,7 @@ impl Color {
     /// Const-evaluable xterm-color constructor (the `xterm_color`/`rgb` fields
     /// match `from_xterm` for the same code; see the palette test below).
     const fn from_xterm_rgb(code: u8, r: u8, g: u8, b: u8) -> Self {
-        Color {
+        Self {
             color_arg: ColorArg::Xterm(code),
             xterm_color: Some(code),
             rgb: [r, g, b],
@@ -171,7 +172,7 @@ impl Color {
         }
     }
 
-    /// Hex-string constructor. Errors mirror upstream ValueError.
+    /// Hex-string constructor. Errors mirror upstream `ValueError`.
     pub fn from_hex(hex: &str) -> Result<Self, String> {
         let stripped = hex.trim_matches('#');
         if !hexterm::is_valid_hex_color(stripped) {
@@ -182,7 +183,7 @@ impl Color {
             );
         }
         let rgb_color = RgbString::new(stripped);
-        Ok(Color {
+        Ok(Self {
             color_arg: ColorArg::Hex(rgb_color),
             xterm_color: None,
             rgb: Self::parse_rgb(&rgb_color),
@@ -190,7 +191,9 @@ impl Color {
         })
     }
 
-    pub fn rgb_ints(&self) -> (u8, u8, u8) {
+    #[must_use]
+    #[allow(clippy::tuple_array_conversions)] // <(u8,u8,u8)>::from is not const-callable
+    pub const fn rgb_ints(&self) -> (u8, u8, u8) {
         (self.rgb[0], self.rgb[1], self.rgb[2])
     }
 
@@ -203,15 +206,16 @@ impl Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ColorPair {
     pub fg_color: Option<Color>,
     pub bg_color: Option<Color>,
 }
 
 impl ColorPair {
-    pub fn new(fg: Option<Color>, bg: Option<Color>) -> Self {
-        ColorPair {
+    #[must_use]
+    pub const fn new(fg: Option<Color>, bg: Option<Color>) -> Self {
+        Self {
             fg_color: fg,
             bg_color: bg,
         }
@@ -241,6 +245,7 @@ impl CoordColorMap {
         }
     }
 
+    #[must_use]
     pub fn get(&self, coord: &Coord) -> Option<&Color> {
         self.map.get(coord)
     }
@@ -282,7 +287,7 @@ impl Gradient {
             for _ in 0..steps[0] {
                 spectrum.push(stops[0]);
             }
-            return Ok(Gradient { spectrum });
+            return Ok(Self { spectrum });
         }
         let mut stops: Vec<Color> = stops.to_vec();
         if do_loop {
@@ -319,7 +324,7 @@ impl Gradient {
             }
             spectrum.push(*end);
         }
-        Ok(Gradient { spectrum })
+        Ok(Self { spectrum })
     }
 
     /// Convenience: single scalar step count (the common upstream call shape).
@@ -328,10 +333,10 @@ impl Gradient {
         steps: i64,
         do_loop: bool,
     ) -> Result<Self, String> {
-        Gradient::new(stops, &[steps], true, do_loop)
+        Self::new(stops, &[steps], true, do_loop)
     }
 
-    /// get_color_at_fraction: first i in 1..=len with fraction <= i/len.
+    /// `get_color_at_fraction`: first i in 1..=len with fraction <= i/len.
     pub fn get_color_at_fraction(
         &self,
         fraction: f64,
@@ -348,7 +353,7 @@ impl Gradient {
         Ok(self.spectrum.last().unwrap())
     }
 
-    /// build_coordinate_color_mapping with upstream's insertion order per
+    /// `build_coordinate_color_mapping` with upstream's insertion order per
     /// direction.
     pub fn build_coordinate_color_mapping(
         &self,
@@ -425,21 +430,22 @@ impl Gradient {
     }
 }
 
-/// graphics.random_color.
+/// `graphics.random_color`.
 pub fn random_color(rng: &mut Rng) -> Color {
-    Color::from_hex(&format!("{:06x}", rng.randint(0, 0xFFFFFF))).unwrap()
+    Color::from_hex(&format!("{:06x}", rng.randint(0, 0x00FF_FFFF))).unwrap()
 }
 
-/// graphics.shift_color_towards: float lerp with int() TRUNCATION back to hex
-/// (unlike adjust_color_brightness's round()). Negative components format
-/// Python-style ("-3" not two's complement) so error conditions match.
+/// `graphics.shift_color_towards`: float lerp with `int()` TRUNCATION back to
+/// hex (unlike `adjust_color_brightness`'s `round()`). Negative components
+/// format Python-style ("-3" not two's complement) so error conditions match.
 pub fn shift_color_towards(
     color: &Color,
     target_color: &Color,
     factor: f64,
 ) -> Result<Color, String> {
-    let interpolate =
-        |start: f64, end: f64, factor: f64| start + (end - start) * factor;
+    let interpolate = |start: f64, end: f64, factor: f64| {
+        (end - start).mul_add(factor, start)
+    };
     let norm = |c: &Color| {
         let (r, g, b) = c.rgb_ints();
         (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0)
@@ -505,7 +511,7 @@ mod tests {
         let color = Color::from_hex("12AbEf7").unwrap();
         assert_eq!(
             format!("{color:?}"),
-            "Color { color_arg: Hex(\"12AbEf7\"), xterm_color: None, rgb_color: \"12AbEf7\" }"
+            "Color { color_arg: Hex(\"12AbEf7\"), xterm_color: None, rgb_color: \"12AbEf7\", .. }"
         );
     }
 }

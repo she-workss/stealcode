@@ -2,6 +2,7 @@
 
 #[cfg(windows)]
 mod dialog;
+#[cfg(any(windows, test))]
 mod updater;
 #[cfg(windows)]
 mod windows_impl;

@@ -28,9 +28,10 @@ pub(super) fn draw_braid_into(
     with_fib_dirs(ghost_n, |directions| {
         for d in directions {
             let (px, py, z) = pt.project(d[0] * r, d[1] * r, d[2] * r);
-            let depth = (z * inv_r + 1.0) / 2.0;
+            let depth = f32::mul_add(z, inv_r, 1.0) / 2.0;
             dots.push(
-                Dot::new(px, py, z, 0.8 * rs, 0.78).with_a(0.1 + 0.22 * depth),
+                Dot::new(px, py, z, 0.8 * rs, 0.78)
+                    .with_a(0.22f32.mul_add(depth, 0.1)),
             );
         }
     });
@@ -42,26 +43,30 @@ pub(super) fn draw_braid_into(
     for s in 0..3 {
         let phase = (s as f32 / 3.0) * 2.0 * PI;
         for i in 0..strand_n {
-            let u =
-                (frac(i as f32 * inv_strand + t * 0.045) * 2.0 - 1.0) * 0.96;
-            let surf = (1.0 - u * u).max(0.0).sqrt();
+            let u = frac(t.mul_add(0.045, i as f32 * inv_strand))
+                .mul_add(2.0, -1.0)
+                * 0.96;
+            let surf = u.mul_add(-u, 1.0).max(0.0).sqrt();
             let end_fade = ((0.96 - u.abs()) / 0.12).clamp(0.0, 1.0);
-            let a = u * PI * turns + phase;
-            let weave = 1.0
-                + 0.075 * (u * PI * turns * 2.0 + phase * 2.0 + t * 0.8).sin();
+            let a = (u * PI).mul_add(turns, phase);
+            let weave = 0.075f32.mul_add(
+                t.mul_add(0.8, phase.mul_add(2.0, u * PI * turns * 2.0))
+                    .sin(),
+                1.0,
+            );
             let rr = surf * r * weave;
             let (px, py, zr) =
                 pt.project(a.cos() * rr, u * r * weave, a.sin() * rr);
-            let depth = (zr * inv_r + 1.0) / 2.0;
+            let depth = f32::mul_add(zr, inv_r, 1.0) / 2.0;
             dots.push(
                 Dot::new(
                     px,
                     py,
                     zr,
-                    (r_base + r_depth * depth) * rs,
-                    0.55 - 0.45 * depth,
+                    r_depth.mul_add(depth, r_base) * rs,
+                    0.45f32.mul_add(-depth, 0.55),
                 )
-                .with_a(end_fade * (0.45 + 0.55 * depth)),
+                .with_a(end_fade * 0.55f32.mul_add(depth, 0.45)),
             );
         }
     }

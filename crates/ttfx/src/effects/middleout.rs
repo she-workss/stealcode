@@ -1,10 +1,10 @@
-//! middleout, ported from effects/effect_middleout.py.
+//! middleout, ported from `effects/effect_middleout.py`.
 //!
 //! Ordering note: upstream's __next__ iterates the freshly rebuilt
-//! active_characters *set* (effect_middleout.py:229-232) to activate the
-//! "full" path/scene. Canonical order here is ascending character_id
+//! `active_characters` *set* (effect_middleout.py:229-232) to activate the
+//! "full" path/scene. Canonical order here is ascending `character_id`
 //! (docs/ordering-inventory.md), matched by a shim patch on
-//! MiddleOutIterator.__next__.
+//! `MiddleOutIterator`.__next__.
 
 use rustc_hash::FxHashMap;
 
@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-/// typing.Literal["vertical", "horizontal"].
+/// `typing.Literal["vertical", "horizontal"]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpandDirection {
     Vertical,
@@ -110,8 +110,9 @@ pub struct Middleout {
 }
 
 impl Middleout {
+    #[must_use]
     pub fn new(config: MiddleoutConfig) -> Self {
-        Middleout {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             phase: Phase::Center,

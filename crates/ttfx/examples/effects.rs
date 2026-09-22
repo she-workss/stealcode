@@ -13,6 +13,7 @@
 //! cells - the integration point this example demonstrates.
 
 use std::{
+    fmt::Write as _,
     io,
     io::Write as _,
     time::{Duration, Instant},
@@ -50,7 +51,7 @@ const PREVIEW_HEIGHT: i64 = 6;
 const RESTART_DELAY: Duration = Duration::from_secs(4);
 
 /// The wordmark, four rows tall. Each letter occupies four columns followed by
-/// one space; the word reads "StealCode" left to right.
+/// one space; the word reads "`StealCode`" left to right.
 pub const WORDMARK: &[&str; 4] = &[
     "     ▄                                ▄     ",
     "█▀▀▀ █▀▀  █▀▀█ ▀▀▀█ █    █▀▀▀ █▀▀█ █▀▀█ █▀▀█",
@@ -78,6 +79,7 @@ const LETTER_WIDTH: usize = 5;
 /// The wordmark joined into a single input string with each letter wrapped in
 /// an SGR foreground sequence (`\x1b[38;5;<xterm>m ... \x1b[0m`). Columns that
 /// belong to no letter (leading/trailing padding) stay plain.
+#[must_use]
 pub fn input_text() -> String {
     let mut out = String::new();
     for (row, line) in WORDMARK.iter().enumerate() {
@@ -93,7 +95,7 @@ pub fn input_text() -> String {
             }
             let code = color.xterm_color.expect("named colors are xterm");
             if chars[start..end].iter().any(|c| *c != ' ') {
-                out.push_str(&format!("\x1b[38;5;{code}m"));
+                let _ = write!(out, "\x1b[38;5;{code}m");
             }
             for c in &chars[start..end] {
                 out.push(*c);
@@ -111,8 +113,8 @@ pub fn input_text() -> String {
 
 /// DECSET/DECRST ?1049: switch to (or back from) the alternate screen so the
 /// viewer owns the whole terminal and no scrolled-back content bleeds through.
-/// Mirrors `ClearAndEnableAlternateScreen` handling in ratatui_termina.rs.
-fn alternate_screen(enable: bool) -> Csi {
+/// Mirrors `ClearAndEnableAlternateScreen` handling in `ratatui_termina.rs`.
+const fn alternate_screen(enable: bool) -> Csi {
     let mode = csi::DecPrivateMode::Code(
         csi::DecPrivateModeCode::ClearAndEnableAlternateScreen,
     );
@@ -158,7 +160,7 @@ impl Preview {
             .ok_or_else(|| format!("unknown effect: {name}"))?;
         effect.build(&mut ctx).map_err(|e| e.to_string())?;
         let cells = ctx.terminal.frame_cells();
-        Ok(Preview {
+        Ok(Self {
             ctx,
             effect,
             cells,
@@ -168,7 +170,7 @@ impl Preview {
         })
     }
 
-    /// Advance one frame. `next_frame` paces itself (frame_rate sleeps), so
+    /// Advance one frame. `next_frame` paces itself (`frame_rate` sleeps), so
     /// this also throttles the whole UI loop while an effect is running.
     fn tick(&mut self) {
         if self.done {
@@ -196,7 +198,7 @@ struct App {
 impl App {
     fn new(input: String) -> Self {
         let names = ttfx::effects::effect_names();
-        let mut app = App {
+        let mut app = Self {
             names,
             selected: 0,
             input,
@@ -236,7 +238,7 @@ impl App {
     }
 
     /// Returns true when the key should quit the viewer.
-    fn handle(&mut self, code: &KeyCode) -> bool {
+    fn handle(&mut self, code: KeyCode) -> bool {
         match code {
             KeyCode::Char('q') | KeyCode::Escape => true,
             KeyCode::Char('j') | KeyCode::Down => {
@@ -296,8 +298,7 @@ fn ui(app: &mut App, frame: &mut Frame<'_>) {
     let cells = app
         .preview
         .as_ref()
-        .map(|preview| preview.cells.as_slice())
-        .unwrap_or(&[]);
+        .map_or(&[][..], |preview| preview.cells.as_slice());
     frame.render_widget(PreviewWidget { cells }, inner);
 
     let footer = match &app.message {
@@ -440,7 +441,7 @@ fn main() -> io::Result<()> {
                 {
                     break;
                 }
-                if app.handle(&key.code) {
+                if app.handle(key.code) {
                     break;
                 }
             }

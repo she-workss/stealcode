@@ -1,9 +1,9 @@
-//! Event system, ported from engine/base_character.py EventHandler.
+//! Event system, ported from `engine/base_character.py` `EventHandler`.
 //!
-//! Storage is plain data; dispatch lives on EngineCtx (engine/ctx.rs) so that
+//! Storage is plain data; dispatch lives on `EngineCtx` (engine/ctx.rs) so that
 //! actions execute inline at the exact upstream emission points, reentrantly
-//! (plan.md §4.2). Effect callbacks are (CallbackId, payload) routed through
-//! EffectHooks::dispatch_callback - never closures in the arena.
+//! (plan.md §4.2). Effect callbacks are (`CallbackId`, payload) routed through
+//! `EffectHooks::dispatch_callback` - never closures in the arena.
 
 use crate::utils::geometry::Coord;
 
@@ -20,7 +20,7 @@ pub enum Event {
 
 impl Event {
     #[inline]
-    fn bit(self) -> u8 {
+    const fn bit(self) -> u8 {
         1 << (self as u8)
     }
 }
@@ -49,7 +49,7 @@ pub enum CallerKey {
 
 /// A caller identity borrowed for the duration of a lookup. Emission sites
 /// already hold the id they are firing for, so matching against the table costs
-/// nothing - building an owned CallerKey per emission did.
+/// nothing - building an owned `CallerKey` per emission did.
 #[derive(Debug, Clone, Copy)]
 pub enum CallerRef<'a> {
     Scene(&'a str),
@@ -89,32 +89,32 @@ impl CallerKey {
     #[inline]
     fn as_ref(&self) -> CallerRef<'_> {
         match self {
-            CallerKey::Scene(id) => CallerRef::Scene(id),
-            CallerKey::Path(id) => CallerRef::Path(id),
-            CallerKey::Waypoint(key) => CallerRef::Waypoint(key),
+            Self::Scene(id) => CallerRef::Scene(id),
+            Self::Path(id) => CallerRef::Path(id),
+            Self::Waypoint(key) => CallerRef::Waypoint(key),
         }
     }
 
     #[inline]
     fn matches(&self, caller: CallerRef<'_>) -> bool {
         match (self, caller) {
-            (CallerKey::Scene(a), CallerRef::Scene(b)) => **a == *b,
-            (CallerKey::Path(a), CallerRef::Path(b)) => **a == *b,
-            (CallerKey::Waypoint(a), CallerRef::Waypoint(b)) => a == b,
+            (Self::Scene(a), CallerRef::Scene(b)) => **a == *b,
+            (Self::Path(a), CallerRef::Path(b)) => **a == *b,
+            (Self::Waypoint(a), CallerRef::Waypoint(b)) => a == b,
             _ => false,
         }
     }
 }
 
 /// Typed payload values for effect callbacks (upstream Callback *args).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallbackValue {
     Int(i64),
 }
 
 /// An effect-defined callback: the id selects behavior inside the effect's
-/// dispatch_callback; args are owned data captured at registration.
-#[derive(Debug, Clone, PartialEq)]
+/// `dispatch_callback`; args are owned data captured at registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectCallback {
     pub id: u32,
     pub args: Vec<CallbackValue>,
@@ -122,7 +122,7 @@ pub struct EffectCallback {
 
 /// A registered action with its resolved target (upstream resolves string ids
 /// to objects at registration; Scene/Path equality is by id, so ids suffice).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventAction {
     ActivatePath(String),
     ActivateScene(String),
@@ -138,7 +138,7 @@ pub enum EventAction {
 ///
 /// `subscribed` mirrors the table as a bitmask of registered event kinds. Most
 /// characters register a handful of events while the engine emits thousands,
-/// so callers test it first and skip building the (allocating) CallerKey when
+/// so callers test it first and skip building the (allocating) `CallerKey` when
 /// nothing could match.
 #[derive(Debug, Clone, Default)]
 pub struct EventHandler {
@@ -155,9 +155,10 @@ struct RegisteredEvent {
 }
 
 impl EventHandler {
-    /// register_event with the duplicate check (upstream raises
-    /// DuplicateEventRegistrationError). Caller/target id resolution and type
-    /// validation happen in EngineCtx::register_event, which has arena access.
+    /// `register_event` with the duplicate check (upstream raises
+    /// `DuplicateEventRegistrationError`). Caller/target id resolution and type
+    /// validation happen in `EngineCtx::register_event`, which has arena
+    /// access.
     pub fn push(
         &mut self,
         event: Event,
@@ -194,11 +195,13 @@ impl EventHandler {
     /// True when at least one action is registered for this event kind, for any
     /// caller. A false answer means `actions_index` cannot match.
     #[inline]
-    pub fn subscribes(&self, event: Event) -> bool {
+    #[must_use]
+    pub const fn subscribes(&self, event: Event) -> bool {
         self.subscribed & event.bit() != 0
     }
 
     #[inline]
+    #[must_use]
     pub fn actions_index(
         &self,
         event: Event,
@@ -223,6 +226,7 @@ impl EventHandler {
     }
 
     #[inline]
+    #[must_use]
     pub fn actions(&self, index: usize) -> &[EventAction] {
         &self.registered_events[index].actions
     }

@@ -1,4 +1,4 @@
-//! unstable, ported from effects/effect_unstable.py.
+//! unstable, ported from `effects/effect_unstable.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -88,8 +88,9 @@ pub struct Unstable {
 }
 
 impl Unstable {
+    #[must_use]
     pub fn new(config: UnstableConfig) -> Self {
-        Unstable {
+        Self {
             config,
             jumbled_coords: FxHashMap::default(),
             character_final_color_map: FxHashMap::default(),
@@ -588,6 +589,6 @@ impl Effect for Unstable {
     }
 }
 
-fn uses_pre_of(ch: &crate::engine::character::EffectCharacter) -> bool {
+const fn uses_pre_of(ch: &crate::engine::character::EffectCharacter) -> bool {
     ch.uses_input_preexisting_colors
 }

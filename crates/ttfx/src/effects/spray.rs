@@ -1,4 +1,4 @@
-//! spray, ported from effects/effect_spray.py.
+//! spray, ported from `effects/effect_spray.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -111,8 +111,9 @@ pub struct Spray {
 }
 
 impl Spray {
+    #[must_use]
     pub fn new(config: SprayConfig) -> Self {
-        Spray {
+        Self {
             config,
             pending_chars: Vec::new(),
             character_final_color_map: FxHashMap::default(),

@@ -1,4 +1,4 @@
-//! beams, ported from effects/effect_beams.py.
+//! beams, ported from `effects/effect_beams.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -111,7 +111,7 @@ enum Direction {
     Column,
 }
 
-/// BeamsIterator.Group state (get_next_character lives on Beams for hooks
+/// BeamsIterator.Group state (`get_next_character` lives on Beams for hooks
 /// access).
 #[derive(Debug)]
 struct Group {
@@ -140,8 +140,9 @@ pub struct Beams {
 }
 
 impl Beams {
+    #[must_use]
     pub fn new(config: BeamsConfig) -> Self {
-        Beams {
+        Self {
             config,
             pending_groups: Vec::new(),
             active_groups: Vec::new(),
@@ -187,7 +188,7 @@ impl Beams {
         }
     }
 
-    /// Group.get_next_character.
+    /// `Group.get_next_character`.
     fn get_next_character(
         &mut self,
         ctx: &mut EngineCtx,
@@ -516,7 +517,9 @@ impl Effect for Beams {
                     }
                 }
                 Phase::FinalWipe => {
-                    if !self.final_wipe_groups.is_empty() {
+                    if self.final_wipe_groups.is_empty() {
+                        self.phase = Phase::Complete;
+                    } else {
                         for _ in 0..self.config.final_wipe_speed {
                             if self.final_wipe_groups.is_empty() {
                                 break;
@@ -528,8 +531,6 @@ impl Effect for Beams {
                                 ctx.active_characters.insert(id);
                             }
                         }
-                    } else {
-                        self.phase = Phase::Complete;
                     }
                 }
                 Phase::Complete => {}

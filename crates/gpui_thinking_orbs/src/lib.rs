@@ -45,7 +45,7 @@
 //! | `Reasoning` | counter-rotating gyroscope loops |
 //! | `Recalling` | memory echoes expanding from a core |
 //!
-//! Animation geometry is pure Rust (no DOM, no WebGL). Dots are painted as
+//! Animation geometry is pure Rust (no DOM, no `WebGL`). Dots are painted as
 //! rounded GPUI quads; constellation edges use stroked paths.
 
 mod engine;

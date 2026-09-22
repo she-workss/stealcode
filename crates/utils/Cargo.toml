@@ -9,7 +9,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 dirs.workspace = true
-dunce = { version = "1", default-features = false }
 globset = { version = "0.4", default-features = false }
 itertools = { version = "0.15", default-features = false, features = [
     "use_std",
@@ -17,6 +16,9 @@ itertools = { version = "0.15", default-features = false, features = [
 ref-cast = { version = "1", default-features = false }
 regex = { version = "1.13", default-features = false }
 serde.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+dunce = { version = "1", default-features = false }
 
 [lints]
 workspace = true

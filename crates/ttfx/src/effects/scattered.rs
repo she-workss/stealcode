@@ -1,4 +1,4 @@
-//! scattered, ported from effects/effect_scattered.py.
+//! scattered, ported from `effects/effect_scattered.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -69,8 +69,9 @@ pub struct Scattered {
 }
 
 impl Scattered {
+    #[must_use]
     pub fn new(config: ScatteredConfig) -> Self {
-        Scattered {
+        Self {
             config,
             pending_chars: Vec::new(),
             character_final_color_map: FxHashMap::default(),

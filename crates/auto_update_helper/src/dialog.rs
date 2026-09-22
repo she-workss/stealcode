@@ -41,9 +41,9 @@ pub(crate) fn create_dialog_window(total_steps: usize) -> Result<HWND> {
             hInstance: module.into(),
             ..Default::default()
         };
-        RegisterClassW(&wc);
+        RegisterClassW(&raw const wc);
         let mut rect = RECT::default();
-        GetWindowRect(GetDesktopWindow(), &mut rect)
+        GetWindowRect(GetDesktopWindow(), &raw mut rect)
             .context("unable to get desktop rect")?;
         let (width, height) = (400, 120);
         let hwnd = CreateWindowExW(
@@ -88,12 +88,6 @@ pub(crate) fn create_dialog_window(total_steps: usize) -> Result<HWND> {
     }
 }
 
-pub(crate) fn notify_job_done(hwnd: HWND) {
-    unsafe {
-        let _ = PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0));
-    }
-}
-
 pub(crate) fn notify_terminate(hwnd: isize) {
     unsafe {
         let _ = PostMessageW(
@@ -114,10 +108,10 @@ unsafe extern "system" fn wnd_proc(
     match msg {
         WM_PAINT => unsafe {
             let mut ps = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut ps);
+            let hdc = BeginPaint(hwnd, &raw mut ps);
             let _ =
                 TextOutW(hdc, 20, 15, &HSTRING::from("Updating StealCode..."));
-            let _ = EndPaint(hwnd, &ps);
+            let _ = EndPaint(hwnd, &raw const ps);
             ReleaseDC(Some(hwnd), hdc);
             LRESULT(0)
         },

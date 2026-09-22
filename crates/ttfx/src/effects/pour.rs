@@ -1,4 +1,4 @@
-//! pour, ported from effects/effect_pour.py.
+//! pour, ported from `effects/effect_pour.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -112,8 +112,9 @@ pub struct Pour {
 }
 
 impl Pour {
+    #[must_use]
     pub fn new(config: PourConfig) -> Self {
-        Pour {
+        Self {
             config,
             pending_groups: Vec::new(),
             character_final_color_map: FxHashMap::default(),

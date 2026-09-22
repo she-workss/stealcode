@@ -1,16 +1,16 @@
-//! FastConformer encoder (cache-aware variant), offline one-shot path.
+//! `FastConformer` encoder (cache-aware variant), offline one-shot path.
 //!
 //! Mirrors the C++ reference (`build_encoder_graph` +
 //! `build_conformer_block` + `build_pre_encode`):
-//!   * pre_encode: causal stride-2 subsampling stack (pad 2/1 on both spatial
+//!   * `pre_encode`: causal stride-2 subsampling stack (pad 2/1 on both spatial
 //!     axes, conv with p=0), 128 -> 65 -> 33 -> 17 freq bins; flatten [t,
-//!     17*256] -> linear out (4352 -> d_model).
+//!     17*256] -> linear out (4352 -> `d_model`).
 //!   * 24 conformer blocks: macaron FF (x + 0.5*FF(LN)), rel-pos MHSA (full
-//!     residual), conv module (pw1 -> GLU -> dw -> LN -> SiLU -> pw2, full
+//!     residual), conv module (pw1 -> GLU -> dw -> LN -> `SiLU` -> pw2, full
 //!     residual), macaron FF2, final per-block LN.
-//!   * chunked_limited attention mask: chunk_size = att_right + 1, left_chunks
-//!     = att_left / chunk_size; band [k_min, k_max).
-//!   * pos_emb computed host-side (sin/cos, div = 10000^(-2k/d)).
+//!   * `chunked_limited` attention mask: `chunk_size` = `att_right` + 1,
+//!     `left_chunks` = `att_left` / `chunk_size`; band [`k_min`, `k_max`).
+//!   * `pos_emb` computed host-side (sin/cos, div = 10000^(-2k/d)).
 //!   * optional prompt MLP on the encoder output (multilingual).
 
 use std::sync::Arc;
@@ -71,14 +71,14 @@ pub struct Block {
     pub attn_qkv: Option<Lin>,
     pub attn_pos: Lin,
     pub attn_out: Lin,
-    /// [n_heads * head_dim], row per head.
+    /// [`n_heads` * `head_dim`], row per head.
     pub pos_u: Vec<f32>,
     pub pos_v: Vec<f32>,
     pub norm_conv: LayerNorm,
     pub pw1: Lin,
     pub dw: Conv1dDw,
-    /// LayerNorm affine from the conv.batch_norm tensors
-    /// (conv_norm = layer_norm).
+    /// `LayerNorm` affine from the `conv.batch_norm` tensors
+    /// (`conv_norm` = `layer_norm`).
     pub conv_ln: LayerNorm,
     pub pw2: Lin,
     pub norm_ff2: LayerNorm,
@@ -339,8 +339,9 @@ impl Encoder {
         })
     }
 
-    /// Host-side sinusoidal pos_emb, [pos_len, d_model] time-major rows.
-    /// pos_len = 2*T_enc - 1, zero at row T_enc - 1.
+    /// Host-side sinusoidal `pos_emb`, [`pos_len`, `d_model`] time-major rows.
+    /// `pos_len` = 2*`T_enc` - 1, zero at row `T_enc` - 1.
+    #[must_use]
     pub fn pos_emb(&self, t_enc: usize) -> Vec<f32> {
         let d = self.cfg.d_model;
         let pos_len = 2 * t_enc - 1;
@@ -359,8 +360,8 @@ impl Encoder {
         pe
     }
 
-    /// Full offline encode: mel [t_mel, n_mels] time-major in, encoder
-    /// output [t_enc, d_model] time-major out. `prompt_id` selects the
+    /// Full offline encode: mel [`t_mel`, `n_mels`] time-major in, encoder
+    /// output [`t_enc`, `d_model`] time-major out. `prompt_id` selects the
     /// one-hot for the prompt MLP (None skips the prompt MLP).
     pub fn encode(
         &mut self,
@@ -436,23 +437,23 @@ impl Encoder {
         let d = self.cfg.d_model;
         if let Some(mlp) = &mut self.prompt {
             let num_prompts = self.cfg.num_prompts;
-            if let Some(pid) = prompt_id {
-                if (pid as usize) < num_prompts {
-                    let cat_in = d + num_prompts;
-                    let mut cat = vec![0.0f32; cat_in * t_enc];
-                    for t in 0..t_enc {
-                        cat[t * cat_in..t * cat_in + d]
-                            .copy_from_slice(&x[t * d..(t + 1) * d]);
-                        cat[t * cat_in + d + pid as usize] = 1.0;
-                    }
-                    let xt = transpose(&cat, t_enc, cat_in);
-                    let mut h = Vec::new();
-                    mlp.mlp0.forward_t(&mut self.scratch, &xt, t_enc, &mut h);
-                    crate::simd_kernel::relu_into(&mut h);
-                    let mut y = Vec::new();
-                    mlp.mlp2.forward_t(&mut self.scratch, &h, t_enc, &mut y);
-                    *x = transpose(&y, d, t_enc);
+            if let Some(pid) = prompt_id
+                && (pid as usize) < num_prompts
+            {
+                let cat_in = d + num_prompts;
+                let mut cat = vec![0.0f32; cat_in * t_enc];
+                for t in 0..t_enc {
+                    cat[t * cat_in..t * cat_in + d]
+                        .copy_from_slice(&x[t * d..(t + 1) * d]);
+                    cat[t * cat_in + d + pid as usize] = 1.0;
                 }
+                let xt = transpose(&cat, t_enc, cat_in);
+                let mut h = Vec::new();
+                mlp.mlp0.forward_t(&mut self.scratch, &xt, t_enc, &mut h);
+                crate::simd_kernel::relu_into(&mut h);
+                let mut y = Vec::new();
+                mlp.mlp2.forward_t(&mut self.scratch, &h, t_enc, &mut y);
+                *x = transpose(&y, d, t_enc);
             }
         }
     }
@@ -570,14 +571,14 @@ impl Encoder {
         // y = x + 0.5 * f
         y.resize(t * d, 0.0);
         for i in 0..t * d {
-            y[i] = x[i] + 0.5 * f[i];
+            y[i] = 0.5f32.mul_add(f[i], x[i]);
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn block_forward(
         cfg: &EncoderConfig,
-        b: &mut Block,
+        b: &Block,
         x: &[f32],
         t: usize,
         pe: &[f32],
@@ -592,10 +593,8 @@ impl Encoder {
         let left = cfg.att_context_left;
         let right = cfg.att_context_right;
         let dmp = |name: &str, v: &[f32]| {
-            if dump {
-                if let Some(dir) = dump_dir {
-                    std::fs::write(dir.join(name), f32_bytes(v)).ok();
-                }
+            if dump && let Some(dir) = dump_dir {
+                std::fs::write(dir.join(name), f32_bytes(v)).ok();
             }
         };
 

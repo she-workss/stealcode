@@ -1,4 +1,4 @@
-//! highlight, ported from effects/effect_highlight.py.
+//! highlight, ported from `effects/effect_highlight.py`.
 
 use crate::{
     effects::common::{
@@ -67,8 +67,9 @@ pub struct Highlight {
 }
 
 impl Highlight {
-    pub fn new(config: HighlightConfig) -> Self {
-        Highlight {
+    #[must_use]
+    pub const fn new(config: HighlightConfig) -> Self {
+        Self {
             config,
             easer: None,
         }

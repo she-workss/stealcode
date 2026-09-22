@@ -1,4 +1,4 @@
-//! bubbles, ported from effects/effect_bubbles.py.
+//! bubbles, ported from `effects/effect_bubbles.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-/// pop_condition choices.
+/// `pop_condition` choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopCondition {
     Row,
@@ -114,14 +114,15 @@ struct Bubble {
 #[derive(Debug)]
 pub struct Bubbles {
     config: BubblesConfig,
-    bubbles: Vec<Bubble>,
-    animating_bubbles: Vec<Bubble>,
+    pending: Vec<Bubble>,
+    animating: Vec<Bubble>,
     rainbow_gradient: Gradient,
     character_final_color_map: FxHashMap<CharId, Color>,
     steps_since_last_bubble: i64,
 }
 
 impl Bubbles {
+    #[must_use]
     pub fn new(config: BubblesConfig) -> Self {
         let rainbow_stops = [
             Color::from_hex("e81416").unwrap(), // red
@@ -134,19 +135,19 @@ impl Bubbles {
         ];
         let rainbow_gradient = Gradient::with_steps(&rainbow_stops, 5, false)
             .expect("rainbow gradient");
-        Bubbles {
+        Self {
             config,
-            bubbles: Vec::new(),
-            animating_bubbles: Vec::new(),
+            pending: Vec::new(),
+            animating: Vec::new(),
             rainbow_gradient,
             character_final_color_map: FxHashMap::default(),
             steps_since_last_bubble: 0,
         }
     }
 
-    /// Bubble.set_character_coordinates.
+    /// `Bubble.set_character_coordinates`.
     fn bubble_set_character_coordinates(
-        &mut self,
+        &self,
         ctx: &mut EngineCtx,
         bubble: &mut Bubble,
     ) {
@@ -175,7 +176,7 @@ impl Bubbles {
         }
     }
 
-    /// Bubble.__init__ (+ make_waypoints + make_gradients).
+    /// Bubble.__init__ (+ `make_waypoints` + `make_gradients`).
     fn make_bubble(
         &mut self,
         ctx: &mut EngineCtx,
@@ -362,8 +363,7 @@ impl Bubbles {
     fn bubble_move(&mut self, ctx: &mut EngineCtx, bubble: &mut Bubble) {
         ctx.motion_move(self, bubble.anchor_char);
         self.bubble_set_character_coordinates(ctx, bubble);
-        for i in 0..bubble.characters.len() {
-            let id = bubble.characters[i];
+        for &id in &bubble.characters {
             ctx.step_animation(self, id);
         }
     }
@@ -576,7 +576,7 @@ impl Effect for Bubbles {
         ) {
             unbubbled_chars.extend(char_list);
         }
-        self.bubbles = Vec::new();
+        self.pending = Vec::new();
         while !unbubbled_chars.is_empty() {
             let mut bubble_group: Vec<CharId> = Vec::new();
             if unbubbled_chars.len() < 5 {
@@ -599,31 +599,31 @@ impl Effect for Bubbles {
             );
             let new_bubble =
                 self.make_bubble(ctx, bubble_origin, bubble_group)?;
-            self.bubbles.push(new_bubble);
+            self.pending.push(new_bubble);
         }
-        self.animating_bubbles = Vec::new();
+        self.animating = Vec::new();
         self.steps_since_last_bubble = 0;
         Ok(())
     }
 
     fn next_frame(&mut self, ctx: &mut EngineCtx) -> Option<String> {
-        if !self.animating_bubbles.is_empty()
+        if !self.animating.is_empty()
             || !ctx.active_characters.is_empty()
-            || !self.bubbles.is_empty()
+            || !self.pending.is_empty()
         {
-            if !self.bubbles.is_empty()
+            if !self.pending.is_empty()
                 && self.steps_since_last_bubble >= self.config.bubble_delay
             {
-                let next_bubble = self.bubbles.remove(0);
+                let next_bubble = self.pending.remove(0);
                 for &id in &next_bubble.characters {
                     ctx.terminal.set_character_visibility(id, true);
                 }
-                self.animating_bubbles.push(next_bubble);
+                self.animating.push(next_bubble);
                 self.steps_since_last_bubble = 0;
             }
             self.steps_since_last_bubble += 1;
 
-            let mut animating = std::mem::take(&mut self.animating_bubbles);
+            let mut animating = std::mem::take(&mut self.animating);
             for bubble in &animating {
                 if bubble.landed {
                     self.bubble_pop(ctx, bubble);
@@ -636,7 +636,7 @@ impl Effect for Bubbles {
             for bubble in &mut animating {
                 self.bubble_move(ctx, bubble);
             }
-            self.animating_bubbles = animating;
+            self.animating = animating;
 
             ctx.update(self);
             return Some(ctx.frame());

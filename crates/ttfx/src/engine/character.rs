@@ -1,4 +1,5 @@
-//! EffectCharacter, ported from engine/base_character.py, stored in an arena.
+//! `EffectCharacter`, ported from `engine/base_character.py`, stored in an
+//! arena.
 //!
 //! `CharId` is the arena slot index. `character_id` is the Python-compatible
 //! monotonically allocated id - these are NOT the same thing: the Python parser
@@ -47,6 +48,7 @@ pub struct EffectCharacter {
 }
 
 impl EffectCharacter {
+    #[must_use]
     pub fn new(
         character_id: u32,
         symbol: &str,
@@ -54,7 +56,7 @@ impl EffectCharacter {
         input_row: i64,
     ) -> Self {
         let input_coord = Coord::new(input_column, input_row);
-        EffectCharacter {
+        Self {
             character_id,
             input_symbol: symbol.to_string(),
             input_coord,
@@ -72,9 +74,10 @@ impl EffectCharacter {
         }
     }
 
-    /// EffectCharacter.is_active: active while the animation's active scene is
-    /// incomplete OR motion has an active path. Note looping scenes report
-    /// complete, so loop-only characters read as inactive (faithful quirk).
+    /// `EffectCharacter.is_active`: active while the animation's active scene
+    /// is incomplete OR motion has an active path. Note looping scenes
+    /// report complete, so loop-only characters read as inactive (faithful
+    /// quirk).
     pub fn is_active(&self) -> bool {
         // Movement is a null check; scene completion is a map lookup. Same
         // answer either way, so ask the cheap question first.

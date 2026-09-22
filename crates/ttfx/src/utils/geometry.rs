@@ -1,8 +1,8 @@
 //! Coord and geometry math, ported from utils/geometry.py.
 //!
-//! Upstream wraps every function in lru_cache; behavior is identical without
+//! Upstream wraps every function in `lru_cache`; behavior is identical without
 //! the caches, so they are omitted. All `round()` calls are banker's rounding
-//! (pycompat), all int() casts truncate.
+//! (pycompat), all `int()` casts truncate.
 
 use rustc_hash::FxHashSet;
 
@@ -17,13 +17,14 @@ pub struct Coord {
 }
 
 impl Coord {
-    pub fn new(column: i64, row: i64) -> Self {
-        Coord { column, row }
+    #[must_use]
+    pub const fn new(column: i64, row: i64) -> Self {
+        Self { column, row }
     }
 }
 
 /// Float-valued point for bezier intermediates: upstream builds Coord objects
-/// with float fields inside de_casteljau (violating its own annotation) and
+/// with float fields inside `de_casteljau` (violating its own annotation) and
 /// only rounds the final result.
 #[derive(Debug, Clone, Copy)]
 struct FloatPoint {
@@ -34,15 +35,16 @@ struct FloatPoint {
 impl FloatPoint {
     #[inline]
     fn interpolate(self, other: Self, t: f64) -> Self {
-        FloatPoint {
-            column: (1.0 - t) * self.column + t * other.column,
-            row: (1.0 - t) * self.row + t * other.row,
+        Self {
+            column: t.mul_add(other.column, (1.0 - t) * self.column),
+            row: t.mul_add(other.row, (1.0 - t) * self.row),
         }
     }
 }
 
-/// find_coords_on_circle: coords_limit 0 -> round(2*pi*r); x offset from the
-/// origin is doubled for cell aspect; every point rounded (banker's).
+/// `find_coords_on_circle`: `coords_limit` 0 -> round(2*pi*r); x offset from
+/// the origin is doubled for cell aspect; every point rounded (banker's).
+#[must_use]
 pub fn find_coords_on_circle(
     origin: Coord,
     radius: i64,
@@ -62,10 +64,10 @@ pub fn find_coords_on_circle(
     let angle_step = 2.0 * std::f64::consts::PI / coords_limit as f64;
     for i in 0..coords_limit {
         let angle = angle_step * i as f64;
-        let mut x = origin.column as f64 + radius as f64 * angle.cos();
+        let mut x = (radius as f64).mul_add(angle.cos(), origin.column as f64);
         let x_diff = x - origin.column as f64;
         x += x_diff;
-        let y = origin.row as f64 + radius as f64 * angle.sin();
+        let y = (radius as f64).mul_add(angle.sin(), origin.row as f64);
         let point = Coord::new(round_half_even(x), round_half_even(y));
         if unique {
             if !seen.contains(&point) {
@@ -79,19 +81,20 @@ pub fn find_coords_on_circle(
     points
 }
 
-/// find_coords_in_circle: actually an ellipse (a = diameter, b = diameter/2);
-/// int() truncation on the y offset, faithfully.
+/// `find_coords_in_circle`: actually an ellipse (a = diameter, b = diameter/2);
+/// `int()` truncation on the y offset, faithfully.
+#[must_use]
 pub fn find_coords_in_circle(center: Coord, diameter: i64) -> Vec<Coord> {
     let (h, k) = (center.column, center.row);
     let mut coords: Vec<Coord> = Vec::new();
     if diameter == 0 {
         return coords;
     }
-    let a_squared = (diameter as f64).powf(2.0);
-    let b_squared = (diameter as f64 / 2.0).powf(2.0);
+    let a_squared = (diameter as f64).powi(2);
+    let b_squared = (diameter as f64 / 2.0).powi(2);
     for x in (h - diameter)..=(h + diameter) {
-        let x_component = ((x - h) as f64).powf(2.0) / a_squared;
-        let max_y_offset = (b_squared * (1.0 - x_component)).powf(0.5) as i64;
+        let x_component = ((x - h) as f64).powi(2) / a_squared;
+        let max_y_offset = (b_squared * (1.0 - x_component)).sqrt() as i64;
         for y in (k - max_y_offset)..=(k + max_y_offset) {
             coords.push(Coord::new(x, y));
         }
@@ -99,8 +102,9 @@ pub fn find_coords_in_circle(center: Coord, diameter: i64) -> Vec<Coord> {
     coords
 }
 
-/// find_coords_in_rect: full (2d+1)^2 block, empty for distance 0.
+/// `find_coords_in_rect`: full (2d+1)^2 block, empty for distance 0.
 /// Iteration order is column-major like upstream.
+#[must_use]
 pub fn find_coords_in_rect(origin: Coord, distance: i64) -> Vec<Coord> {
     let mut coords: Vec<Coord> = Vec::new();
     if distance == 0 {
@@ -114,7 +118,8 @@ pub fn find_coords_in_rect(origin: Coord, distance: i64) -> Vec<Coord> {
     coords
 }
 
-/// find_coords_on_rect: perimeter only; empty if either half-dimension is 0.
+/// `find_coords_on_rect`: perimeter only; empty if either half-dimension is 0.
+#[must_use]
 pub fn find_coords_on_rect(
     origin: Coord,
     half_width: i64,
@@ -139,7 +144,9 @@ pub fn find_coords_on_rect(
     coords
 }
 
-/// extrapolate_along_ray: NON-doubled line length, lerp past the target, round.
+/// `extrapolate_along_ray`: NON-doubled line length, lerp past the target,
+/// round.
+#[must_use]
 pub fn extrapolate_along_ray(
     origin: Coord,
     target: Coord,
@@ -152,13 +159,14 @@ pub fn extrapolate_along_ray(
     }
     let t = total_distance / base;
     let next_column =
-        (1.0 - t) * origin.column as f64 + t * target.column as f64;
-    let next_row = (1.0 - t) * origin.row as f64 + t * target.row as f64;
+        t.mul_add(target.column as f64, (1.0 - t) * origin.column as f64);
+    let next_row = t.mul_add(target.row as f64, (1.0 - t) * origin.row as f64);
     Coord::new(round_half_even(next_column), round_half_even(next_row))
 }
 
-/// find_coord_on_bezier_curve: recursive De Casteljau of arbitrary degree with
-/// float intermediates, rounded only at the end.
+/// `find_coord_on_bezier_curve`: recursive De Casteljau of arbitrary degree
+/// with float intermediates, rounded only at the end.
+#[must_use]
 pub fn find_coord_on_bezier_curve(
     start: Coord,
     control: &[Coord],
@@ -216,16 +224,18 @@ pub fn find_coord_on_bezier_curve(
     )
 }
 
-/// find_coord_on_line: lerp + round.
+/// `find_coord_on_line`: lerp + round.
+#[must_use]
 pub fn find_coord_on_line(start: Coord, end: Coord, t: f64) -> Coord {
-    let x = (1.0 - t) * start.column as f64 + t * end.column as f64;
-    let y = (1.0 - t) * start.row as f64 + t * end.row as f64;
+    let x = t.mul_add(end.column as f64, (1.0 - t) * start.column as f64);
+    let y = t.mul_add(end.row as f64, (1.0 - t) * start.row as f64);
     Coord::new(round_half_even(x), round_half_even(y))
 }
 
-/// find_length_of_bezier_curve: 10-sample polyline that stops at t=0.9 - the
+/// `find_length_of_bezier_curve`: 10-sample polyline that stops at t=0.9 - the
 /// final t=0.9..1.0 span is deliberately (faithfully) omitted, systematically
 /// underestimating lengths. Do not fix (plan.md §5.4).
+#[must_use]
 pub fn find_length_of_bezier_curve(
     start: Coord,
     control: &[Coord],
@@ -242,8 +252,9 @@ pub fn find_length_of_bezier_curve(
     length
 }
 
-/// find_length_of_line: hypot, with the row delta doubled when requested
+/// `find_length_of_line`: hypot, with the row delta doubled when requested
 /// (terminal cell aspect convention).
+#[must_use]
 pub fn find_length_of_line(
     coord1: Coord,
     coord2: Coord,
@@ -258,8 +269,8 @@ pub fn find_length_of_line(
     }
 }
 
-/// find_normalized_distance_from_center: rejects out-of-rectangle coords
-/// (upstream ValueError); stays within [0, 1] for accepted ones.
+/// `find_normalized_distance_from_center`: rejects out-of-rectangle coords
+/// (upstream `ValueError`); stays within [0, 1] for accepted ones.
 pub fn find_normalized_distance_from_center(
     bottom: i64,
     top: i64,
@@ -283,10 +294,14 @@ pub fn find_normalized_distance_from_center(
         return Err("Coordinate is not within the rectangle.".to_string());
     }
 
-    let max_distance =
-        ((right as f64).powf(2.0) + ((top * 2) as f64).powf(2.0)).powf(0.5);
-    let distance = ((col as f64 - center_x).powf(2.0)
-        + ((row as f64 - center_y) * 2.0).powf(2.0))
-    .powf(0.5);
+    let max_distance = ((top * 2) as f64)
+        .mul_add((top * 2) as f64, (right as f64).powi(2))
+        .sqrt();
+    let distance = ((row as f64 - center_y) * 2.0)
+        .mul_add(
+            (row as f64 - center_y) * 2.0,
+            (col as f64 - center_x).powi(2),
+        )
+        .sqrt();
     Ok(distance / (max_distance / 2.0))
 }

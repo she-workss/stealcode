@@ -27,7 +27,10 @@ struct Preset {
 }
 
 fn preset_for(mode: ModeKey, size: OrbSize) -> Preset {
-    use ModeKey::*;
+    use ModeKey::{
+        Braid, Echo, Focus, Globe, Gyroscope, Morph, Orbits, Ribbon, Ring,
+        Rubik, Wave, Web,
+    };
 
     // The large designs preserve each avatar preset's character while adding
     // detail gradually. `scale_counts` understands each painter's topology
@@ -316,6 +319,7 @@ fn preset_for(mode: ModeKey, size: OrbSize) -> Preset {
 }
 
 /// Resolve a (state, size) pair to its mode + fully-scaled draw options.
+#[must_use]
 pub fn resolve_preset(state: OrbState, size: OrbSize) -> Resolved {
     let mode = ModeKey::from_state(state);
     let preset = preset_for(mode, size);

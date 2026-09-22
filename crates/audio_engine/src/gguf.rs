@@ -1,26 +1,27 @@
-//! Minimal GGUF loader for the nemotron-3.5-asr-streaming-0.6b Q8_0
+//! Minimal GGUF loader for the nemotron-3.5-asr-streaming-0.6b `Q8_0`
 //! checkpoint (NVIDIA-format GGUF produced by gguf-py).
 //!
 //! Layout notes verified empirically against the file:
-//!   * header `<IIQQ`: magic, version, n_tensors, n_kv
+//!   * header `<IIQQ`: magic, version, `n_tensors`, `n_kv`
 //!   * KV value type table (as written by this converter): t==2 | t==8  ->
 //!     string (u64 len + bytes) t==4        -> u32 t==5        -> i32 t==6 ->
 //!     f32 t==7        -> u8 (bool) t==3 | t==9 -> array (et u32, count u64,
 //!     elements) array element types: 4/5 -> u32/i32, 6 -> f32, 8 -> string
-//!   * tensor table: name str, n_dims u32, dims u64[n], dtype u32, offset u64
-//!     (dtype AFTER dims - non-standard, but what the file contains)
+//!   * tensor table: name str, `n_dims` u32, dims u64\[n\], dtype u32, offset
+//!     u64 (dtype AFTER dims - non-standard, but what the file contains)
 //!   * tensor data starts at the table end rounded up to 32 bytes; per-tensor
 //!     offsets are relative to that start. Dtypes seen in this file: 0=f32,
-//!     1=f16, 7=q8_0, 8=q8_1.
+//!     1=f16, `7=q8_0`, `8=q8_1`.
 //!
 //! Tensor element order in memory equals torch row-major of the
 //! reversed gguf dims (the gguf-py convention), so `dims` as stored
 //! directly give: `dims[0]` = fastest axis.
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use memmap2::Mmap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 const GGUF_MAGIC: u32 = 0x4655_4747;
 
@@ -38,7 +39,8 @@ pub enum GgufValue {
 }
 
 impl GgufValue {
-    pub fn as_u32(&self) -> Option<u32> {
+    #[must_use]
+    pub const fn as_u32(&self) -> Option<u32> {
         match self {
             Self::U32(v) => Some(*v),
             Self::I32(v) => Some(*v as u32),
@@ -46,7 +48,8 @@ impl GgufValue {
         }
     }
 
-    pub fn as_i32(&self) -> Option<i32> {
+    #[must_use]
+    pub const fn as_i32(&self) -> Option<i32> {
         match self {
             Self::I32(v) => Some(*v),
             Self::U32(v) => Some(*v as i32),
@@ -54,13 +57,15 @@ impl GgufValue {
         }
     }
 
-    pub fn as_f32(&self) -> Option<f32> {
+    #[must_use]
+    pub const fn as_f32(&self) -> Option<f32> {
         match self {
             Self::F32(v) => Some(*v),
             _ => None,
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::Str(v) => Some(v),
@@ -68,13 +73,15 @@ impl GgufValue {
         }
     }
 
-    pub fn as_bool(&self) -> Option<bool> {
+    #[must_use]
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
             Self::U8(v) => Some(*v != 0),
             _ => None,
         }
     }
 
+    #[must_use]
     pub fn as_arr_u32(&self) -> Option<&[u32]> {
         match self {
             Self::ArrU32(v) => Some(v),
@@ -82,6 +89,7 @@ impl GgufValue {
         }
     }
 
+    #[must_use]
     pub fn as_arr_str(&self) -> Option<&[String]> {
         match self {
             Self::ArrStr(v) => Some(v),
@@ -102,7 +110,7 @@ pub struct TensorMeta {
 
 #[derive(Debug)]
 pub struct Gguf {
-    pub kv: HashMap<String, GgufValue>,
+    pub kv: FxHashMap<String, GgufValue>,
     pub tensors: Vec<TensorMeta>,
     bytes: Mmap,
     data_start: usize,
@@ -113,7 +121,7 @@ struct Reader<'a> {
     pos: usize,
 }
 
-impl<'a> Reader<'a> {
+impl Reader<'_> {
     fn u8(&mut self) -> Result<u8> {
         let v = *self.bytes.get(self.pos).context("gguf: unexpected EOF")?;
         self.pos += 1;
@@ -233,7 +241,7 @@ impl Gguf {
 
     fn parse(
         slice: &[u8],
-    ) -> Result<(HashMap<String, GgufValue>, Vec<TensorMeta>, usize)> {
+    ) -> Result<(FxHashMap<String, GgufValue>, Vec<TensorMeta>, usize)> {
         let mut r = Reader {
             bytes: slice,
             pos: 0,
@@ -246,7 +254,7 @@ impl Gguf {
         let n_tensors = r.u64()? as usize;
         let n_kv = r.u64()? as usize;
 
-        let mut kv = HashMap::with_capacity(n_kv);
+        let mut kv = FxHashMap::with_capacity_and_hasher(n_kv, FxBuildHasher);
         for _ in 0..n_kv {
             let key = r.string()?;
             let t = r.u32()?;
@@ -286,6 +294,7 @@ impl Gguf {
         Ok((kv, tensors, data_start))
     }
 
+    #[must_use]
     pub fn tensor(&self, name: &str) -> Option<&TensorMeta> {
         self.tensors.iter().find(|t| t.name == name)
     }
@@ -304,7 +313,7 @@ impl Gguf {
             .checked_add(meta.offset as usize)
             .context("gguf: tensor offset overflow")?;
         let end = base
-            .checked_add(self.tensor_bytes(meta)?)
+            .checked_add(Self::tensor_bytes(meta)?)
             .context("gguf: tensor offset overflow")?;
         if end > self.bytes.len() {
             bail!(
@@ -347,21 +356,21 @@ impl Gguf {
         let mut out = Vec::with_capacity(n);
         match meta.dtype {
             0 => {
-                for chunk in data.chunks_exact(4) {
+                for chunk in data.as_chunks::<4>().0 {
                     out.push(f32::from_le_bytes([
                         chunk[0], chunk[1], chunk[2], chunk[3],
                     ]));
                 }
             }
             1 => {
-                for chunk in data.chunks_exact(2) {
+                for chunk in data.as_chunks::<2>().0 {
                     out.push(f16_to_f32(u16::from_le_bytes([
                         chunk[0], chunk[1],
                     ])));
                 }
             }
-            7 => dequant_q8_0(data, meta.dims[0] as usize, &mut out)?,
-            8 => dequant_q8f16(data, meta.dims[0] as usize, &mut out)?,
+            7 => dequant_q8_0(data, meta.dims[0] as usize, &mut out),
+            8 => dequant_q8f16(data, meta.dims[0] as usize, &mut out),
             other => bail!(
                 "gguf: unsupported tensor dtype {other} for {}",
                 meta.name
@@ -370,7 +379,7 @@ impl Gguf {
         Ok(out)
     }
 
-    fn tensor_bytes(&self, meta: &TensorMeta) -> Result<usize> {
+    fn tensor_bytes(meta: &TensorMeta) -> Result<usize> {
         let n = meta
             .dims
             .iter()
@@ -396,7 +405,7 @@ impl Gguf {
     }
 }
 
-pub(crate) fn f16_to_f32(h: u16) -> f32 {
+pub(crate) const fn f16_to_f32(h: u16) -> f32 {
     let sign = (h >> 15) as u32;
     let exp = ((h >> 10) & 0x1f) as u32;
     let man = (h & 0x3ff) as u32;
@@ -430,9 +439,9 @@ pub(crate) fn f16_to_f32(h: u16) -> f32 {
     f32::from_bits(bits)
 }
 
-/// Q8_0: blocks of 32 values, each block = f32 scale + 32 i8.
+/// `Q8_0`: blocks of 32 values, each block = f32 scale + 32 i8.
 /// Each row is padded to a multiple of 32 elements.
-fn dequant_q8_0(data: &[u8], row: usize, out: &mut Vec<f32>) -> Result<()> {
+fn dequant_q8_0(data: &[u8], row: usize, out: &mut Vec<f32>) {
     let blocks_per_row = row.div_ceil(32);
     let block_bytes = 36usize;
     for (blk, base) in
@@ -447,16 +456,15 @@ fn dequant_q8_0(data: &[u8], row: usize, out: &mut Vec<f32>) -> Result<()> {
         let vals = &data[base + 4..base + 36];
         let in_row = (blk % blocks_per_row) * 32;
         let keep = (32usize).min(row.saturating_sub(in_row));
-        for j in 0..keep {
-            out.push(scale * (vals[j] as i8 as f32));
+        for &v in vals.iter().take(keep) {
+            out.push(scale * (v as i8 as f32));
         }
     }
-    Ok(())
 }
 
-/// Q8F16 (this model's Q8_0): blocks of 32 values, each block =
+/// Q8F16 (this model's `Q8_0)`: blocks of 32 values, each block =
 /// f16 d + 32 i8; value = d * q. 34 bytes per block.
-fn dequant_q8f16(data: &[u8], row: usize, out: &mut Vec<f32>) -> Result<()> {
+fn dequant_q8f16(data: &[u8], row: usize, out: &mut Vec<f32>) {
     let blocks_per_row = row.div_ceil(32);
     let block_bytes = 34usize;
     for (blk, base) in
@@ -466,9 +474,8 @@ fn dequant_q8f16(data: &[u8], row: usize, out: &mut Vec<f32>) -> Result<()> {
         let vals = &data[base + 2..base + 34];
         let in_row = (blk % blocks_per_row) * 32;
         let keep = (32usize).min(row.saturating_sub(in_row));
-        for j in 0..keep {
-            out.push(d * (vals[j] as i8 as f32));
+        for &v in vals.iter().take(keep) {
+            out.push(d * (v as i8 as f32));
         }
     }
-    Ok(())
 }

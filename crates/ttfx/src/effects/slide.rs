@@ -1,4 +1,4 @@
-//! slide, ported from effects/effect_slide.py.
+//! slide, ported from `effects/effect_slide.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-/// typing.Literal["row", "column", "diagonal"].
+/// `typing.Literal["row", "column", "diagonal"]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlideGrouping {
     Row,
@@ -38,6 +38,18 @@ fn parse_slide_grouping(s: &str) -> Result<SlideGrouping, String> {
             ));
         }
     })
+}
+
+/// Diagonal start coordinate for a reversed group: the group's first input
+/// coord shifted down-right by its distance from the canvas top edge.
+fn first_shifted_coord(ctx: &EngineCtx, group_before: &[CharId]) -> Coord {
+    let first_coord =
+        ctx.terminal.arena[group_before[0].0 as usize].input_coord;
+    let distance_from_outside = (ctx.terminal.canvas.top + 1) - first_coord.row;
+    Coord::new(
+        first_coord.column + distance_from_outside,
+        first_coord.row + distance_from_outside,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +119,9 @@ pub struct Slide {
 }
 
 impl Slide {
+    #[must_use]
     pub fn new(config: SlideConfig) -> Self {
-        Slide {
+        Self {
             config,
             pending_groups: Vec::new(),
             character_final_color_map: FxHashMap::default(),
@@ -262,34 +275,19 @@ impl Effect for Slide {
                     .input_coord;
                 let distance_from_outside_bottom =
                     last_coord.row - (ctx.terminal.canvas.bottom - 1);
-                let mut starting_coord = Coord::new(
-                    last_coord.column - distance_from_outside_bottom,
-                    last_coord.row - distance_from_outside_bottom,
-                );
-                if self.config.merge && group_index % 2 == 0 {
+                // Both parity (merge+even) and reverse-direction select the
+                // group's first input coord shifted from the top edge.
+                let reversed = (self.config.merge && group_index % 2 == 0)
+                    || (self.config.reverse_direction && !self.config.merge);
+                let starting_coord = if reversed {
                     group.reverse();
-                    let first_coord = ctx.terminal.arena
-                        [group_before[0].0 as usize]
-                        .input_coord;
-                    let distance_from_outside =
-                        (ctx.terminal.canvas.top + 1) - first_coord.row;
-                    starting_coord = Coord::new(
-                        first_coord.column + distance_from_outside,
-                        first_coord.row + distance_from_outside,
-                    );
-                }
-                if self.config.reverse_direction && !self.config.merge {
-                    group.reverse();
-                    let first_coord = ctx.terminal.arena
-                        [group_before[0].0 as usize]
-                        .input_coord;
-                    let distance_from_outside =
-                        (ctx.terminal.canvas.top + 1) - first_coord.row;
-                    starting_coord = Coord::new(
-                        first_coord.column + distance_from_outside,
-                        first_coord.row + distance_from_outside,
-                    );
-                }
+                    first_shifted_coord(ctx, &group_before)
+                } else {
+                    Coord::new(
+                        last_coord.column - distance_from_outside_bottom,
+                        last_coord.row - distance_from_outside_bottom,
+                    )
+                };
                 for &id in group.iter() {
                     ctx.terminal.arena[id.0 as usize]
                         .motion

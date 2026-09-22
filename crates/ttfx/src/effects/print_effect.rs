@@ -1,4 +1,4 @@
-//! print, ported from effects/effect_print.py.
+//! print, ported from `effects/effect_print.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -59,8 +59,8 @@ impl Default for PrintConfig {
         }
     }
 }
-/// PrintIterator.Row (plain struct over CharIds; scene/coord setup happens in
-/// Print::make_row so it can borrow the engine).
+/// PrintIterator.Row (plain struct over `CharIds`; scene/coord setup happens in
+/// `Print::make_row` so it can borrow the engine).
 #[derive(Debug)]
 struct Row {
     untyped_chars: Vec<CharId>,
@@ -68,7 +68,7 @@ struct Row {
 }
 
 impl Row {
-    /// Row.move_up.
+    /// `Row.move_up`.
     fn move_up(&self, ctx: &mut EngineCtx) {
         for &id in &self.typed_chars {
             let motion = &mut ctx.terminal.arena[id.0 as usize].motion;
@@ -77,7 +77,7 @@ impl Row {
         }
     }
 
-    /// Row.type_char.
+    /// `Row.type_char`.
     fn type_char(&mut self) -> Option<CharId> {
         if self.untyped_chars.is_empty() {
             return None;
@@ -103,8 +103,9 @@ pub struct Print {
 }
 
 impl Print {
+    #[must_use]
     pub fn new(config: PrintConfig) -> Self {
-        Print {
+        Self {
             config,
             pending_rows: Vec::new(),
             processed_rows: Vec::new(),
@@ -203,7 +204,7 @@ impl Print {
                                 "▓".to_string(),
                                 "▒".to_string(),
                                 "░".to_string(),
-                                input_symbol.clone(),
+                                input_symbol,
                             ],
                             3,
                             fg_gradient.as_ref(),
@@ -268,7 +269,7 @@ impl Print {
                             "▓".to_string(),
                             "▒".to_string(),
                             "░".to_string(),
-                            input_symbol.clone(),
+                            input_symbol,
                         ],
                         3,
                         Some(&color_gradient),
@@ -347,7 +348,7 @@ impl Effect for Print {
                         Some(
                             final_gradient_mapping
                                 .get(&ch.input_coord)
-                                .cloned()
+                                .copied()
                                 .unwrap_or_else(|| {
                                     Color::from_hex("ffffff").unwrap()
                                 }),
@@ -403,7 +404,9 @@ impl Effect for Print {
                     },
                 );
                 self.processed_rows.push(finished_row);
-                if !self.pending_rows.is_empty() {
+                if self.pending_rows.is_empty() {
+                    self.typing = false;
+                } else {
                     for row in &self.processed_rows {
                         row.move_up(ctx);
                     }
@@ -503,8 +506,6 @@ impl Effect for Print {
                         }),
                     );
                     ctx.active_characters.insert(self.typing_head);
-                } else {
-                    self.typing = false;
                 }
             }
             ctx.update(self);

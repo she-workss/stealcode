@@ -106,6 +106,7 @@ fn clamp_opt(v: Option<f32>, min: f32, max: f32) -> Option<f32> {
 ///
 /// Called automatically by [`crate::draw_mode_into`]. Safe to call yourself
 /// when composing custom profiles.
+#[must_use]
 pub fn sanitize_mode_opts(opts: &ModeOpts) -> ModeOpts {
     ModeOpts {
         lat_rings: clamp_opt(opts.lat_rings, 1.0, MAX_LATTICE_RINGS),
@@ -151,7 +152,8 @@ pub fn sanitize_mode_opts(opts: &ModeOpts) -> ModeOpts {
 }
 
 /// Clamp the logical paint size in pixels.
-pub fn sanitize_size(size: f32) -> f32 {
+#[must_use]
+pub const fn sanitize_size(size: f32) -> f32 {
     if size.is_finite() {
         size.clamp(MIN_SIZE, MAX_SIZE)
     } else {
@@ -164,7 +166,7 @@ pub fn sanitize_size(size: f32) -> f32 {
 /// Prefer calling this on already-sanitized opts. Non-finite / missing use
 /// `default`; the result is always in `min..=max`.
 #[inline]
-pub(super) fn count_usize(
+pub(super) const fn count_usize(
     v: Option<f32>,
     default: f32,
     min: usize,
@@ -181,6 +183,7 @@ pub(super) fn count_usize(
 
 /// Scale total dot density. 2-D lattices (rings × dots-per-ring) take √scale
 /// each side so the TOTAL scales by `scale`. Flat lists scale linearly.
+#[must_use]
 pub fn scale_counts(opts: &ModeOpts, scale: f32) -> ModeOpts {
     let mut out = opts.clone();
     let scale = if scale.is_finite() && scale > 0.0 {
@@ -229,6 +232,7 @@ pub fn scale_counts(opts: &ModeOpts, scale: f32) -> ModeOpts {
 }
 
 /// Scale every key that sets a dot's rendered radius.
+#[must_use]
 pub fn scale_radii(opts: &ModeOpts, scale: f32) -> ModeOpts {
     let mut out = opts.clone();
     let scale = if scale.is_finite() { scale } else { 1.0 };
@@ -248,8 +252,12 @@ pub fn scale_radii(opts: &ModeOpts, scale: f32) -> ModeOpts {
 }
 
 /// Base (fine) profiles per mode, before preset multipliers.
+#[must_use]
 pub fn base_profile(mode: crate::types::ModeKey) -> ModeOpts {
-    use crate::types::ModeKey::*;
+    use crate::types::ModeKey::{
+        Braid, Echo, Focus, Globe, Gyroscope, Morph, Orbits, Ribbon, Ring,
+        Rubik, Wave, Web,
+    };
     match mode {
         Globe => ModeOpts {
             lat_rings: Some(17.0),

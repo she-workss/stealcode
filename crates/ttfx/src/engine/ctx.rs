@@ -1,13 +1,13 @@
-//! EngineCtx: the mutable engine world (terminal + arena + rng + clock +
+//! `EngineCtx`: the mutable engine world (terminal + arena + rng + clock +
 //! active characters) and every stepping routine that can fire events.
 //!
 //! Python executes event actions synchronously at the emission point, deep in
-//! the middle of Path.step / Motion.move / Animation.step_animation, and those
-//! actions reentrantly mutate the same structures being stepped. To preserve
-//! that observable ordering (plan.md §4.2), all stepping logic lives here as
-//! EngineCtx methods that hold only short-lived borrows: state is re-fetched
-//! by id after every emission point, and segment walks are index-based so
-//! reentrant list mutation behaves like Python list iteration.
+//! the middle of Path.step / Motion.move / `Animation.step_animation`, and
+//! those actions reentrantly mutate the same structures being stepped. To
+//! preserve that observable ordering (plan.md §4.2), all stepping logic lives
+//! here as `EngineCtx` methods that hold only short-lived borrows: state is
+//! re-fetched by id after every emission point, and segment walks are
+//! index-based so reentrant list mutation behaves like Python list iteration.
 
 use std::{rc::Rc, time::Instant};
 
@@ -49,53 +49,56 @@ pub enum Clock {
 }
 
 impl Clock {
+    #[must_use]
     pub fn real() -> Self {
         let wall_start = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
-        Clock::Real {
+            .map_or(0.0, |d| d.as_secs_f64());
+        Self::Real {
             start: Instant::now(),
             wall_start,
         }
     }
 
+    #[must_use]
     pub fn virtual_with_frame_rate(frame_rate: i64) -> Self {
         let dt = if frame_rate > 0 {
             1.0 / frame_rate as f64
         } else {
             1.0 / 60.0
         };
-        Clock::Virtual { now: 0.0, dt }
+        Self::Virtual { now: 0.0, dt }
     }
 
-    /// time.time() analog.
+    /// `time.time()` analog.
+    #[must_use]
     pub fn now_wall(&self) -> f64 {
         match self {
-            Clock::Real { start, wall_start } => {
+            Self::Real { start, wall_start } => {
                 wall_start + start.elapsed().as_secs_f64()
             }
-            Clock::Virtual { now, .. } => *now,
+            Self::Virtual { now, .. } => *now,
         }
     }
 
-    /// time.monotonic() analog.
+    /// `time.monotonic()` analog.
+    #[must_use]
     pub fn now_monotonic(&self) -> f64 {
         match self {
-            Clock::Real { start, .. } => start.elapsed().as_secs_f64(),
-            Clock::Virtual { now, .. } => *now,
+            Self::Real { start, .. } => start.elapsed().as_secs_f64(),
+            Self::Virtual { now, .. } => *now,
         }
     }
 
     /// Advance virtual time by one frame; no-op for the real clock.
     pub fn advance_frame(&mut self) {
-        if let Clock::Virtual { now, dt } = self {
+        if let Self::Virtual { now, dt } = self {
             *now += *dt;
         }
     }
 }
 
-/// Effect-side hook for CALLBACK actions. The effect struct and the EngineCtx
+/// Effect-side hook for CALLBACK actions. The effect struct and the `EngineCtx`
 /// are disjoint ownership trees, so the callback may freely recurse into
 /// engine calls with the provided ctx.
 pub trait EffectHooks {
@@ -128,8 +131,8 @@ pub struct EngineCtx {
     pub terminal: Terminal,
     pub rng: Rng,
     pub clock: Clock,
-    /// BaseEffectIterator.active_characters - canonical ascending-id order
-    /// (CharId order == character_id order by construction).
+    /// `BaseEffectIterator.active_characters` - canonical ascending-id order
+    /// (`CharId` order == `character_id` order by construction).
     pub active_characters: ActiveCharacters,
     active_character_scratch: Vec<CharId>,
     pub preexisting_colors_present: bool,
@@ -151,7 +154,7 @@ impl EngineCtx {
                 ch.animation.input_fg_color.is_some()
                     || ch.animation.input_bg_color.is_some()
             });
-        Ok(EngineCtx {
+        Ok(Self {
             terminal,
             rng,
             clock,
@@ -167,7 +170,7 @@ impl EngineCtx {
     // ------------------------------------------------------------------
 
     /// Whether an emission of `event` on `id` can have any observable effect -
-    /// false lets hot emission sites skip building the CallerKey entirely.
+    /// false lets hot emission sites skip building the `CallerKey` entirely.
     #[inline]
     fn observes_event(&self, id: CharId, event: Event) -> bool {
         self.event_log.is_some()
@@ -224,10 +227,10 @@ impl EngineCtx {
             };
             match action {
                 EventAction::ActivatePath(path_id) => {
-                    self.activate_path(hooks, id, &path_id)
+                    self.activate_path(hooks, id, &path_id);
                 }
                 EventAction::ActivateScene(scene_id) => {
-                    self.activate_scene(hooks, id, &scene_id)
+                    self.activate_scene(hooks, id, &scene_id);
                 }
                 EventAction::DeactivatePath(target) => {
                     self.terminal.arena[id.0 as usize]
@@ -263,7 +266,7 @@ impl EngineCtx {
         }
     }
 
-    /// EventHandler.register_event: resolves/validates existence for id-based
+    /// `EventHandler.register_event`: resolves/validates existence for id-based
     /// callers and targets, rejects duplicates.
     pub fn register_event(
         &mut self,
@@ -312,7 +315,7 @@ impl EngineCtx {
     // motion (Motion.activate_path / Path.step / Motion.move)
     // ------------------------------------------------------------------
 
-    /// Motion.activate_path.
+    /// `Motion.activate_path`.
     pub fn activate_path(
         &mut self,
         hooks: &mut dyn EffectHooks,
@@ -368,7 +371,7 @@ impl EngineCtx {
             path.current_step = 0;
             path.hold_time_remaining = path.hold_time;
             path.max_steps = round_half_even(path.total_distance / path.speed);
-            for segment in path.segments.iter_mut() {
+            for segment in &mut path.segments {
                 segment.enter_event_triggered = false;
                 segment.exit_event_triggered = false;
             }
@@ -485,11 +488,7 @@ impl EngineCtx {
             if !enter_triggered || !exit_triggered {
                 let observes = self.observes_event(id, Event::SegmentEntered)
                     || self.observes_event(id, Event::SegmentExited);
-                if !observes {
-                    let seg = &mut path_mut!().segments[i];
-                    seg.enter_event_triggered = true;
-                    seg.exit_event_triggered = true;
-                } else {
+                if observes {
                     let seg_end_key = path!().segments[i].end.key();
                     if !enter_triggered {
                         path_mut!().segments[i].enter_event_triggered = true;
@@ -511,6 +510,10 @@ impl EngineCtx {
                         );
                         resolve_slot!();
                     }
+                } else {
+                    let seg = &mut path_mut!().segments[i];
+                    seg.enter_event_triggered = true;
+                    seg.exit_event_triggered = true;
                 }
             }
             i += 1;
@@ -652,7 +655,7 @@ impl EngineCtx {
         }
     }
 
-    /// Motion.chain_paths.
+    /// `Motion.chain_paths`.
     pub fn chain_paths(
         &mut self,
         id: CharId,
@@ -685,7 +688,7 @@ impl EngineCtx {
     // animation (Animation.activate_scene / step_animation)
     // ------------------------------------------------------------------
 
-    /// Animation.activate_scene: does NOT reset playback (resume semantics).
+    /// `Animation.activate_scene`: does NOT reset playback (resume semantics).
     pub fn activate_scene(
         &mut self,
         hooks: &mut dyn EffectHooks,
@@ -715,7 +718,7 @@ impl EngineCtx {
         }
     }
 
-    /// Animation.deactivate_scene.
+    /// `Animation.deactivate_scene`.
     pub fn deactivate_scene(&mut self, id: CharId, scene_id: Option<&str>) {
         let animation = &mut self.terminal.arena[id.0 as usize].animation;
         match scene_id {
@@ -728,11 +731,11 @@ impl EngineCtx {
         }
     }
 
-    /// Animation.step_animation.
+    /// `Animation.step_animation`.
     ///
-    /// Nothing between here and complete_scene_if_finished can add or remove a
-    /// scene, so the active scene's slot is resolved once and reused instead of
-    /// looking the id up again at every step.
+    /// Nothing between here and `complete_scene_if_finished` can add or remove
+    /// a scene, so the active scene's slot is resolved once and reused
+    /// instead of looking the id up again at every step.
     pub fn step_animation(&mut self, hooks: &mut dyn EffectHooks, id: CharId) {
         let Some(scene_slot) = ({
             let anim = &self.terminal.arena[id.0 as usize].animation;
@@ -770,7 +773,7 @@ impl EngineCtx {
         self.complete_scene_if_finished(hooks, id, scene_slot);
     }
 
-    /// Animation._step_synced_scene + _synced_scene_frame_index.
+    /// Animation._`step_synced_scene` + _`synced_scene_frame_index`.
     fn step_synced_scene(
         &mut self,
         id: CharId,
@@ -830,7 +833,7 @@ impl EngineCtx {
         }
     }
 
-    /// Animation._step_eased_scene (+ _ease_animation).
+    /// Animation._`step_eased_scene` (+ _`ease_animation`).
     fn step_eased_scene(
         &mut self,
         id: CharId,
@@ -862,8 +865,8 @@ impl EngineCtx {
         }
     }
 
-    /// Animation._complete_scene_if_finished: fires SCENE_COMPLETE every tick
-    /// for looping scenes, faithfully.
+    /// Animation._`complete_scene_if_finished`: fires `SCENE_COMPLETE` every
+    /// tick for looping scenes, faithfully.
     fn complete_scene_if_finished(
         &mut self,
         hooks: &mut dyn EffectHooks,

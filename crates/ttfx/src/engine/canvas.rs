@@ -42,7 +42,8 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// Canvas.__post_init__ with bottom=1, left=1 defaults.
+    /// Canvas.__`post_init`__ with bottom=1, left=1 defaults.
+    #[must_use]
     pub fn new(top: i64, right: i64) -> Self {
         let bottom = 1;
         let left = 1;
@@ -54,7 +55,7 @@ impl Canvas {
         if right % 2 != 0 && right > 1 {
             center_column += 1;
         }
-        Canvas {
+        Self {
             top,
             right,
             bottom,
@@ -76,17 +77,17 @@ impl Canvas {
         }
     }
 
-    /// Canvas._anchor_text: shift characters per the anchor, drop out-of-canvas
-    /// ones, then compute text extents. `characters` must be non-empty after
-    /// the in-canvas filter or this errors (upstream crashes on bare
-    /// max()/min()).
+    /// Canvas._`anchor_text`: shift characters per the anchor, drop
+    /// out-of-canvas ones, then compute text extents. `characters` must be
+    /// non-empty after the in-canvas filter or this errors (upstream
+    /// crashes on bare `max()/min()`).
     pub fn anchor_text(
         &mut self,
         arena: &mut [EffectCharacter],
         characters: Vec<CharId>,
         anchor: Anchor,
     ) -> Result<Vec<CharId>, String> {
-        use Anchor::*;
+        use Anchor::{C, E, N, Ne, Nw, S, Se, Sw, W};
         let input_width = characters
             .iter()
             .map(|&id| arena[id.0 as usize].input_coord.column)
@@ -104,7 +105,7 @@ impl Canvas {
             match anchor {
                 S | N | C => {
                     column_delta =
-                        self.center_column - floor_div(input_width, 2)
+                        self.center_column - floor_div(input_width, 2);
                 }
                 Se | E | Ne => column_delta = self.right - input_width,
                 Sw | W | Nw => column_delta = self.left - 1,
@@ -113,7 +114,7 @@ impl Canvas {
         if input_height != self.height {
             match anchor {
                 W | E | C => {
-                    row_delta = self.center_row - floor_div(input_height, 2)
+                    row_delta = self.center_row - floor_div(input_height, 2);
                 }
                 Nw | N | Ne => row_delta = self.top - input_height,
                 Sw | S | Se => row_delta = self.bottom - 1,
@@ -178,14 +179,16 @@ impl Canvas {
         Ok(kept)
     }
 
-    pub fn coord_is_in_canvas(&self, coord: Coord) -> bool {
+    #[must_use]
+    pub const fn coord_is_in_canvas(&self, coord: Coord) -> bool {
         self.left <= coord.column
             && coord.column <= self.right
             && self.bottom <= coord.row
             && coord.row <= self.top
     }
 
-    pub fn coord_is_in_text(&self, coord: Coord) -> bool {
+    #[must_use]
+    pub const fn coord_is_in_text(&self, coord: Coord) -> bool {
         self.text_left <= coord.column
             && coord.column <= self.text_right
             && self.text_bottom <= coord.row
@@ -212,7 +215,7 @@ impl Canvas {
         }
     }
 
-    /// random_coord: outside_scope picks among four coords exactly one cell
+    /// `random_coord`: `outside_scope` picks among four coords exactly one cell
     /// past an edge - note the RNG call ORDER (above, below, left, right
     /// built first, then choice) is part of the parity contract.
     pub fn random_coord(

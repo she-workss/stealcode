@@ -1,4 +1,4 @@
-//! swarm, ported from effects/effect_swarm.py.
+//! swarm, ported from `effects/effect_swarm.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -77,22 +77,23 @@ pub struct Swarm {
     character_final_color_map: FxHashMap<CharId, ColorPair>,
     call_next: bool,
     active_swarm_area: String,
-    current_swarm: Vec<CharId>,
+    current_chars: Vec<CharId>,
 }
 
 impl Swarm {
+    #[must_use]
     pub fn new(config: SwarmConfig) -> Self {
-        Swarm {
+        Self {
             config,
             swarms: Vec::new(),
             character_final_color_map: FxHashMap::default(),
             call_next: true,
             active_swarm_area: "0_swarm_area".to_string(),
-            current_swarm: Vec::new(),
+            current_chars: Vec::new(),
         }
     }
 
-    /// SwarmIterator.make_swarms.
+    /// `SwarmIterator.make_swarms`.
     fn make_swarms(&mut self, ctx: &mut EngineCtx, swarm_size: i64) {
         let mut unswarmed_characters = {
             let filter = CharacterFilter::default();
@@ -125,7 +126,7 @@ impl Swarm {
     }
 }
 
-/// int(s[0]) on a path id string (effect_swarm.py's first-character parse).
+/// int(s[0]) on a path id string (`effect_swarm.py`'s first-character parse).
 fn first_char_digit(s: &str) -> i64 {
     s.chars()
         .next()
@@ -203,9 +204,9 @@ impl Effect for Swarm {
             let swarm_gradient_mirror: Vec<Color> = swarm_gradient
                 .spectrum
                 .iter()
-                .cloned()
-                .chain(flash_list.iter().cloned())
-                .chain(swarm_gradient.spectrum.iter().rev().cloned())
+                .copied()
+                .chain(flash_list.iter().copied())
+                .chain(swarm_gradient.spectrum.iter().rev().copied())
                 .collect();
             // dict[Coord, list[Coord]] - insertion-ordered with
             // key-overwrite-in-place
@@ -365,7 +366,7 @@ impl Effect for Swarm {
                     ctx.register_event(
                         id,
                         Event::PathComplete,
-                        CallerKey::Path(swarm_area_name.clone()),
+                        CallerKey::Path(swarm_area_name),
                         EventAction::DeactivateScene(None),
                     )
                     .map_err(EngineError::Other)?;
@@ -549,7 +550,11 @@ impl Effect for Swarm {
                 .map_err(EngineError::Other)?;
                 let all_paths: Vec<String> = {
                     let ch = &ctx.terminal.arena[id.0 as usize];
-                    ch.motion.paths.keys().map(|key| key.to_string()).collect()
+                    ch.motion
+                        .paths
+                        .keys()
+                        .map(std::string::ToString::to_string)
+                        .collect()
                 };
                 ctx.chain_paths(id, &all_paths, false)
                     .map_err(EngineError::Other)?;
@@ -564,21 +569,21 @@ impl Effect for Swarm {
         if !self.swarms.is_empty() || !ctx.active_characters.is_empty() {
             if !self.swarms.is_empty() && self.call_next {
                 self.call_next = false;
-                self.current_swarm = self.swarms.pop().unwrap();
+                self.current_chars = self.swarms.pop().unwrap();
                 self.active_swarm_area = "0_swarm_area".to_string();
-                for &id in &self.current_swarm.clone() {
+                for &id in &self.current_chars.clone() {
                     ctx.activate_path(self, id, "0_swarm_area");
                     ctx.terminal.set_character_visibility(id, true);
                     ctx.active_characters.insert(id);
                 }
             }
-            if ctx.active_characters.len() < self.current_swarm.len() {
+            if ctx.active_characters.len() < self.current_chars.len() {
                 // some of the characters have landed
                 self.call_next = true;
             }
-            if !self.current_swarm.is_empty() {
-                for i in 0..self.current_swarm.len() {
-                    let id = self.current_swarm[i];
+            if !self.current_chars.is_empty() {
+                for i in 0..self.current_chars.len() {
+                    let id = self.current_chars[i];
                     let active_path_id = ctx.terminal.arena[id.0 as usize]
                         .motion
                         .active_path
@@ -590,7 +595,7 @@ impl Effect for Swarm {
                             > first_char_digit(&self.active_swarm_area)
                     {
                         self.active_swarm_area = path_id.to_string();
-                        for &other in &self.current_swarm.clone() {
+                        for &other in &self.current_chars.clone() {
                             if other != id
                                 && ctx.rng.random()
                                     < self.config.swarm_coordination

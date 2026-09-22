@@ -1,4 +1,4 @@
-//! fireworks, ported from effects/effect_fireworks.py.
+//! fireworks, ported from `effects/effect_fireworks.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -93,8 +93,9 @@ pub struct Fireworks {
 }
 
 impl Fireworks {
+    #[must_use]
     pub fn new(config: FireworksConfig) -> Self {
-        Fireworks {
+        Self {
             config,
             shells: Vec::new(),
             firework_volume: 0,
@@ -104,7 +105,7 @@ impl Fireworks {
         }
     }
 
-    /// FireworksIterator.prepare_waypoints.
+    /// `FireworksIterator.prepare_waypoints`.
     fn prepare_waypoints(
         &mut self,
         ctx: &mut EngineCtx,
@@ -132,10 +133,10 @@ impl Fireworks {
             {
                 origin_x = ctx.rng.randrange(0, canvas_right);
                 self.shells.push(std::mem::take(&mut firework_shell));
-                let min_row = if !self.config.explode_anywhere {
-                    ctx.terminal.arena[id.0 as usize].input_coord.row
-                } else {
+                let min_row = if self.config.explode_anywhere {
                     canvas_bottom
+                } else {
+                    ctx.terminal.arena[id.0 as usize].input_coord.row
                 };
                 let origin_y = ctx.rng.randrange(min_row, canvas_top + 1);
                 origin_coord = Coord::new(origin_x, origin_y);
@@ -272,7 +273,7 @@ impl Fireworks {
         Ok(())
     }
 
-    /// FireworksIterator.prepare_scenes.
+    /// `FireworksIterator.prepare_scenes`.
     fn prepare_scenes(
         &mut self,
         ctx: &mut EngineCtx,

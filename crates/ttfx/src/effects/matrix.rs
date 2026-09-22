@@ -1,15 +1,15 @@
-//! matrix, ported from effects/effect_matrix.py.
+//! matrix, ported from `effects/effect_matrix.py`.
 //!
-//! THE CLOCK EFFECT: upstream reads time.time() at effect_matrix.py:430
-//! (rain_start, set after build) and :549 (rain-phase deadline check). Both
-//! sites use ctx.clock.now_wall(); the parity harness virtualizes the clock
+//! THE CLOCK EFFECT: upstream reads `time.time()` at `effect_matrix.py:430`
+//! (`rain_start`, set after build) and :549 (rain-phase deadline check). Both
+//! sites use `ctx.clock.now_wall()`; the parity harness virtualizes the clock
 //! on both sides (plan.md §4.7).
 //!
-//! The inner RainColumn class is the `RainColumn` struct. Columns migrate
+//! The inner `RainColumn` class is the `RainColumn` struct. Columns migrate
 //! between pending/active/full lists and are compared by identity upstream
 //! (`column not in self.full_columns`), so ttfx keeps them in a Vec arena and
 //! the lists hold indices. No observable set iteration beyond the
-//! engine-canonical active_characters (docs/ordering-inventory.md).
+//! engine-canonical `active_characters` (docs/ordering-inventory.md).
 
 use rustc_hash::FxHashMap;
 
@@ -121,8 +121,8 @@ impl Default for MatrixConfig {
         }
     }
 }
-/// Animation.set_appearance shorthand (upstream
-/// character.animation.set_appearance).
+/// `Animation.set_appearance` shorthand (upstream
+/// `character.animation.set_appearance`).
 fn set_appearance(
     ctx: &mut EngineCtx,
     id: CharId,
@@ -161,13 +161,13 @@ struct RainColumn {
 }
 
 impl RainColumn {
-    /// RainColumn.__init__ (calls setup_column("rain")).
+    /// `RainColumn`.__init__ (calls `setup_column("rain`")).
     fn new(
         ctx: &mut EngineCtx,
         config: &MatrixConfig,
         characters: Vec<CharId>,
     ) -> Self {
-        let mut column = RainColumn {
+        let mut column = Self {
             characters,
             pending_characters: Vec::new(),
             visible_characters: Vec::new(),
@@ -182,7 +182,7 @@ impl RainColumn {
         column
     }
 
-    /// RainColumn.setup_column.
+    /// `RainColumn.setup_column`.
     fn setup_column(
         &mut self,
         ctx: &mut EngineCtx,
@@ -224,7 +224,7 @@ impl RainColumn {
         }
     }
 
-    /// RainColumn.trim_column.
+    /// `RainColumn.trim_column`.
     fn trim_column(&mut self, ctx: &mut EngineCtx, rain_colors: &[Color]) {
         if self.visible_characters.is_empty() {
             return;
@@ -236,7 +236,7 @@ impl RainColumn {
         }
     }
 
-    /// RainColumn.drop_column.
+    /// `RainColumn.drop_column`.
     fn drop_column(&mut self, ctx: &mut EngineCtx) {
         let canvas_bottom = ctx.terminal.canvas.bottom;
         let mut out_of_canvas: Vec<CharId> = Vec::new();
@@ -258,12 +258,8 @@ impl RainColumn {
             .retain(|ch| !out_of_canvas.contains(ch));
     }
 
-    /// RainColumn.fade_last_character.
-    fn fade_last_character(
-        &mut self,
-        ctx: &mut EngineCtx,
-        rain_colors: &[Color],
-    ) {
+    /// `RainColumn.fade_last_character`.
+    fn fade_last_character(&self, ctx: &mut EngineCtx, rain_colors: &[Color]) {
         // random.choice(self.rain_colors[-3:])
         let tail = &rain_colors[rain_colors.len().saturating_sub(3)..];
         let darker_color =
@@ -282,7 +278,7 @@ impl RainColumn {
         );
     }
 
-    /// RainColumn.resolve_char.
+    /// `RainColumn.resolve_char`.
     fn resolve_char(&mut self, ctx: &mut EngineCtx) -> CharId {
         let index = ctx.rng.randint(0, self.visible_characters.len() as i64 - 1)
             as usize;
@@ -466,21 +462,22 @@ pub struct Matrix {
     active_columns: Vec<usize>,
     full_columns: Vec<usize>,
     character_final_color_map: FxHashMap<CharId, ColorPair>,
-    /// Gradient(*rain_color_gradient, steps=6).spectrum.
+    /// Gradient(*`rain_color_gradient`, steps=6).spectrum.
     rain_colors: Vec<Color>,
     column_delay: i64,
     resolve_delay: i64,
     final_frame_shown: bool,
     rain_complete: bool,
     phase: Phase,
-    /// time.time() taken after build (effect_matrix.py:430).
+    /// `time.time()` taken after build (`effect_matrix.py:430`).
     rain_start: f64,
 }
 
 impl Matrix {
+    #[must_use]
     pub fn new(config: MatrixConfig) -> Self {
         let resolve_delay = config.resolve_delay;
-        Matrix {
+        Self {
             config,
             columns: Vec::new(),
             pending_columns: Vec::new(),
@@ -497,7 +494,7 @@ impl Matrix {
         }
     }
 
-    /// MatrixIterator._has_input_colors.
+    /// `MatrixIterator`._`has_input_colors`.
     fn has_input_colors(ctx: &EngineCtx, character: CharId) -> bool {
         let anim = &ctx.terminal.arena[character.0 as usize].animation;
         anim.input_fg_color.is_some() || anim.input_bg_color.is_some()

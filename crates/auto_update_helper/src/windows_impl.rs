@@ -29,10 +29,11 @@ pub(crate) fn run() -> Result<()> {
         tx.send(result).ok();
         dialog::notify_terminate(hwnd);
     });
+    #[allow(unsafe_code)] // Win32 GetMessage/DispatchMessage pump
     unsafe {
         let mut message = MSG::default();
-        while GetMessageW(&mut message, None, 0, 0).as_bool() {
-            DispatchMessageW(&message);
+        while GetMessageW(&raw mut message, None, 0, 0).as_bool() {
+            DispatchMessageW(&raw const message);
         }
     }
     if let Ok(Err(error)) = rx.try_recv() {

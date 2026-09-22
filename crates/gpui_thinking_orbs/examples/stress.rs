@@ -92,7 +92,7 @@ fn spawn_reporter(label: String) {
                 std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
             // utime = field 14, stime = field 15 (1-indexed) - but comm may
             // contain spaces, so split after the closing ')'.
-            let tail = s.rsplit_once(')').map(|(_, t)| t).unwrap_or(&s);
+            let tail = s.rsplit_once(')').map_or(s.as_str(), |(_, t)| t);
             let f: Vec<&str> = tail.split_whitespace().collect();
             let utime: f64 =
                 f.get(11).and_then(|v| v.parse().ok()).unwrap_or(0.0);
@@ -176,12 +176,15 @@ impl Stress {
                 })
                 .collect()
         };
-        let _tick_probe = orbs.first().map(|orb| {
+        let tick_probe = orbs.first().map(|orb| {
             cx.observe(orb, |_, _, _| {
                 TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             })
         });
-        Self { orbs, _tick_probe }
+        Self {
+            orbs,
+            _tick_probe: tick_probe,
+        }
     }
 }
 
@@ -193,7 +196,7 @@ impl Render for Stress {
     ) -> impl IntoElement {
         div()
             .size_full()
-            .bg(rgb(0x09090b))
+            .bg(rgb(0x0009_090b))
             .flex()
             .flex_wrap()
             .gap_4()

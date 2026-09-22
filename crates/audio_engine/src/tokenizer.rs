@@ -1,8 +1,8 @@
-//! SentencePiece tokenizer decode:
+//! `SentencePiece` tokenizer decode:
 //!   * U+2581 ("▁", UTF-8 E2 96 81) -> ASCII space, byte-for-byte.
 //!   * byte-fallback pieces "<0xHH>" -> single byte.
-//!   * multilingual language-tag pieces "<ll-RR>" are stripped from the public
-//!     transcript by default (they are emitted per segment to mark the
+//!   * multilingual language-tag pieces "\<ll-RR\>" are stripped from the
+//!     public transcript by default (they are emitted per segment to mark the
 //!     language; `is_lang_tag_piece` in the reference).
 //!   * runs of ASCII spaces collapse to one; both ends trimmed.
 
@@ -19,6 +19,7 @@ pub struct Tokenizer {
 }
 
 impl Tokenizer {
+    #[must_use]
     pub fn new(cfg: &ModelConfig) -> Self {
         Self {
             tokens: cfg.tokens.clone(),
@@ -29,7 +30,8 @@ impl Tokenizer {
         self.tokens.get(id as usize).map(String::as_str)
     }
 
-    /// SentencePiece decode over a token id sequence.
+    /// `SentencePiece` decode over a token id sequence.
+    #[must_use]
     pub fn decode(&self, ids: &[u32]) -> String {
         let mut out = Vec::with_capacity(ids.len() * 4);
         for &id in ids {
@@ -55,9 +57,10 @@ impl Tokenizer {
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    /// Language-tag piece check (mirrors `is_lang_tag_piece`): "<ll-RR>"
+    /// Language-tag piece check (mirrors `is_lang_tag_piece`): "\<ll-RR\>"
     /// with a 2-3 lowercase language and 2-4 alphanumeric region.
-    pub fn is_lang_tag_piece(&self, piece: &str) -> bool {
+    #[must_use]
+    pub const fn is_lang_tag_piece(&self, piece: &str) -> bool {
         let b = piece.as_bytes();
         let n = b.len();
         if n < 7 || b[0] != b'<' || b[n - 1] != b'>' {
@@ -70,7 +73,9 @@ impl Tokenizer {
             i += 1;
         }
         let lang_len = i - lang0;
-        if lang_len < 2 || lang_len > 3 {
+        // `matches!` (not `(2..=3).contains`) so this stays const-compatible
+        // once clippy's `missing_const_for_fn` autofix makes the fn `const`.
+        if !matches!(lang_len, 2..=3) {
             return false;
         }
         if i >= end || b[i] != b'-' {
@@ -82,19 +87,21 @@ impl Tokenizer {
             i += 1;
         }
         let reg_len = i - reg0;
-        if reg_len < 2 || reg_len > 4 {
+        if !matches!(reg_len, 2..=4) {
             return false;
         }
         i == end
     }
 
     /// Is this token dropped from the public transcript by default?
+    #[must_use]
     pub fn is_strippable(&self, id: u32) -> bool {
-        self.piece(id).map_or(false, |p| self.is_lang_tag_piece(p))
+        self.piece(id).is_some_and(|p| self.is_lang_tag_piece(p))
     }
 
     /// Decode a transcript: drop language tags, SPM-decode, collapse
     /// whitespace runs and trim (mirrors `decode_and_populate`).
+    #[must_use]
     pub fn decode_transcript(&self, ids: &[u32], strip_tags: bool) -> String {
         let filtered: Cow<'_, [u32]> = if strip_tags {
             Cow::Owned(
@@ -128,7 +135,7 @@ fn byte_fallback(p: &str) -> Option<u8> {
     Some((hi << 4) | lo)
 }
 
-fn hex_nibble(c: u8) -> Option<u8> {
+const fn hex_nibble(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),
         b'A'..=b'F' => Some(10 + c - b'A'),
@@ -183,7 +190,7 @@ mod tests {
 
     #[test]
     fn handles_empty_and_whitespace_only() {
-        let mut s = String::from("");
+        let mut s = String::new();
         normalize_transcript_whitespace(&mut s);
         assert_eq!(s, "");
         let mut s = String::from("   ");

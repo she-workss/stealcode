@@ -43,7 +43,7 @@ impl Playground {
         }
     }
 
-    fn sync_orb(&mut self, cx: &mut Context<'_, Self>) {
+    fn sync_orb(&self, cx: &mut Context<'_, Self>) {
         let state = self.state;
         let size = self.size;
         let theme = self.theme;
@@ -75,25 +75,25 @@ impl Render for Playground {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let bg = match self.theme {
-            OrbTheme::Light => rgb(0xf4f4f5),
-            OrbTheme::Dark | OrbTheme::Auto => rgb(0x09090b),
+            OrbTheme::Light => rgb(0x00f4_f4f5),
+            OrbTheme::Dark | OrbTheme::Auto => rgb(0x0009_090b),
         };
         let fg = match self.theme {
-            OrbTheme::Light => rgb(0x18181b),
-            OrbTheme::Dark | OrbTheme::Auto => rgb(0xfafafa),
+            OrbTheme::Light => rgb(0x0018_181b),
+            OrbTheme::Dark | OrbTheme::Auto => rgb(0x00fa_fafa),
         };
         let muted = match self.theme {
-            OrbTheme::Light => rgb(0x71717a),
-            OrbTheme::Dark | OrbTheme::Auto => rgb(0xa1a1aa),
+            OrbTheme::Light => rgb(0x0071_717a),
+            OrbTheme::Dark | OrbTheme::Auto => rgb(0x00a1_a1aa),
         };
         let chip_bg = match self.theme {
-            OrbTheme::Light => rgb(0xe4e4e7),
-            OrbTheme::Dark | OrbTheme::Auto => rgb(0x27272a),
+            OrbTheme::Light => rgb(0x00e4_e4e7),
+            OrbTheme::Dark | OrbTheme::Auto => rgb(0x0027_272a),
         };
-        let chip_active = rgb(0x3b82f6);
+        let chip_active = rgb(0x003b_82f6);
         let border = match self.theme {
-            OrbTheme::Light => rgb(0xd4d4d8),
-            OrbTheme::Dark | OrbTheme::Auto => rgb(0x27272a),
+            OrbTheme::Light => rgb(0x00d4_d4d8),
+            OrbTheme::Dark | OrbTheme::Auto => rgb(0x0027_272a),
         };
 
         let state = self.state;
@@ -170,7 +170,7 @@ impl Render for Playground {
                                         .text_sm()
                                         .cursor_pointer()
                                         .bg(if active { chip_active } else { chip_bg })
-                                        .text_color(if active { rgb(0xffffff) } else { muted })
+                                        .text_color(if active { rgb(0x00ff_ffff) } else { muted })
                                         .child(orb_size.label())
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -201,7 +201,7 @@ impl Render for Playground {
                                         .text_sm()
                                         .cursor_pointer()
                                         .bg(if active { chip_active } else { chip_bg })
-                                        .text_color(if active { rgb(0xffffff) } else { muted })
+                                        .text_color(if active { rgb(0x00ff_ffff) } else { muted })
                                         .child(label)
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -238,7 +238,7 @@ impl Render for Playground {
                                             .text_sm()
                                             .cursor_pointer()
                                             .bg(if active { chip_active } else { chip_bg })
-                                            .text_color(if active { rgb(0xffffff) } else { muted })
+                                            .text_color(if active { rgb(0x00ff_ffff) } else { muted })
                                             .child(label)
                                             .on_mouse_down(
                                                 MouseButton::Left,
@@ -329,7 +329,7 @@ impl Render for Playground {
                                     .text_sm()
                                     .cursor_pointer()
                                     .bg(if paused { chip_active } else { chip_bg })
-                                    .text_color(if paused { rgb(0xffffff) } else { muted })
+                                    .text_color(if paused { rgb(0x00ff_ffff) } else { muted })
                                     .child(if paused { "resume" } else { "pause" })
                                     .on_mouse_down(
                                         MouseButton::Left,

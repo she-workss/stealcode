@@ -1,4 +1,4 @@
-//! expand, ported from effects/effect_expand.py.
+//! expand, ported from `effects/effect_expand.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -61,8 +61,9 @@ pub struct Expand {
 }
 
 impl Expand {
+    #[must_use]
     pub fn new(config: ExpandConfig) -> Self {
-        Expand {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
         }

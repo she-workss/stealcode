@@ -1,7 +1,7 @@
-//! orbittingvolley, ported from effects/effect_orbittingvolley.py.
+//! orbittingvolley, ported from `effects/effect_orbittingvolley.py`.
 //!
 //! The inner OrbittingVolleyIterator.Launcher class is the `Launcher` struct.
-//! No observable set iteration beyond the engine-canonical active_characters
+//! No observable set iteration beyond the engine-canonical `active_characters`
 //! (docs/ordering-inventory.md); the effect consumes no RNG at all.
 
 use rustc_hash::FxHashMap;
@@ -107,8 +107,9 @@ pub struct OrbittingVolley {
 }
 
 impl OrbittingVolley {
+    #[must_use]
     pub fn new(config: OrbittingVolleyConfig) -> Self {
-        OrbittingVolley {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             launcher_gradient_coordinate_map: CoordColorMap::default(),
@@ -119,7 +120,7 @@ impl OrbittingVolley {
         }
     }
 
-    /// Launcher.build_paths (only called for the main launcher).
+    /// `Launcher.build_paths` (only called for the main launcher).
     fn build_launcher_paths(
         &self,
         ctx: &mut EngineCtx,
@@ -179,9 +180,9 @@ impl OrbittingVolley {
         Some(next_char)
     }
 
-    /// OrbittingVolleyIterator._set_launcher_coordinates.
+    /// `OrbittingVolleyIterator`._`set_launcher_coordinates`.
     fn set_launcher_coordinates(
-        &mut self,
+        &self,
         ctx: &mut EngineCtx,
         parent_index: usize,
         child_index: usize,
@@ -487,9 +488,9 @@ impl Effect for OrbittingVolley {
         }
         if !self.complete {
             self.complete = true;
-            for launcher_index in 0..self.launchers.len() {
-                let character = self.launchers[launcher_index].character;
-                ctx.terminal.set_character_visibility(character, false);
+            for launcher in &self.launchers {
+                ctx.terminal
+                    .set_character_visibility(launcher.character, false);
             }
             return Some(ctx.frame());
         }

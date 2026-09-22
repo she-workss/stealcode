@@ -22,6 +22,7 @@ pub struct ActiveCharacters {
 
 impl ActiveCharacters {
     #[inline]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             sparse: Vec::new(),
@@ -32,12 +33,14 @@ impl ActiveCharacters {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.len
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -50,6 +53,7 @@ impl ActiveCharacters {
     }
 
     #[inline]
+    #[must_use]
     pub fn contains(&self, id: &CharId) -> bool {
         if !self.dense {
             return self.sparse.binary_search(id).is_ok();
@@ -121,6 +125,7 @@ impl ActiveCharacters {
     }
 
     #[inline]
+    #[must_use]
     pub fn iter(&self) -> Iter<'_> {
         Iter {
             inner: if self.dense {
@@ -195,6 +200,15 @@ impl ActiveCharacters {
         }
         self.words.clear();
         self.dense = false;
+    }
+}
+
+impl<'a> IntoIterator for &'a ActiveCharacters {
+    type IntoIter = Iter<'a>;
+    type Item = CharId;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

@@ -48,7 +48,7 @@ enum VoiceCommand {
 enum TranscribeJob {
     Partial(Vec<f32>),
     Final(Vec<f32>),
-    /// Load the model only (sets model_ready), no transcription. Sent on
+    /// Load the model only (sets `model_ready`), no transcription. Sent on
     /// Start so partial results arrive in real time.
     Warmup,
     /// Release the model; RAM returns to baseline after the final transcript.
@@ -65,6 +65,7 @@ pub struct VoiceManager {
 }
 
 impl VoiceManager {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tx_cmd: None,
@@ -116,7 +117,7 @@ impl VoiceManager {
                             self.status = "Ready (Ctrl+G)".to_string();
                         }
                         VoiceEvent::Error(e) => {
-                            self.status = format!("Error: {}", e);
+                            self.status = format!("Error: {e}");
                         }
                     },
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -132,25 +133,27 @@ impl VoiceManager {
     }
 }
 
+impl Default for VoiceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
     let host = cpal::default_host();
-    let audio_device = match host.default_input_device() {
-        Some(d) => d,
-        None => {
-            let _ =
-                tx_event.send(VoiceEvent::Error("No microphone".to_string()));
-            return;
-        }
+    let Some(audio_device) = host.default_input_device() else {
+        let _ = tx_event.send(VoiceEvent::Error("No microphone".to_string()));
+        return;
     };
     let supported_config = match audio_device.default_input_config() {
         Ok(c) => c,
         Err(e) => {
             let _ = tx_event
-                .send(VoiceEvent::Error(format!("Audio config: {:?}", e)));
+                .send(VoiceEvent::Error(format!("Audio config: {e:?}")));
             return;
         }
     };
-    let stream_config: cpal::StreamConfig = supported_config.clone().into();
+    let stream_config: cpal::StreamConfig = supported_config.into();
     let sample_rate = stream_config.sample_rate;
     let channels = stream_config.channels as usize;
     let audio_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
@@ -163,7 +166,7 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
     let tx_event_worker = tx_event.clone();
     let model_ready_worker = Arc::clone(&model_ready);
     std::thread::spawn(move || {
-        transcribe_worker(rx_job, tx_event_worker, tx_done, model_ready_worker)
+        transcribe_worker(rx_job, tx_event_worker, tx_done, model_ready_worker);
     });
     let mut stream: Option<cpal::Stream> = None;
     let mut last_partial = Instant::now();
@@ -191,7 +194,7 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
                     let stream_result = match supported_config.sample_format() {
                         cpal::SampleFormat::F32 => audio_device
                             .build_input_stream(
-                            stream_config.clone(),
+                            stream_config,
                             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                                 if let Ok(mut buf) = buf_clone.lock() {
                                     buf.extend_from_slice(data);
@@ -202,15 +205,15 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
                         ),
                         _ => continue,
                     };
-                    if let Ok(s) = stream_result {
-                        if s.play().is_ok() {
-                            stream = Some(s);
-                            last_partial = Instant::now();
-                            ready_announced = false;
-                            let _ = tx_event.send(VoiceEvent::Status(
-                                "Recording...".to_string(),
-                            ));
-                        }
+                    if let Ok(s) = stream_result
+                        && s.play().is_ok()
+                    {
+                        stream = Some(s);
+                        last_partial = Instant::now();
+                        ready_announced = false;
+                        let _ = tx_event.send(VoiceEvent::Status(
+                            "Recording...".to_string(),
+                        ));
                     }
                 }
                 // Warm the model at Start so partials stream in real time, not
@@ -246,8 +249,7 @@ fn voice_worker(rx_cmd: Receiver<VoiceCommand>, tx_event: Sender<VoiceEvent>) {
                     let _ = tx_event
                         .send(VoiceEvent::Status("Recording...".to_string()));
                 }
-                let buf_len =
-                    audio_buffer.lock().map(|buf| buf.len()).unwrap_or(0);
+                let buf_len = audio_buffer.lock().map_or(0, |buf| buf.len());
                 let secs =
                     buf_len as f32 / sample_rate as f32 / channels as f32;
                 if model_ready.load(Ordering::Relaxed)

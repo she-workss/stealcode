@@ -29,9 +29,10 @@ pub(super) fn draw_ribbon_into(
     with_fib_dirs(ghost_n, |directions| {
         for d in directions {
             let (px, py, z) = pt.project(d[0] * r, d[1] * r, d[2] * r);
-            let depth = (z * inv_r + 1.0) / 2.0;
+            let depth = f32::mul_add(z, inv_r, 1.0) / 2.0;
             dots.push(
-                Dot::new(px, py, z, 0.8 * rs, 0.78).with_a(0.1 + 0.22 * depth),
+                Dot::new(px, py, z, 0.8 * rs, 0.78)
+                    .with_a(0.22f32.mul_add(depth, 0.1)),
             );
         }
     });
@@ -40,7 +41,7 @@ pub(super) fn draw_ribbon_into(
     let ta = if face_on {
         -cam_tilt
     } else {
-        0.55 + 0.3 * (t * 0.18).sin() * spin
+        (0.3 * (t * 0.18).sin()).mul_add(spin, 0.55)
     };
     let ux = ya.cos();
     let uy = 0.0;
@@ -50,14 +51,14 @@ pub(super) fn draw_ribbon_into(
     let vy = cta;
     let vz = ux * sta;
     // plane normal n = u × v
-    let nx = uy * vz - uz * vy;
-    let ny = uz * vx - ux * vz;
-    let nz = ux * vy - uy * vx;
+    let nx = uz.mul_add(-vy, uy * vz);
+    let ny = ux.mul_add(-vz, uz * vx);
+    let nz = f32::mul_add(uy, -vx, ux * vy);
 
     let wob_mul = o.wob_mul.unwrap_or(1.0);
     let wob_amp = 0.23 * wob_mul;
     let base_r = if face_on {
-        r / (1.0 + 0.85 * wob_amp)
+        r / 0.85f32.mul_add(wob_amp, 1.0)
     } else {
         r
     };
@@ -78,39 +79,40 @@ pub(super) fn draw_ribbon_into(
         let centered = w as f32 - half;
         let lane_off = centered * 0.075;
         let edge = centered.abs() * inv_half;
-        let edge_r = 1.0 - 0.25 * edge;
+        let edge_r = 0.25f32.mul_add(-edge, 1.0);
         let edge_ink = 0.18 * edge;
         for k in 0..segs {
             let a = k as f32 * seg_step;
             let (ca, sa) = (a.cos(), a.sin());
             let breath = if face_on {
-                0.72 + 0.28 * (t * 0.48).sin()
+                0.28f32.mul_add((t * 0.48).sin(), 0.72)
             } else {
                 1.0
             };
-            let wob = (0.16 * (a * 3.0 - t * 1.7 + w as f32 * 0.22).sin()
-                + 0.07 * (a * 5.0 + t * 1.1).sin())
-                * wob_mul
+            let wob = 0.07f32.mul_add(
+                t.mul_add(1.1, a * 5.0).sin(),
+                0.16 * (w as f32).mul_add(0.22, t.mul_add(-1.7, a * 3.0)).sin(),
+            ) * wob_mul
                 * breath;
             let radial = if face_on { 1.0 + wob } else { 1.0 };
             let off = if face_on { lane_off } else { lane_off + wob };
-            let x = ux * ca + vx * sa + nx * off;
-            let y = uy * ca + vy * sa + ny * off;
-            let z = uz * ca + vz * sa + nz * off;
-            let l = (x * x + y * y + z * z).sqrt();
+            let x = f32::mul_add(nx, off, vx.mul_add(sa, ux * ca));
+            let y = ny.mul_add(off, f32::mul_add(vy, sa, uy * ca));
+            let z = f32::mul_add(nz, off, vz.mul_add(sa, uz * ca));
+            let l = f32::mul_add(z, z, y.mul_add(y, x * x)).sqrt();
             let inv_l = if l > 1e-6 { 1.0 / l } else { 0.0 };
             let rr = base_r * radial * inv_l;
             let (px, py, zr) = pt.project(x * rr, y * rr, z * rr);
-            let depth = (zr * inv_r + 1.0) / 2.0;
+            let depth = f32::mul_add(zr, inv_r, 1.0) / 2.0;
             dots.push(
                 Dot::new(
                     px,
                     py,
                     zr,
-                    (r_base + r_depth * depth) * edge_r * rs,
-                    0.52 - 0.44 * depth + edge_ink,
+                    r_depth.mul_add(depth, r_base) * edge_r * rs,
+                    0.44f32.mul_add(-depth, 0.52) + edge_ink,
                 )
-                .with_a(0.4 + 0.6 * depth),
+                .with_a(0.6f32.mul_add(depth, 0.4)),
             );
         }
     }

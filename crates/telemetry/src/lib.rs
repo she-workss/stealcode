@@ -56,11 +56,7 @@ pub fn init_logging(
     if tracing::dispatcher::has_been_set() {
         return None;
     }
-    let (non_blocking_appender, guard) =
-        match setup_log_file(file_name.as_ref()) {
-            Some(appender) => appender,
-            None => return None,
-        };
+    let (non_blocking_appender, guard) = setup_log_file(file_name.as_ref())?;
 
     let filter = build_env_filter(level_filter.as_ref());
     let file_layer = fmt::layer()

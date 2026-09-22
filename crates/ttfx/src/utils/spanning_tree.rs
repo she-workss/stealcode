@@ -1,16 +1,16 @@
-//! Spanning-tree generators, ported from utils/spanningtree/. AldousBroder is
+//! Spanning-tree generators, ported from utils/spanningtree/. `AldousBroder` is
 //! deliberately not ported: no shipped effect uses it (plan.md §5 divergences).
 //!
 //! Canonical ordering note (plan.md §4.3): `EffectCharacter.links` is a Python
-//! set; BreadthFirst iterates it. Our canonical order is ascending
-//! character_id - links are kept sorted-by-id on insert, and the parity shim
+//! set; `BreadthFirst` iterates it. Our canonical order is ascending
+//! `character_id` - links are kept sorted-by-id on insert, and the parity shim
 //! patches the Python side to `sorted(links, key=character_id)`.
 
 use std::collections::BTreeMap;
 
 use crate::engine::{character::CharId, ctx::EngineCtx};
 
-/// EffectCharacter._link: bidirectional set-add (id-sorted, see module note).
+/// `EffectCharacter`._link: bidirectional set-add (id-sorted, see module note).
 pub fn link_characters(ctx: &mut EngineCtx, a: CharId, b: CharId) {
     let insert_sorted = |links: &mut Vec<CharId>, id: CharId| {
         if let Err(pos) = links.binary_search(&id) {
@@ -21,7 +21,7 @@ pub fn link_characters(ctx: &mut EngineCtx, a: CharId, b: CharId) {
     insert_sorted(&mut ctx.terminal.arena[b.0 as usize].links, a);
 }
 
-/// SpanningTreeGenerator.get_neighbors: neighbors in dict order (north, east,
+/// `SpanningTreeGenerator.get_neighbors`: neighbors in dict order (north, east,
 /// south, west), optional text-boundary and unlinked filters.
 fn get_neighbors(
     ctx: &EngineCtx,
@@ -67,7 +67,7 @@ fn default_starting_char(
         .ok_or_else(|| "Unable to find a starting character.".to_string())
 }
 
-/// algo/primssimple.py PrimsSimple.
+/// algo/primssimple.py `PrimsSimple`.
 #[derive(Debug)]
 pub struct PrimsSimple {
     pub limit_to_text_boundary: bool,
@@ -87,7 +87,7 @@ impl PrimsSimple {
             Some(c) => c,
             None => default_starting_char(ctx, limit_to_text_boundary)?,
         };
-        Ok(PrimsSimple {
+        Ok(Self {
             limit_to_text_boundary,
             current_char: starting_char,
             char_link_order: vec![starting_char],
@@ -96,10 +96,12 @@ impl PrimsSimple {
         })
     }
 
-    /// Faithful quirk: `complete` flips only when edge_chars is already empty
+    /// Faithful quirk: `complete` flips only when `edge_chars` is already empty
     /// at call entry.
     pub fn step(&mut self, ctx: &mut EngineCtx) {
-        if !self.edge_chars.is_empty() {
+        if self.edge_chars.is_empty() {
+            self.complete = true;
+        } else {
             let idx =
                 ctx.rng.randrange(0, self.edge_chars.len() as i64) as usize;
             self.current_char = self.edge_chars.remove(idx);
@@ -128,13 +130,11 @@ impl PrimsSimple {
                     self.edge_chars.push(next_char);
                 }
             }
-        } else {
-            self.complete = true;
         }
     }
 }
 
-/// algo/primsweighted.py WeightedLink.
+/// algo/primsweighted.py `WeightedLink`.
 #[derive(Debug, Clone, Copy)]
 pub struct WeightedLink {
     pub char_a: CharId,
@@ -142,7 +142,7 @@ pub struct WeightedLink {
     pub weight: i64,
 }
 
-/// algo/primsweighted.py PrimsWeighted.
+/// algo/primsweighted.py `PrimsWeighted`.
 #[derive(Debug)]
 pub struct PrimsWeighted {
     pub limit_to_text_boundary: bool,
@@ -183,7 +183,7 @@ impl PrimsWeighted {
         for id in ordered {
             char_weights.insert(id, ctx.rng.randint(0, 99));
         }
-        let mut generator = PrimsWeighted {
+        let mut generator = Self {
             limit_to_text_boundary,
             char_weights,
             char_link_order: vec![starting_char],
@@ -232,7 +232,9 @@ impl PrimsWeighted {
     }
 
     pub fn step(&mut self, ctx: &mut EngineCtx) {
-        if !self.pending_weighted_links.is_empty() {
+        if self.pending_weighted_links.is_empty() {
+            self.complete = true;
+        } else {
             let Some(next_link) = self.get_lowest_weight_link(ctx) else {
                 self.complete = true;
                 return;
@@ -240,13 +242,11 @@ impl PrimsWeighted {
             link_characters(ctx, next_link.char_a, next_link.char_b);
             self.char_link_order.push(next_link.char_b);
             self.add_weighted_links(ctx, next_link.char_b);
-        } else {
-            self.complete = true;
         }
     }
 }
 
-/// algo/recursivebacktracker.py RecursiveBacktracker.
+/// algo/recursivebacktracker.py `RecursiveBacktracker`.
 #[derive(Debug)]
 pub struct RecursiveBacktracker {
     pub limit_to_text_boundary: bool,
@@ -266,7 +266,7 @@ impl RecursiveBacktracker {
             Some(c) => c,
             None => default_starting_char(ctx, limit_to_text_boundary)?,
         };
-        Ok(RecursiveBacktracker {
+        Ok(Self {
             limit_to_text_boundary,
             current_char: starting_char,
             char_link_order: vec![starting_char],
@@ -276,32 +276,32 @@ impl RecursiveBacktracker {
     }
 
     pub fn step(&mut self, ctx: &mut EngineCtx) {
-        if !self.stack.is_empty() {
+        if self.stack.is_empty() {
+            self.complete = true;
+        } else {
             let unvisited = get_neighbors(
                 ctx,
                 self.current_char,
                 true,
                 self.limit_to_text_boundary,
             );
-            if !unvisited.is_empty() {
+            if unvisited.is_empty() {
+                self.stack.pop();
+                if let Some(&top) = self.stack.last() {
+                    self.current_char = top;
+                }
+            } else {
                 let next_char = *ctx.rng.choice(&unvisited);
                 link_characters(ctx, self.current_char, next_char);
                 self.char_link_order.push(next_char);
                 self.stack.push(next_char);
                 self.current_char = next_char;
-            } else {
-                self.stack.pop();
-                if let Some(&top) = self.stack.last() {
-                    self.current_char = top;
-                }
             }
-        } else {
-            self.complete = true;
         }
     }
 }
 
-/// algo/breadthfirst.py BreadthFirst: traverses the linked graph layer by
+/// algo/breadthfirst.py `BreadthFirst`: traverses the linked graph layer by
 /// layer. No randomness of its own; `links` iteration is ascending id (the
 /// canonical order; shim-matched on the Python side).
 #[derive(Debug)]
@@ -323,7 +323,7 @@ impl BreadthFirst {
             Some(c) => c,
             None => default_starting_char(ctx, limit_to_text_boundary)?,
         };
-        Ok(BreadthFirst {
+        Ok(Self {
             starting_char,
             frontier: vec![starting_char],
             explored: rustc_hash::FxHashSet::from_iter([starting_char]),

@@ -1,4 +1,4 @@
-//! blackhole, ported from effects/effect_blackhole.py.
+//! blackhole, ported from `effects/effect_blackhole.py`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -75,9 +75,9 @@ enum Phase {
 #[derive(Debug)]
 pub struct Blackhole {
     config: BlackholeConfig,
-    blackhole_chars: Vec<CharId>,
+    ring_chars: Vec<CharId>,
     awaiting_consumption_chars: Vec<CharId>,
-    blackhole_radius: i64,
+    radius: i64,
     character_final_color_map: FxHashMap<CharId, Color>,
     formation_delay: i64,
     f_delay: i64,
@@ -86,12 +86,13 @@ pub struct Blackhole {
 }
 
 impl Blackhole {
+    #[must_use]
     pub fn new(config: BlackholeConfig) -> Self {
-        Blackhole {
+        Self {
             config,
-            blackhole_chars: Vec::new(),
+            ring_chars: Vec::new(),
             awaiting_consumption_chars: Vec::new(),
-            blackhole_radius: 0,
+            radius: 0,
             character_final_color_map: FxHashMap::default(),
             formation_delay: 0,
             f_delay: 0,
@@ -100,7 +101,7 @@ impl Blackhole {
         }
     }
 
-    /// BlackholeIterator.prepare_blackhole.
+    /// `BlackholeIterator.prepare_blackhole`.
     fn prepare_blackhole(
         &mut self,
         ctx: &mut EngineCtx,
@@ -131,20 +132,20 @@ impl Blackhole {
         }
         let mut available_chars: Vec<CharId> =
             ctx.terminal.input_characters.clone();
-        while (self.blackhole_chars.len() as i64) < self.blackhole_radius * 3
+        while (self.ring_chars.len() as i64) < self.radius * 3
             && !available_chars.is_empty()
         {
             let index =
                 ctx.rng.randrange(0, available_chars.len() as i64) as usize;
-            self.blackhole_chars.push(available_chars.remove(index));
+            self.ring_chars.push(available_chars.remove(index));
         }
         let black_hole_ring_positions = geometry::find_coords_on_circle(
             ctx.terminal.canvas.center,
-            self.blackhole_radius,
-            self.blackhole_chars.len() as i64,
+            self.radius,
+            self.ring_chars.len() as i64,
             true,
         );
-        for (position_index, &id) in self.blackhole_chars.iter().enumerate() {
+        for (position_index, &id) in self.ring_chars.iter().enumerate() {
             let starting_pos = black_hole_ring_positions[position_index];
             let blackhole_path = {
                 let ch = &mut ctx.terminal.arena[id.0 as usize];
@@ -223,7 +224,7 @@ impl Blackhole {
             }
         }
         let blackhole_set: FxHashSet<CharId> =
-            self.blackhole_chars.iter().copied().collect();
+            self.ring_chars.iter().copied().collect();
         let characters = {
             let filter = CharacterFilter::default();
             ctx.terminal.get_characters(
@@ -343,29 +344,29 @@ impl Blackhole {
         Ok(())
     }
 
-    /// BlackholeIterator.rotate_blackhole.
+    /// `BlackholeIterator.rotate_blackhole`.
     fn rotate_blackhole(&mut self, ctx: &mut EngineCtx) {
-        for &id in &self.blackhole_chars.clone() {
+        for &id in &self.ring_chars.clone() {
             ctx.activate_path(self, id, "blackhole_rotation");
             ctx.active_characters.insert(id);
         }
     }
 
-    /// BlackholeIterator.collapse_blackhole.
+    /// `BlackholeIterator.collapse_blackhole`.
     fn collapse_blackhole(
         &mut self,
         ctx: &mut EngineCtx,
     ) -> Result<(), EngineError> {
         let mut black_hole_ring_positions = geometry::find_coords_on_circle(
             ctx.terminal.canvas.center,
-            self.blackhole_radius + 3,
-            self.blackhole_chars.len() as i64,
+            self.radius + 3,
+            self.ring_chars.len() as i64,
             true,
         );
         let unstable_symbols = ["◦", "◎", "◉", "●", "◉", "◎", "◦"];
         let mut point_char_made = false;
         let canvas_center = ctx.terminal.canvas.center;
-        for &id in &self.blackhole_chars.clone() {
+        for &id in &self.ring_chars.clone() {
             let next_pos = black_hole_ring_positions.remove(0);
             let (expand_path, collapse_path) = {
                 let ch = &mut ctx.terminal.arena[id.0 as usize];
@@ -449,7 +450,7 @@ impl Blackhole {
         Ok(())
     }
 
-    /// BlackholeIterator.explode_singularity.
+    /// `BlackholeIterator.explode_singularity`.
     fn explode_singularity(
         &mut self,
         ctx: &mut EngineCtx,
@@ -649,7 +650,7 @@ impl EffectHooks for Blackhole {}
 impl Effect for Blackhole {
     fn build(&mut self, ctx: &mut EngineCtx) -> Result<(), EngineError> {
         // BlackholeIterator.__init__
-        self.blackhole_radius = std::cmp::max(
+        self.radius = std::cmp::max(
             std::cmp::min(
                 round_half_even(ctx.terminal.canvas.width as f64 * 0.3),
                 round_half_even(ctx.terminal.canvas.height as f64 * 0.20),
@@ -687,10 +688,10 @@ impl Effect for Blackhole {
         }
         self.prepare_blackhole(ctx)?;
         self.formation_delay =
-            std::cmp::max(floor_div(100, self.blackhole_chars.len() as i64), 6);
+            std::cmp::max(floor_div(100, self.ring_chars.len() as i64), 6);
         self.f_delay = self.formation_delay;
         self.phase = Phase::Forming;
-        self.awaiting_blackhole_chars = self.blackhole_chars.clone();
+        self.awaiting_blackhole_chars = self.ring_chars.clone();
         Ok(())
     }
 
@@ -715,15 +716,9 @@ impl Effect for Blackhole {
                     }
                 }
                 Phase::Consuming => {
-                    if !self.awaiting_consumption_chars.is_empty() {
-                        for &id in &self.awaiting_consumption_chars.clone() {
-                            ctx.activate_path(self, id, "singularity");
-                            ctx.active_characters.insert(id);
-                        }
-                        self.awaiting_consumption_chars.clear();
-                    } else {
+                    if self.awaiting_consumption_chars.is_empty() {
                         let blackhole_set: FxHashSet<CharId> =
-                            self.blackhole_chars.iter().copied().collect();
+                            self.ring_chars.iter().copied().collect();
                         if ctx
                             .active_characters
                             .iter()
@@ -731,6 +726,12 @@ impl Effect for Blackhole {
                         {
                             self.phase = Phase::Collapsing;
                         }
+                    } else {
+                        for &id in &self.awaiting_consumption_chars.clone() {
+                            ctx.activate_path(self, id, "singularity");
+                            ctx.active_characters.insert(id);
+                        }
+                        self.awaiting_consumption_chars.clear();
                     }
                 }
                 Phase::Collapsing => {
@@ -739,7 +740,7 @@ impl Effect for Blackhole {
                     self.phase = Phase::Exploding;
                 }
                 Phase::Exploding => {
-                    if self.blackhole_chars.iter().all(|&id| {
+                    if self.ring_chars.iter().all(|&id| {
                         let ch = &ctx.terminal.arena[id.0 as usize];
                         ch.motion.active_path.is_none()
                             && ch.animation.active_scene.is_none()

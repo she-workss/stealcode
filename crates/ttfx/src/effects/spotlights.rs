@@ -1,4 +1,4 @@
-//! spotlights, ported from effects/effect_spotlights.py.
+//! spotlights, ported from `effects/effect_spotlights.py`.
 
 use std::collections::BTreeSet;
 
@@ -80,7 +80,7 @@ pub struct Spotlights {
     config: SpotlightsConfig,
     illuminated_chars: BTreeSet<CharId>,
     character_color_map: FxHashMap<CharId, (ColorPair, ColorPair)>,
-    spotlights: Vec<CharId>,
+    lights: Vec<CharId>,
     illuminate_range: i64,
     search_duration: i64,
     searching: bool,
@@ -89,12 +89,13 @@ pub struct Spotlights {
 }
 
 impl Spotlights {
+    #[must_use]
     pub fn new(config: SpotlightsConfig) -> Self {
-        Spotlights {
+        Self {
             config,
             illuminated_chars: BTreeSet::new(),
             character_color_map: FxHashMap::default(),
-            spotlights: Vec::new(),
+            lights: Vec::new(),
             illuminate_range: 1,
             search_duration: 0,
             searching: true,
@@ -103,7 +104,7 @@ impl Spotlights {
         }
     }
 
-    /// SpotlightsIterator._adjust_color_pair_brightness.
+    /// `SpotlightsIterator`._`adjust_color_pair_brightness`.
     fn adjust_color_pair_brightness(
         colors: &ColorPair,
         brightness_factor: f64,
@@ -118,20 +119,20 @@ impl Spotlights {
         )
     }
 
-    /// SpotlightsIterator._has_input_colors.
+    /// `SpotlightsIterator`._`has_input_colors`.
     fn has_input_colors(ctx: &EngineCtx, id: CharId) -> bool {
         let ch = &ctx.terminal.arena[id.0 as usize];
         ch.animation.input_fg_color.is_some()
             || ch.animation.input_bg_color.is_some()
     }
 
-    /// SpotlightsIterator._is_spotlightable.
+    /// `SpotlightsIterator`._`is_spotlightable`.
     fn is_spotlightable(ctx: &EngineCtx, id: CharId) -> bool {
         ctx.terminal.arena[id.0 as usize].input_symbol != " "
             || Self::has_input_colors(ctx, id)
     }
 
-    /// SpotlightsIterator._get_expand_color_override.
+    /// `SpotlightsIterator`._`get_expand_color_override`.
     fn get_expand_color_override(
         &self,
         ctx: &EngineCtx,
@@ -155,9 +156,9 @@ impl Spotlights {
         None
     }
 
-    /// SpotlightsIterator.make_spotlights.
+    /// `SpotlightsIterator.make_spotlights`.
     fn make_spotlights(
-        &mut self,
+        &self,
         ctx: &mut EngineCtx,
         num_spotlights: i64,
     ) -> Result<Vec<CharId>, EngineError> {
@@ -242,7 +243,7 @@ impl Spotlights {
         Ok(spotlights)
     }
 
-    /// SpotlightsIterator.find_coord_at_minimum_distance.
+    /// `SpotlightsIterator.find_coord_at_minimum_distance`.
     fn find_coord_at_minimum_distance(
         ctx: &mut EngineCtx,
         origin_coord: Coord,
@@ -259,10 +260,10 @@ impl Spotlights {
         }
     }
 
-    /// SpotlightsIterator.illuminate_chars.
+    /// `SpotlightsIterator.illuminate_chars`.
     fn illuminate_chars(&mut self, ctx: &mut EngineCtx, range_: i64) {
         let mut coords_in_range: Vec<Coord> = Vec::new();
-        for &spotlight in &self.spotlights {
+        for &spotlight in &self.lights {
             let current_coord = ctx.terminal.arena[spotlight.0 as usize]
                 .motion
                 .current_coord;
@@ -302,7 +303,7 @@ impl Spotlights {
         for &id in &chars_in_range {
             let input_coord = ctx.terminal.arena[id.0 as usize].input_coord;
             let distance = self
-                .spotlights
+                .lights
                 .iter()
                 .map(|&spotlight| {
                     let current_coord = ctx.terminal.arena
@@ -321,8 +322,8 @@ impl Spotlights {
                 > range_ as f64 * (1.0 - self.config.beam_falloff)
             {
                 let brightness_factor = (1.0
-                    - (distance
-                        - range_ as f64 * (1.0 - self.config.beam_falloff))
+                    - (range_ as f64)
+                        .mul_add(-(1.0 - self.config.beam_falloff), distance)
                         / (range_ as f64 * self.config.beam_falloff))
                     .max(0.2);
                 Self::adjust_color_pair_brightness(
@@ -356,8 +357,7 @@ impl Effect for Spotlights {
     fn build(&mut self, ctx: &mut EngineCtx) -> Result<(), EngineError> {
         // SpotlightsIterator.DYNAMIC_NEUTRAL_GRAY
         let dynamic_neutral_gray = Color::from_hex("#808080").unwrap();
-        self.spotlights =
-            self.make_spotlights(ctx, self.config.spotlight_count)?;
+        self.lights = self.make_spotlights(ctx, self.config.spotlight_count)?;
         let final_gradient = Gradient::new(
             &self.config.final_gradient_stops,
             &self.config.final_gradient_steps,
@@ -459,7 +459,7 @@ impl Effect for Spotlights {
         self.searching = true;
         self.expanding = false;
         self.complete = false;
-        for &spotlight in &self.spotlights.clone() {
+        for &spotlight in &self.lights.clone() {
             ctx.activate_path(self, spotlight, "0");
             ctx.active_characters.insert(spotlight);
         }
@@ -472,20 +472,20 @@ impl Effect for Spotlights {
             if self.searching {
                 self.search_duration -= 1;
                 if self.search_duration == 0 {
-                    for &spotlight in &self.spotlights.clone() {
+                    for &spotlight in &self.lights.clone() {
                         ctx.activate_path(self, spotlight, "center");
                     }
                     self.searching = false;
                 }
             }
-            if !self.spotlights.iter().any(|&spotlight| {
+            if !self.lights.iter().any(|&spotlight| {
                 ctx.terminal.arena[spotlight.0 as usize]
                     .motion
                     .active_path
                     .is_some()
             }) {
-                while self.spotlights.len() > 1 {
-                    self.spotlights.pop();
+                while self.lights.len() > 1 {
+                    self.lights.pop();
                 }
                 self.expanding = true;
                 self.illuminate_range += 1;

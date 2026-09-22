@@ -1,4 +1,4 @@
-//! waves, ported from effects/effect_waves.py.
+//! waves, ported from `effects/effect_waves.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -109,8 +109,9 @@ pub struct Waves {
 }
 
 impl Waves {
+    #[must_use]
     pub fn new(config: WavesConfig) -> Self {
-        Waves {
+        Self {
             config,
             pending_columns: Vec::new(),
             character_final_color_map: FxHashMap::default(),

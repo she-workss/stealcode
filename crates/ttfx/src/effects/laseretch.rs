@@ -1,19 +1,19 @@
-//! laseretch, ported from effects/effect_laseretch.py.
+//! laseretch, ported from `effects/effect_laseretch.py`.
 //!
 //! The inner LaserEtchIterator.Laser class is the `Laser` struct; its methods
 //! live on `LaserEtch` (they need &mut self for event hooks). Sparks are a
-//! ParticlePool; reclaim-on-event is an EventAction::Callback dispatched in
-//! dispatch_callback (plan.md §4.2).
+//! `ParticlePool`; reclaim-on-event is an `EventAction::Callback` dispatched in
+//! `dispatch_callback` (plan.md §4.2).
 //!
-//! Upstream quirk (effect_laseretch.py:404): `--etch-pattern <group>` parses to
-//! a CharacterGroup enum member, but build() tests membership against the
-//! enum's NAME strings (`CharacterGroup._member_names_`), which never matches a
-//! member - the grouped-etch branch is dead code, pending_chars stays empty,
-//! and the effect emits exactly one frame. Verified against the pinned
-//! reference (`laseretch --etch-pattern row_top_to_bottom` -> frames=1).
+//! Upstream quirk (`effect_laseretch.py:404)`: `--etch-pattern <group>` parses
+//! to a `CharacterGroup` enum member, but `build()` tests membership against
+//! the enum's NAME strings (`CharacterGroup._member_names_`), which never
+//! matches a member - the grouped-etch branch is dead code, `pending_chars`
+//! stays empty, and the effect emits exactly one frame. Verified against the
+//! pinned reference (`laseretch --etch-pattern row_top_to_bottom` -> frames=1).
 //! Reproduced faithfully; only "algorithm" (the default) etches.
 //!
-//! No observable set iteration beyond the engine-canonical active_characters
+//! No observable set iteration beyond the engine-canonical `active_characters`
 //! (docs/ordering-inventory.md): `color_shifted_chars` is created but never
 //! used upstream, and the pool's available queue is a deque.
 
@@ -41,10 +41,10 @@ use crate::{
     },
 };
 
-/// Callback id: sparks_pool.reclaim(spark, hide=True, deactivate=True).
+/// Callback id: `sparks_pool.reclaim(spark`, hide=True, deactivate=True).
 const CB_RECLAIM_SPARK: u32 = 0;
 
-/// --etch-pattern accepts either a CharacterGroup name or the literal
+/// --etch-pattern accepts either a `CharacterGroup` name or the literal
 /// "algorithm" (upstream `_etch_pattern_type_parser` dual-type parser).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EtchPattern {
@@ -64,14 +64,14 @@ pub struct LaserEtchConfig {
     /// Pattern used to etch the text.
     pub etch_pattern: EtchPattern,
 
-    /// Along with etch_delay, determines the speed at which the characters are
-    /// etched onto the terminal. This value specifies the number of characters
-    /// to etch simultaneously.
+    /// Along with `etch_delay`, determines the speed at which the characters
+    /// are etched onto the terminal. This value specifies the number of
+    /// characters to etch simultaneously.
     pub etch_speed: i64,
 
-    /// Along with etch_speed, determines the speed at which the characters are
-    /// etched onto the terminal. This values specifies the number of frames to
-    /// wait before etching the next set of characters.
+    /// Along with `etch_speed`, determines the speed at which the characters
+    /// are etched onto the terminal. This values specifies the number of
+    /// frames to wait before etching the next set of characters.
     pub etch_delay: i64,
 
     /// Space separated, unquoted, list of colors for the gradient used to cool
@@ -138,7 +138,8 @@ impl Default for LaserEtchConfig {
         }
     }
 }
-/// LaserEtchIterator.Laser state (methods live on LaserEtch for hooks access).
+/// LaserEtchIterator.Laser state (methods live on `LaserEtch` for hooks
+/// access).
 #[derive(Debug)]
 struct Laser {
     position: Coord,
@@ -147,7 +148,7 @@ struct Laser {
     sparks_pool: ParticlePool,
 }
 
-/// Laser._make_sparks_pool initialize_sparks closure.
+/// Laser._`make_sparks_pool` `initialize_sparks` closure.
 fn initialize_spark(
     ctx: &mut EngineCtx,
     spark: CharId,
@@ -175,7 +176,7 @@ fn initialize_spark(
     }
 }
 
-/// LaserEtchIterator._has_input_colors.
+/// `LaserEtchIterator`._`has_input_colors`.
 fn has_input_colors(ctx: &EngineCtx, id: CharId) -> bool {
     let anim = &ctx.terminal.arena[id.0 as usize].animation;
     anim.input_fg_color.is_some() || anim.input_bg_color.is_some()
@@ -191,8 +192,9 @@ pub struct LaserEtch {
 }
 
 impl LaserEtch {
+    #[must_use]
     pub fn new(config: LaserEtchConfig) -> Self {
-        LaserEtch {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             pending_chars: Vec::new(),
@@ -201,8 +203,8 @@ impl LaserEtch {
         }
     }
 
-    /// Laser.__init__ (+ _make_sparks_pool). The pool is created BEFORE the
-    /// beam characters, matching upstream's character_id allocation order.
+    /// Laser.__init__ (+ _`make_sparks_pool`). The pool is created BEFORE the
+    /// beam characters, matching upstream's `character_id` allocation order.
     fn make_laser(
         &mut self,
         ctx: &mut EngineCtx,
@@ -231,7 +233,7 @@ impl LaserEtch {
         let cooling_frames = self.config.spark_cooling_frames;
         sparks_pool
             .preallocate(ctx, 2000, |ctx, spark| {
-                initialize_spark(ctx, spark, &spark_colors, cooling_frames)
+                initialize_spark(ctx, spark, &spark_colors, cooling_frames);
             })
             .map_err(EngineError::Other)?;
         for &spark in &sparks_pool.particles {
@@ -267,7 +269,7 @@ impl LaserEtch {
                 let laser_scn =
                     ch.animation.new_scene(true, None, None, "laser", uses_pre);
                 let scene = ch.animation.scenes.get_mut(&laser_scn).unwrap();
-                for color in laser_gradient.iter() {
+                for color in &laser_gradient {
                     scene
                         .add_frame(
                             &input_symbol,
@@ -312,7 +314,7 @@ impl LaserEtch {
         self.laser = Some(laser);
     }
 
-    /// Laser.emit_sparks (+ its setup_spark_path closure).
+    /// `Laser.emit_sparks` (+ its `setup_spark_path` closure).
     fn laser_emit_sparks(
         &mut self,
         ctx: &mut EngineCtx,
@@ -331,7 +333,7 @@ impl LaserEtch {
                 true,
                 ParticleReset::default(),
                 |ctx, spark| {
-                    initialize_spark(ctx, spark, &spark_colors, cooling_frames)
+                    initialize_spark(ctx, spark, &spark_colors, cooling_frames);
                 },
                 |ctx, spark| {
                     // setup_spark_path
@@ -379,7 +381,7 @@ impl LaserEtch {
     }
 
     /// Laser.disable.
-    fn laser_disable(&mut self, ctx: &mut EngineCtx) {
+    fn laser_disable(&self, ctx: &mut EngineCtx) {
         let beam_chars = self
             .laser
             .as_ref()
@@ -604,11 +606,10 @@ impl Effect for LaserEtch {
                     == " "
                     && !has_input_colors(ctx, next_char)
                 {
-                    if !self.pending_chars.is_empty() {
-                        next_char = self.pending_chars.remove(0);
-                    } else {
+                    if self.pending_chars.is_empty() {
                         break;
                     }
+                    next_char = self.pending_chars.remove(0);
                 }
                 ctx.terminal.set_character_visibility(next_char, true);
                 ctx.active_characters.insert(next_char);
@@ -620,7 +621,9 @@ impl Effect for LaserEtch {
         } else {
             self.char_delay -= 1;
         }
-        if !self.pending_chars.is_empty() {
+        if self.pending_chars.is_empty() {
+            self.laser_disable(ctx);
+        } else {
             let beam_chars = self
                 .laser
                 .as_ref()
@@ -630,8 +633,6 @@ impl Effect for LaserEtch {
             for id in beam_chars {
                 ctx.active_characters.insert(id);
             }
-        } else {
-            self.laser_disable(ctx);
         }
         ctx.update(self);
         Some(ctx.frame())

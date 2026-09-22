@@ -14,6 +14,7 @@ pub const REVERSE: &str = "\x1b[7m";
 pub const HIDDEN: &str = "\x1b[8m";
 pub const STRIKETHROUGH: &str = "\x1b[9m";
 
+#[must_use]
 pub fn move_cursor_up(y: usize) -> String {
     format!("\x1b[{y}A")
 }
@@ -27,7 +28,7 @@ pub enum ColorCode {
     Xterm(u8),
 }
 
-/// Decimal digits of a byte, without going through core::fmt. Every restyled
+/// Decimal digits of a byte, without going through `core::fmt`. Every restyled
 /// character reassembles its SGR sequence, so the formatting machinery shows up
 /// in profiles.
 #[inline]

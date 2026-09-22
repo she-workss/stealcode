@@ -44,19 +44,16 @@ pub(super) fn draw_web_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
             with_fib_dirs(node_n, |directions| {
                 for (i, d) in directions.iter().enumerate() {
                     let i_f = i as f32;
-                    let x = d[0]
-                        + 0.3
-                            * (vnoise(i_f * 0.31 + 9.0, t * 0.24) - 0.5)
-                            * 2.0;
-                    let y = d[1]
-                        + 0.3
-                            * (vnoise(i_f * 0.53 + 27.0, t * 0.21) - 0.5)
-                            * 2.0;
-                    let z = d[2]
-                        + 0.3
-                            * (vnoise(i_f * 0.77 + 55.0, t * 0.27) - 0.5)
-                            * 2.0;
-                    let l = (x * x + y * y + z * z).sqrt();
+                    let x = (0.3
+                        * (vnoise(i_f.mul_add(0.31, 9.0), t * 0.24) - 0.5))
+                        .mul_add(2.0, d[0]);
+                    let y = (0.3
+                        * (vnoise(i_f.mul_add(0.53, 27.0), t * 0.21) - 0.5))
+                        .mul_add(2.0, d[1]);
+                    let z = (0.3
+                        * (vnoise(i_f.mul_add(0.77, 55.0), t * 0.27) - 0.5))
+                        .mul_add(2.0, d[2]);
+                    let l = z.mul_add(z, y.mul_add(y, x * x)).sqrt();
                     let inv_l = if l > 1e-6 { 1.0 / l } else { 0.0 };
                     let (ux, uy, uz) = (x * inv_l, y * inv_l, z * inv_l);
                     let (px, py, pz) = pt.project(ux, uy, uz);
@@ -71,21 +68,23 @@ pub(super) fn draw_web_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
                     let dx = a[0] - b[0];
                     let dy = a[1] - b[1];
                     let dz = a[2] - b[2];
-                    let d2 = dx * dx + dy * dy + dz * dz;
+                    let d2 =
+                        f32::mul_add(dz, dz, f32::mul_add(dy, dy, dx * dx));
                     // Compare squared distances - avoids a sqrt for every
                     // rejected pair, and most pairs are rejected.
                     if d2 >= thr * thr {
                         continue;
                     }
                     let dist = d2.sqrt();
-                    let depth = ((a[5] + b[5]) / 2.0 + 1.0) / 2.0;
+                    let depth = f32::midpoint(f32::midpoint(a[5], b[5]), 1.0);
                     out.lines.push(Line {
                         x1: a[3],
                         y1: a[4],
                         x2: b[3],
                         y2: b[4],
                         white: 0.42,
-                        a: (1.0 - dist * inv_thr) * (0.3 + 0.55 * depth),
+                        a: f32::mul_add(dist, -inv_thr, 1.0)
+                            * 0.55f32.mul_add(depth, 0.3),
                         w: line_w,
                     });
                     edges.push((i, j));
@@ -93,14 +92,15 @@ pub(super) fn draw_web_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
             }
 
             for (i, n) in nodes.iter().enumerate() {
-                let depth = (n[5] + 1.0) / 2.0;
-                let pulse = 1.0 + 0.25 * (t * 1.4 + i as f32 * 2.7).sin();
+                let depth = f32::midpoint(n[5], 1.0);
+                let pulse = 0.25f32
+                    .mul_add((i as f32).mul_add(2.7, t * 1.4).sin(), 1.0);
                 out.dots.push(Dot::new(
                     n[3],
                     n[4],
                     n[5],
-                    (node_r + node_r_depth * depth) * pulse * rs,
-                    0.55 - 0.45 * depth,
+                    node_r_depth.mul_add(depth, node_r) * pulse * rs,
+                    0.45f32.mul_add(-depth, 0.55),
                 ));
             }
 
@@ -110,9 +110,9 @@ pub(super) fn draw_web_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
                     break;
                 }
                 let s_f = s as f32;
-                let journey = t * 0.48 + s_f * 3.73;
+                let journey = s_f.mul_add(3.73, t * 0.48);
                 let cycle = journey.floor();
-                let edge_index = (hash_d(cycle, s_f * 4.7 + 1.3)
+                let edge_index = (hash_d(cycle, s_f.mul_add(4.7, 1.3))
                     * edges.len() as f32)
                     .floor()
                     .min((edges.len() - 1) as f32)
@@ -122,17 +122,17 @@ pub(super) fn draw_web_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
                 let px = lerp(nodes[a][3], nodes[b][3], f);
                 let py = lerp(nodes[a][4], nodes[b][4], f);
                 let zr = lerp(nodes[a][5], nodes[b][5], f);
-                let depth = (zr + 1.0) / 2.0;
+                let depth = f32::midpoint(zr, 1.0);
                 let life = (std::f32::consts::PI * f).sin().max(0.0);
                 out.dots.push(
                     Dot::new(
                         px,
                         py,
                         zr,
-                        (node_r * 1.5 + node_r_depth * depth) * rs,
+                        node_r_depth.mul_add(depth, node_r * 1.5) * rs,
                         0.05,
                     )
-                    .with_a(life * (0.5 + 0.5 * depth)),
+                    .with_a(life * 0.5f32.mul_add(depth, 0.5)),
                 );
             }
         });

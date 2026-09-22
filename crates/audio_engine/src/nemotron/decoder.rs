@@ -1,14 +1,14 @@
 //! RNN-T decoder: predictor (2-layer LSTM) + joint network + greedy
 //! search. Mirrors the C++ reference `decode_rnnt_greedy`:
-//!   * gates = Wx@x + Wh@h + (b_ih + b_hh), order [i, f, g, o], c' = f*c + i*g,
-//!     h' = o*tanh(c').
-//!   * embed lookup = embed_w[last_token] (row 0 for the start state is NOT
-//!     used - the C++ reference feeds zeros on last_token < 0).
-//!   * joint: logits = out_w @ relu(enc_proj[step] + pred_proj) + out_b (joint
-//!     activation = relu for this model).
-//!   * blank: step += 1 (predictor state unchanged); token: emit, last_token =
-//!     token, swap state. max_symbols_per_step caps consecutive tokens (then
-//!     step += 1).
+//!   * gates = Wx@x + Wh@h + (`b_ih` + `b_hh`), order [i, f, g, o], c' = f*c +
+//!     i*g, h' = o*tanh(c').
+//!   * embed lookup = `embed_w`\[`last_token`\] (row 0 for the start state is
+//!     NOT used - the C++ reference feeds zeros on `last_token` < 0).
+//!   * joint: logits = `out_w` @ `relu(enc_proj`\[step\] + `pred_proj`) +
+//!     `out_b` (joint activation = relu for this model).
+//!   * blank: step += 1 (predictor state unchanged); token: emit, `last_token`
+//!     = token, swap state. `max_symbols_per_step` caps consecutive tokens
+//!     (then step += 1).
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub struct LstmLayer {
     /// matrix (one matvec over `[x; h]` instead of two; `None` when the
     /// shapes do not allow block-aligned concat).
     pub merged: Option<Lin>,
-    /// ih_bias + hh_bias folded.
+    /// `ih_bias` + `hh_bias` folded.
     pub bias: Vec<f32>,
     pub hidden: usize,
 }
@@ -64,7 +64,7 @@ pub struct Joint {
 pub struct Token {
     pub id: u32,
     pub p: f32,
-    /// Encoder frame index at emission (step_at_emit).
+    /// Encoder frame index at emission (`step_at_emit`).
     pub step: usize,
 }
 
@@ -193,27 +193,26 @@ impl Predictor {
                 let fg = sigmoid(f[k]);
                 let gg = g[k].tanh();
                 let og = sigmoid(o[k]);
-                let cn = fg * c[l][k] + ig * gg;
+                let cn = ig.mul_add(gg, fg * c[l][k]);
                 nc[l][k] = cn;
                 nh[l][k] = og * cn.tanh();
             }
-            if l == 0 {
-                if let Some(dir) = crate::nemotron::timing::dump_dir() {
-                    let mut v: Vec<f32> = Vec::with_capacity(4 * hdim);
-                    for k in 0..hdim {
-                        v.push(sigmoid(i[k]));
-                        v.push(g[k].tanh());
-                        v.push(sigmoid(o[k]));
-                        v.push(nh[0][k]);
-                    }
-                    std::fs::write(dir.join("acts0.bin"), bytemuck_enc(&v))
-                        .ok();
-                    std::fs::write(
-                        dir.join("real_gates0.bin"),
-                        bytemuck_enc(&self.gates),
-                    )
-                    .ok();
+            if l == 0
+                && let Some(dir) = crate::nemotron::timing::dump_dir()
+            {
+                let mut v: Vec<f32> = Vec::with_capacity(4 * hdim);
+                for k in 0..hdim {
+                    v.push(sigmoid(i[k]));
+                    v.push(g[k].tanh());
+                    v.push(sigmoid(o[k]));
+                    v.push(nh[0][k]);
                 }
+                std::fs::write(dir.join("acts0.bin"), bytemuck_enc(&v)).ok();
+                std::fs::write(
+                    dir.join("real_gates0.bin"),
+                    bytemuck_enc(&self.gates),
+                )
+                .ok();
             }
         }
     }
@@ -247,7 +246,7 @@ impl GreedyDecoder {
     }
 
     /// Greedy decode over encoder output `enc` (time-major
-    /// [t_enc, d_enc]).
+    /// [`t_enc`, `d_enc`]).
     pub fn decode(&mut self, enc: &[f32], t_enc: usize) -> Result<Vec<Token>> {
         let dump = crate::nemotron::timing::dump_dir();
         let d_enc = self.joint.d_enc;
@@ -290,7 +289,7 @@ impl GreedyDecoder {
                 // Manual dot for y[0] (col 0): sum w0[0][i]*xt[i]
                 let mut acc = 0.0f64;
                 for i in 0..1024 {
-                    acc += w0[i] as f64 * xt[i] as f64;
+                    acc = (w0[i] as f64).mul_add(xt[i] as f64, acc);
                 }
                 debug!("manual y[0]={acc} (via f64)");
             }
@@ -369,33 +368,29 @@ impl GreedyDecoder {
 
             let mut best = 0usize;
             let mut best_v = logits[0];
-            for i in 1..n_cls {
-                if logits[i] > best_v {
-                    best_v = logits[i];
+            for (i, &v) in logits.iter().enumerate().take(n_cls).skip(1) {
+                if v > best_v {
+                    best_v = v;
                     best = i;
                 }
             }
-            if iter == 1 {
-                if let Some(dir) = &dump {
-                    std::fs::write(dir.join("h0_l0.bin"), bytemuck_enc(&nh[0]))
-                        .ok();
-                    std::fs::write(dir.join("h0_l1.bin"), bytemuck_enc(&nh[1]))
-                        .ok();
-                    std::fs::write(
-                        dir.join("pred_proj0.bin"),
-                        bytemuck_enc(&pred_proj),
-                    )
+            if iter == 1
+                && let Some(dir) = &dump
+            {
+                std::fs::write(dir.join("h0_l0.bin"), bytemuck_enc(&nh[0]))
                     .ok();
-                    std::fs::write(
-                        dir.join("logits0.bin"),
-                        bytemuck_enc(&logits),
-                    )
+                std::fs::write(dir.join("h0_l1.bin"), bytemuck_enc(&nh[1]))
                     .ok();
-                    let g0 = &self.predictor.layers[0].bias;
-                    std::fs::write(dir.join("gates0.bin"), bytemuck_enc(g0))
-                        .ok();
-                    debug!("dump: best={best} best_v={best_v}");
-                }
+                std::fs::write(
+                    dir.join("pred_proj0.bin"),
+                    bytemuck_enc(&pred_proj),
+                )
+                .ok();
+                std::fs::write(dir.join("logits0.bin"), bytemuck_enc(&logits))
+                    .ok();
+                let g0 = &self.predictor.layers[0].bias;
+                std::fs::write(dir.join("gates0.bin"), bytemuck_enc(g0)).ok();
+                debug!("dump: best={best} best_v={best_v}");
             }
 
             if best == blank {
@@ -439,7 +434,7 @@ fn bytemuck_enc(v: &[f32]) -> Vec<u8> {
 }
 
 /// Entropy-based confidence (matches the C++ reference):
-/// p = softmax(logits), confidence = 1 - entropy/log(n_cls).
+/// p = softmax(logits), confidence = 1 - `entropy/log(n_cls)`.
 fn token_confidence(logits: &[f32], n_cls: usize, probs: &mut Vec<f32>) -> f32 {
     let mut maxv = logits[0];
     for &v in &logits[1..] {
@@ -456,9 +451,9 @@ fn token_confidence(logits: &[f32], n_cls: usize, probs: &mut Vec<f32>) -> f32 {
     }
     let inv = (1.0 / sum) as f32;
     let mut entropy: f64 = 0.0;
-    for i in 0..n_cls {
-        let p = probs[i] * inv;
-        entropy -= (p as f64) * ((p as f64) + 1e-10).ln();
+    for &pv in probs.iter().take(n_cls) {
+        let p = pv * inv;
+        entropy = (p as f64).mul_add(-((p as f64) + 1e-10).ln(), entropy);
     }
     let max_entropy = (n_cls as f64).ln();
     if max_entropy <= 0.0 {

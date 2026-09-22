@@ -5,6 +5,7 @@
 /// Python's built-in `round()`: banker's rounding (half-to-even), returning
 /// i64. Rust's `f64::round` is half-away-from-zero, which differs at exact .5
 /// values.
+#[must_use]
 pub fn round_half_even(x: f64) -> i64 {
     let floor = x.floor();
     let diff = x - floor;
@@ -22,7 +23,8 @@ pub fn round_half_even(x: f64) -> i64 {
 /// Python's `//` on integers: floor division. Rust's `/` truncates toward zero
 /// and `div_euclid` rounds toward a non-negative remainder - both differ from
 /// floor when signs are involved (7 // -2 == -4 in Python).
-pub fn floor_div(a: i64, b: i64) -> i64 {
+#[must_use]
+pub const fn floor_div(a: i64, b: i64) -> i64 {
     let q = a / b;
     if a % b != 0 && (a < 0) != (b < 0) {
         q - 1

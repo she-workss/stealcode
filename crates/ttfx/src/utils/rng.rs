@@ -12,28 +12,30 @@ pub struct Rng {
 }
 
 impl Rng {
+    #[must_use]
     pub fn seeded(seed: u64) -> Self {
         // SplitMix64 expansion of the seed into the xoshiro state, the
         // reference-recommended initialization.
         let mut sm = seed;
         let mut next = || {
-            sm = sm.wrapping_add(0x9E3779B97F4A7C15);
+            sm = sm.wrapping_add(0x9E37_79B9_7F4A_7C15);
             let mut z = sm;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
             z ^ (z >> 31)
         };
-        Rng {
+        Self {
             s: [next(), next(), next(), next()],
         }
     }
 
+    #[must_use]
     pub fn from_entropy() -> Self {
-        Rng::seeded(std::random::random(..))
+        Self::seeded(std::random::random(..))
     }
 
-    /// Core generator: xoshiro256++ next().
-    fn next_u64(&mut self) -> u64 {
+    /// Core generator: xoshiro256++ `next()`.
+    const fn next_u64(&mut self) -> u64 {
         let result = self.s[0]
             .wrapping_add(self.s[3])
             .rotate_left(23)
@@ -48,7 +50,8 @@ impl Rng {
         result
     }
 
-    /// Python random.random() shape: float in [0, 1) with 53 bits of precision.
+    /// Python `random.random()` shape: float in [0, 1) with 53 bits of
+    /// precision.
     pub fn random(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
     }
@@ -90,12 +93,12 @@ impl Rng {
         self.randbelow(len as u64) as usize
     }
 
-    /// random.uniform(a, b): a + (b-a) * random().
+    /// random.uniform(a, b): a + (b-a) * `random()`.
     pub fn uniform(&mut self, a: f64, b: f64) -> f64 {
-        a + (b - a) * self.random()
+        (b - a).mul_add(self.random(), a)
     }
 
-    /// random.shuffle: Fisher-Yates from the top, exactly CPython's loop
+    /// random.shuffle: Fisher-Yates from the top, exactly `CPython`'s loop
     /// (for i in reversed(range(1, len(x))): j = randbelow(i+1); swap).
     pub fn shuffle<T>(&mut self, seq: &mut [T]) {
         for i in (1..seq.len()).rev() {
@@ -119,6 +122,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)] // uniform() is a closed range: b is reachable exactly
     fn ranges_respected() {
         let mut r = Rng::seeded(7);
         for _ in 0..1000 {

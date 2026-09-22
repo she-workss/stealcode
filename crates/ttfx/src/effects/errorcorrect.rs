@@ -1,4 +1,4 @@
-//! errorcorrect, ported from effects/effect_errorcorrect.py.
+//! errorcorrect, ported from `effects/effect_errorcorrect.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -76,8 +76,9 @@ pub struct ErrorCorrect {
 }
 
 impl ErrorCorrect {
+    #[must_use]
     pub fn new(config: ErrorCorrectConfig) -> Self {
-        ErrorCorrect {
+        Self {
             config,
             swapped: Vec::new(),
             swap_delay: 0,
@@ -85,7 +86,7 @@ impl ErrorCorrect {
         }
     }
 
-    /// ErrorCorrectIterator._get_dynamic_final_scene.
+    /// `ErrorCorrectIterator`._`get_dynamic_final_scene`.
     fn get_dynamic_final_scene(
         &self,
         ctx: &mut EngineCtx,
@@ -152,7 +153,7 @@ impl ErrorCorrect {
         Ok(final_scene)
     }
 
-    /// ErrorCorrectIterator._configure_swapped_character.
+    /// `ErrorCorrectIterator`._`configure_swapped_character`.
     fn configure_swapped_character(
         &mut self,
         ctx: &mut EngineCtx,
@@ -560,8 +561,8 @@ impl Effect for ErrorCorrect {
 
     fn next_frame(&mut self, ctx: &mut EngineCtx) -> Option<String> {
         if !self.swapped.is_empty() && self.swap_delay == 0 {
-            let (char1, char2) = self.swapped.remove(0);
-            for id in [char1, char2] {
+            let pair = self.swapped.remove(0);
+            for id in <[CharId; 2]>::from(pair) {
                 ctx.activate_scene(self, id, "error");
                 ctx.active_characters.insert(id);
             }

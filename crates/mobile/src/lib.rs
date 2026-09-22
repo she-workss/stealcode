@@ -1,4 +1,4 @@
-//! Mobile entry point for StealCode (`libmobile.so` on Android,
+//! Mobile entry point for `StealCode` (`libmobile.so` on Android,
 //! `libmobile.a` on iOS).
 //!
 //! The UI (root view + window creation) is shared between both platforms;

@@ -131,7 +131,7 @@ async fn run_upgrade(target: Option<String>) -> anyhow::Result<()> {
         return Ok(());
     };
     let download_dir = paths::temp_dir();
-    auto_update::apply_release_asset(&client, &source, &release, &download_dir)
+    auto_update::apply_release_asset(&client, &source, &release, download_dir)
         .await?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {

@@ -91,6 +91,7 @@ pub(crate) fn draw_mode_into_resolved(
 ///
 /// Convenience wrapper around [`draw_mode_into`] for one-off calls and tests;
 /// it allocates. Render loops should use [`draw_mode_into`] instead.
+#[must_use]
 pub fn draw_mode(mode: ModeKey, size: f32, t: f32, opts: &ModeOpts) -> Frame {
     let mut frame = Frame::new();
     draw_mode_into(mode, size, t, opts, &mut frame);

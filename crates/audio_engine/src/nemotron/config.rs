@@ -190,7 +190,7 @@ impl ModelConfig {
     }
 
     /// Resolve a language hint to a prompt index (transcribe.cpp
-    /// resolve_prompt_id): exact match in the dictionary; empty hint ->
+    /// `resolve_prompt_id)`: exact match in the dictionary; empty hint ->
     /// the dictionary's auto slot ("auto" entry); unknown -> error.
     pub fn resolve_prompt_id(&self, language: Option<&str>) -> Result<u32> {
         match language {

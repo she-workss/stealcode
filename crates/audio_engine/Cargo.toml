@@ -15,6 +15,7 @@ anyhow.workspace = true
 memmap2 = { version = "0.9", default-features = false }
 pollster = { version = "1", default-features = false, optional = true }
 rayon = { version = "1", default-features = false }
+rustc-hash.workspace = true
 tracing.workspace = true
 wgpu = { version = "30", default-features = false, features = [
     "dx12",

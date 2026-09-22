@@ -1,11 +1,11 @@
-//! smoke, ported from effects/effect_smoke.py.
+//! smoke, ported from `effects/effect_smoke.py`.
 //!
-//! RNG order mirrors SmokeIterator.__init__: PrimsWeighted construction
+//! RNG order mirrors `SmokeIterator`.__init__: `PrimsWeighted` construction
 //! (random starting coord + one randint(0, 99) weight per character over
-//! get_characters(inner+outer fill)), then the BreadthFirst starting-coord
-//! draw, then build() (PrimsWeighted run to completion). __next__ consumes no
-//! RNG. BreadthFirst's links-set traversal is the canonical ascending
-//! character_id order (shim-patched; docs/ordering-inventory.md) - no new
+//! `get_characters(inner+outer` fill)), then the `BreadthFirst` starting-coord
+//! draw, then `build()` (`PrimsWeighted` run to completion). __next__ consumes
+//! no RNG. `BreadthFirst`'s links-set traversal is the canonical ascending
+//! `character_id` order (shim-patched; docs/ordering-inventory.md) - no new
 //! observable set iterations in this effect.
 
 use rustc_hash::FxHashMap;
@@ -86,14 +86,15 @@ impl Default for SmokeConfig {
 pub struct Smoke {
     config: SmokeConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,
-    /// Option so next_frame can move it out of self while stepping needs ctx
+    /// Option so `next_frame` can move it out of self while stepping needs ctx
     /// and event dispatch needs &mut self.
     fill_alg: Option<BreadthFirst>,
 }
 
 impl Smoke {
+    #[must_use]
     pub fn new(config: SmokeConfig) -> Self {
-        Smoke {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             fill_alg: None,
@@ -147,7 +148,7 @@ impl Effect for Smoke {
             .smoke_gradient_stops
             .iter()
             .chain(self.config.final_gradient_stops.iter().rev())
-            .cloned()
+            .copied()
             .collect();
         let smoke_gradient =
             Gradient::new(&smoke_gradient_colors, &[3, 4], false, false)
@@ -191,7 +192,7 @@ impl Effect for Smoke {
                         Some(
                             final_gradient_mapping
                                 .get(&input_coord)
-                                .cloned()
+                                .copied()
                                 .unwrap_or(blk),
                         ),
                         None,
@@ -232,7 +233,7 @@ impl Effect for Smoke {
                     .config
                     .final_gradient_stops
                     .iter()
-                    .cloned()
+                    .copied()
                     .chain(std::iter::once(final_fg_color))
                     .collect();
                 let paint_gradient =
@@ -323,8 +324,7 @@ impl Effect for Smoke {
         {
             if !fill_alg.complete {
                 fill_alg.step(ctx);
-                for i in 0..fill_alg.explored_last_step.len() {
-                    let id = fill_alg.explored_last_step[i];
+                for &id in &fill_alg.explored_last_step {
                     ctx.activate_scene(self, id, "smoke");
                     ctx.active_characters.insert(id);
                 }

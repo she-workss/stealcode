@@ -14,8 +14,8 @@ pub(crate) struct Job {
 
 impl Job {
     #[must_use]
-    pub fn mkdir(name: &'static str) -> Self {
-        Job {
+    pub(crate) fn mkdir(name: &'static str) -> Self {
+        Self {
             apply: Box::new(move |app_dir| {
                 std::fs::create_dir_all(app_dir.join(name))
                     .with_context(|| format!("failed to create {name}"))
@@ -28,8 +28,8 @@ impl Job {
     }
 
     #[must_use]
-    pub fn move_file(from: &'static str, to: &'static str) -> Self {
-        Job {
+    pub(crate) fn move_file(from: &'static str, to: &'static str) -> Self {
+        Self {
             apply: Box::new(move |app_dir| {
                 std::fs::rename(app_dir.join(from), app_dir.join(to))
                     .with_context(|| format!("failed to move {from} -> {to}"))
@@ -44,8 +44,8 @@ impl Job {
     }
 
     #[must_use]
-    pub fn rmdir_nofail(name: &'static str) -> Self {
-        Job {
+    pub(crate) fn rmdir_nofail(name: &'static str) -> Self {
+        Self {
             apply: Box::new(move |app_dir| {
                 if let Err(error) = std::fs::remove_dir_all(app_dir.join(name))
                 {
@@ -125,6 +125,7 @@ pub(crate) fn perform_update_with_timeout(
 
 /// Real entry point used by `main.rs` - a 2 second per-job timeout, which
 /// is generous for a rename/mkdir/rmdir on local disk even under load.
+#[cfg(windows)]
 pub(crate) fn perform_update(app_dir: &Path, launch: bool) -> Result<()> {
     perform_update_with_timeout(app_dir, launch, Duration::from_secs(2))
 }

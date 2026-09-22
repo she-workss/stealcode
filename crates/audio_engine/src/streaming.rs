@@ -2,10 +2,10 @@
 //!
 //! Instead of re-encoding a fixed left-context window on every step
 //! (which recomputes the same left frames each batch), this encoder
-//! caches the pre_encode output and every block's output per frame, so
+//! caches the `pre_encode` output and every block's output per frame, so
 //! a new batch only computes the frames it adds:
 //!
-//!   * pre_encode, FF1, FF2, final LN: only the new frames;
+//!   * `pre_encode`, FF1, FF2, final LN: only the new frames;
 //!   * attention: new queries, keys/values over the band only;
 //!   * conv module: new outputs only - the `conv_context_left`-frame causal
 //!     context comes from cached GLU outputs, so the per-batch cost is
@@ -16,14 +16,14 @@
 //! `k_max = min((q/chunk+1)*chunk, T)`), so for batches that are whole
 //! attention chunks the output for a frame is identical to
 //! `Encoder::encode` of the same audio - live text is a strict prefix of
-//! the offline transcript. Sub-chunk batches (LatencyMode below
+//! the offline transcript. Sub-chunk batches (`LatencyMode` below
 //! Standard) clip the band at the batch end instead: lower latency at
 //! the cost of a reduced right context.
 //!
 //! Caches are sliding: frames older than the band/conv context are
 //! dropped, so memory stays bounded for long sessions.
 
-use std::time::Instant;
+use std::{fmt::Write as _, time::Instant};
 
 use anyhow::{Result, bail};
 use rayon::prelude::*;
@@ -40,23 +40,23 @@ use crate::{
 /// and start at absolute encoder frame `base` (sliding window).
 #[derive(Debug)]
 pub struct StreamingEncoder {
-    /// pre_encode output cache.
+    /// `pre_encode` output cache.
     pre: Vec<f32>,
     /// Per-block output caches; `blocks[b]` feeds block `b+1`.
     blocks: Vec<Vec<f32>>,
-    /// Per-block GLU outputs (post LN_conv + pw1) - the dw conv's
+    /// Per-block GLU outputs (post `LN_conv` + pw1) - the dw conv's
     /// causal left context, computed once per frame instead of being
     /// rebuilt from the pre-FF2 activations on every batch. Without
-    /// this cache a batch of `c` new frames would redo LN_conv + pw1
+    /// this cache a batch of `c` new frames would redo `LN_conv` + pw1
     /// over `conv_context_left + c` frames every step, which dominates
     /// the cost for small batches.
     glu: Vec<Vec<f32>>,
     /// Per-block post-FF1 activations (y after macaron FF1, before the
-    /// attention LN) - the attention's LayerNorm runs on these, so the
+    /// attention LN) - the attention's `LayerNorm` runs on these, so the
     /// band's old frames must be cached.
     ff1_y: Vec<Vec<f32>>,
     /// Per-block attention-LN outputs for the band frames
-    /// [kv_lo, kv_hi). Computed once per frame; a new batch only adds
+    /// [`kv_lo`, `kv_hi`). Computed once per frame; a new batch only adds
     /// its own new frames and drops the band frames that fell out of
     /// the left context.
     ln_kv: Vec<Vec<f32>>,
@@ -66,7 +66,7 @@ pub struct StreamingEncoder {
     v_v: Vec<Vec<f32>>,
     /// Absolute first encoder frame of the band caches.
     kv_lo: usize,
-    /// Per-block attn_pos projections for pos [-3..59] (computed once,
+    /// Per-block `attn_pos` projections for pos [-3..59] (computed once,
     /// time-major [pos][d]).
     pos_p: Vec<Vec<f32>>,
     /// Shared Q8 dequantization scratch.
@@ -77,11 +77,12 @@ pub struct StreamingEncoder {
     base: usize,
     /// Total frames in the caches.
     total: usize,
-    /// d_model (set on the first `encode_new`).
+    /// `d_model` (set on the first `encode_new`).
     d: usize,
 }
 
 impl StreamingEncoder {
+    #[must_use]
     pub fn new(n_blocks: usize) -> Self {
         Self {
             pre: Vec::new(),
@@ -102,7 +103,8 @@ impl StreamingEncoder {
     }
 
     /// Number of encoder frames currently cached.
-    pub fn total(&self) -> usize {
+    #[must_use]
+    pub const fn total(&self) -> usize {
         self.total
     }
 
@@ -134,6 +136,7 @@ impl StreamingEncoder {
     /// end (see `t_new` below). For intermediate batches the cache ends
     /// exactly at the batch's decoded end, so the next call stays in
     /// sync for any batch size.
+    #[allow(clippy::too_many_arguments)] // streaming batch coordinates
     pub fn encode_new(
         &mut self,
         enc: &mut Encoder,
@@ -172,7 +175,8 @@ impl StreamingEncoder {
         // tail (`fin`) produces `f(tail)` frames (the conv stack's +1),
         // and the decoder consumes all of them, so the transcript ends
         // at the same frame as the offline encode.
-        let t_enc_offline = |tail: usize| ((tail / 2 + 1) / 2 + 1) / 2 + 1;
+        let t_enc_offline =
+            |tail: usize| (tail / 2).div_ceil(2).div_ceil(2) + 1;
         let t_new = if fin { s + t_enc_offline(t1 - t0) } else { e };
         if t_new <= s {
             return Ok(());
@@ -248,14 +252,10 @@ impl StreamingEncoder {
                 }
             }
             let pett = transpose(&pet, n_pos, d);
-            for b in 0..n_layers {
+            for b in enc.blocks.iter().take(n_layers) {
                 let mut p = Vec::new();
-                enc.blocks[b].attn_pos.forward_t(
-                    &mut self.scratch,
-                    &pett,
-                    n_pos,
-                    &mut p,
-                );
+                b.attn_pos
+                    .forward_t(&mut self.scratch, &pett, n_pos, &mut p);
                 self.pos_p.push(transpose(&p, d, n_pos));
             }
         }
@@ -303,7 +303,7 @@ impl StreamingEncoder {
                 &mut self.trans,
                 b == 0,
                 &mut acc,
-            )?;
+            );
             self.blocks[b].extend_from_slice(&no);
             self.glu[b].extend_from_slice(&glu_new);
             self.ff1_y[b].extend_from_slice(&ny);
@@ -320,26 +320,26 @@ impl StreamingEncoder {
         // ---- prompt MLP on the new frames (per-frame, like encode) ----
         let t_p0 = Instant::now();
         acc.push(("__blk_total", t_blk0.elapsed()));
-        if let (Some(mlp), Some(pid)) = (&mut enc.prompt, prompt_id) {
-            if (pid as usize) < num_prompts {
-                let cat_in = d + num_prompts;
-                let mut cat = vec![0.0f32; cat_in * c];
-                for t in 0..c {
-                    cat[t * cat_in..t * cat_in + d]
-                        .copy_from_slice(&out_new[t * d..(t + 1) * d]);
-                    cat[t * cat_in + d + pid as usize] = 1.0;
-                }
-                let xt = transpose(&cat, c, cat_in);
-                let mut h = Vec::new();
-                mlp.mlp0.forward_t(&mut self.scratch, &xt, c, &mut h);
-                crate::simd_kernel::relu_into(&mut h);
-                let mut y = Vec::new();
-                mlp.mlp2.forward_t(&mut self.scratch, &h, c, &mut y);
-                let y = transpose(&y, d, c);
-                let last = self.blocks.len() - 1;
-                let n = self.blocks[last].len();
-                self.blocks[last][n - c * d..].copy_from_slice(&y);
+        if let (Some(mlp), Some(pid)) = (&mut enc.prompt, prompt_id)
+            && (pid as usize) < num_prompts
+        {
+            let cat_in = d + num_prompts;
+            let mut cat = vec![0.0f32; cat_in * c];
+            for t in 0..c {
+                cat[t * cat_in..t * cat_in + d]
+                    .copy_from_slice(&out_new[t * d..(t + 1) * d]);
+                cat[t * cat_in + d + pid as usize] = 1.0;
             }
+            let xt = transpose(&cat, c, cat_in);
+            let mut h = Vec::new();
+            mlp.mlp0.forward_t(&mut self.scratch, &xt, c, &mut h);
+            crate::simd_kernel::relu_into(&mut h);
+            let mut y = Vec::new();
+            mlp.mlp2.forward_t(&mut self.scratch, &h, c, &mut y);
+            let y = transpose(&y, d, c);
+            let last = self.blocks.len() - 1;
+            let n = self.blocks[last].len();
+            self.blocks[last][n - c * d..].copy_from_slice(&y);
         }
 
         // ---- trim old frames ----
@@ -375,7 +375,7 @@ impl StreamingEncoder {
             }
             let mut s = String::new();
             for (k, v) in &sums {
-                s.push_str(&format!(" {k}={:.3}", v.as_secs_f64() * 1e3));
+                let _ = write!(s, " {k}={:.3}", v.as_secs_f64() * 1e3);
             }
             eprintln!("[senc] sec{}{s}", 0);
         }
@@ -411,7 +411,7 @@ fn block_new(
     trans: &mut Vec<f32>,
     dump0: bool,
     acc: &mut Vec<(&'static str, std::time::Duration)>,
-) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
     let d = cfg.d_model;
     let n_heads = cfg.n_heads;
     let head_dim = d / n_heads;
@@ -424,12 +424,10 @@ fn block_new(
     let krel = |a: usize| a - kv_lo; // band-cache-relative index
     let conv_lo = s.saturating_sub(conv_left);
     let dmp0 = |name: &str, v: &[f32]| {
-        if dump0 {
-            if let Some(dir) = crate::nemotron::timing::dump_dir() {
-                let p = dir.join(format!("{name}_s{s}.bin"));
-                let bytes = f32_bytes(v);
-                std::fs::write(p, bytes).ok();
-            }
+        if dump0 && let Some(dir) = crate::nemotron::timing::dump_dir() {
+            let p = dir.join(format!("{name}_s{s}.bin"));
+            let bytes = f32_bytes(v);
+            std::fs::write(p, bytes).ok();
         }
     };
 
@@ -456,7 +454,7 @@ fn block_new(
     let t_a = Instant::now();
     let f = transpose_into(&f, d, c, trans);
     for i in 0..c * d {
-        y[i] = input[rel(s) * d + i] + 0.5 * f[i];
+        y[i] = 0.5f32.mul_add(f[i], input[rel(s) * d + i]);
     }
     acc.push(("ff1_res", t_a.elapsed()));
     dmp0("senc_b0_ff1", &y);
@@ -630,7 +628,7 @@ fn block_new(
     b.pw1.forward_t(scratch, lt, c, &mut h2);
     let h2 = transpose_into(&h2, 2 * d, c, trans);
     let mut glu_new = vec![0.0f32; c * d];
-    crate::simd_kernel::glu_from(&h2, d, &mut glu_new);
+    crate::simd_kernel::glu_from(h2, d, &mut glu_new);
     // dw input: cached old GLU for frames [conv_lo, s) (real values)
     // followed by the new frames' GLU; the kernel's left pad only
     // affects outputs below `old_glu`, which are discarded.
@@ -677,7 +675,7 @@ fn block_new(
     acc.push(("ff2_lin2", t_a.elapsed()));
     let f3 = transpose_into(&f3, d, c, trans);
     for i in 0..c * d {
-        y2[i] = y[i] + 0.5 * f3[i];
+        y2[i] = 0.5f32.mul_add(f3[i], y[i]);
     }
 
     // ---- final per-block LN ----
@@ -688,17 +686,17 @@ fn block_new(
             .forward(&y2[j * d..(j + 1) * d], &mut out[j * d..(j + 1) * d]);
     }
     acc.push(("ln_out", t_a.elapsed()));
-    Ok((out, ny, glu_new, ln_new, k_new, v_new))
+    (out, ny, glu_new, ln_new, k_new, v_new)
 }
 
 /// Common interface of a streaming (incremental) encoder, implemented by
-/// both the CPU [`StreamingEncoder`] and the GPU
-/// [`crate::gpu::streaming::GpuStreamingEncoder`]. The voice worker picks
+/// both the CPU [`StreamingEncoder`] and the GPU. The voice worker picks
 /// a backend at runtime (GPU first, CPU fallback) and drives it through
 /// this trait, so `LiveTranscriber` never needs to know which one it is.
 pub trait StreamEncoder {
     /// Append encoder frames for mel frames `[t0, t1)`. `fin` marks the
     /// last batch of a stream (see [`StreamingEncoder::encode_new`]).
+    #[allow(clippy::too_many_arguments)] // streaming batch coordinates
     fn encode_new(
         &mut self,
         enc: &mut Encoder,
@@ -726,13 +724,11 @@ impl StreamEncoder for StreamingEncoder {
         prompt_id: Option<u32>,
         fin: bool,
     ) -> Result<()> {
-        StreamingEncoder::encode_new(
-            self, enc, mel, n_mels, t0, t1, prompt_id, fin,
-        )
+        Self::encode_new(self, enc, mel, n_mels, t0, t1, prompt_id, fin)
     }
 
     fn frames(&self, from: usize, to: usize) -> Result<&[f32]> {
-        StreamingEncoder::frames(self, from, to)
+        Self::frames(self, from, to)
     }
 
     fn total(&self) -> usize {

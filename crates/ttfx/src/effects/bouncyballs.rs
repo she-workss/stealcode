@@ -1,4 +1,4 @@
-//! bouncyballs, ported from effects/effect_bouncyballs.py.
+//! bouncyballs, ported from `effects/effect_bouncyballs.py`.
 
 use std::collections::BTreeMap;
 
@@ -89,8 +89,9 @@ pub struct BouncyBalls {
 }
 
 impl BouncyBalls {
+    #[must_use]
     pub fn new(config: BouncyBallsConfig) -> Self {
-        BouncyBalls {
+        Self {
             config,
             pending_chars: Vec::new(),
             group_by_row: BTreeMap::new(),

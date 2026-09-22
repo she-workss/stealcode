@@ -1,4 +1,4 @@
-//! Binary stub for the StealCode Android crate.
+//! Binary stub for the `StealCode` Android crate.
 //!
 //! On **Android** the `android-activity` crate invokes `android_main` directly
 //! from the cdylib defined in `lib.rs` - so `main` is never called. We still

@@ -1,13 +1,13 @@
-//! thunderstorm, ported from effects/effect_thunderstorm.py.
+//! thunderstorm, ported from `effects/effect_thunderstorm.py`.
 //!
-//! Two ParticlePools (rain + sparks) plus a manually managed strike-character
+//! Two `ParticlePools` (rain + sparks) plus a manually managed strike-character
 //! pool (available/pending/active lists). The storm budget reads the injected
-//! monotonic clock at exactly the upstream points (__init__:203, fade_complete
-//! :390, __next__:719 - plan.md §4.7). Upstream's three character color maps
-//! (character_final/visible/storm_color_map) are written but never read, so
-//! they are not stored here. `self.flashing` is likewise write-only upstream.
-//! No observable set iteration beyond the engine-canonical active_characters
-//! (docs/ordering-inventory.md).
+//! monotonic clock at exactly the upstream points (__init__:203,
+//! `fade_complete` :390, __next__:719 - plan.md §4.7). Upstream's three
+//! character color maps (`character_final/visible/storm_color_map`) are written
+//! but never read, so they are not stored here. `self.flashing` is likewise
+//! write-only upstream. No observable set iteration beyond the engine-canonical
+//! `active_characters` (docs/ordering-inventory.md).
 
 use crate::{
     effects::common::{parse_color, parse_gradient_direction},
@@ -29,19 +29,20 @@ use crate::{
     },
 };
 
-/// fade_complete (effect_thunderstorm.py:388): phase -> storm, restart clock.
+/// `fade_complete` (`effect_thunderstorm.py:388)`: phase -> storm, restart
+/// clock.
 const CB_FADE_COMPLETE: u32 = 0;
-/// ThunderstormIterator.hide_character.
+/// `ThunderstormIterator.hide_character`.
 const CB_HIDE_CHARACTER: u32 = 1;
-/// ThunderstormIterator.make_char_glow.
+/// `ThunderstormIterator.make_char_glow`.
 const CB_MAKE_CHAR_GLOW: u32 = 2;
-/// ThunderstormIterator.return_strike_to_pool.
+/// `ThunderstormIterator.return_strike_to_pool`.
 const CB_RETURN_STRIKE_TO_POOL: u32 = 3;
-/// ThunderstormIterator.set_strike_in_progress_false.
+/// `ThunderstormIterator.set_strike_in_progress_false`.
 const CB_SET_STRIKE_IN_PROGRESS_FALSE: u32 = 4;
-/// rain_pool.reclaim_on_event closure (particles.py reclaim).
+/// `rain_pool.reclaim_on_event` closure (particles.py reclaim).
 const CB_RECLAIM_RAIN: u32 = 5;
-/// spark_pool.reclaim_on_event closure.
+/// `spark_pool.reclaim_on_event` closure.
 const CB_RECLAIM_SPARK: u32 = 6;
 
 #[derive(Debug, Clone)]
@@ -137,7 +138,8 @@ pub struct Thunderstorm {
     available_strike_chars: Vec<CharId>,
     active_strike_chars: Vec<CharId>,
     spark_pool: ParticlePool,
-    /// Gradient captured by the spark initializer closure (build_spark_pool).
+    /// Gradient captured by the spark initializer closure
+    /// (`build_spark_pool`).
     spark_gradient: Gradient,
     pending_glow_chars: Vec<CharId>,
     strike_in_progress: bool,
@@ -146,7 +148,7 @@ pub struct Thunderstorm {
     storm_start_time: f64,
 }
 
-/// ThunderstormIterator._adjust_color_pair_brightness.
+/// `ThunderstormIterator`._`adjust_color_pair_brightness`.
 fn adjust_color_pair_brightness(
     colors: &ColorPair,
     brightness: f64,
@@ -163,9 +165,9 @@ fn adjust_color_pair_brightness(
     )
 }
 
-/// ThunderstormIterator._add_color_pair_gradient_frames. Faithful quirk: when
-/// both endpoint colors exist the gradient list has steps+1 entries but only
-/// `range(steps)` of them are emitted as frames.
+/// `ThunderstormIterator`._`add_color_pair_gradient_frames`. Faithful quirk:
+/// when both endpoint colors exist the gradient list has steps+1 entries but
+/// only `range(steps)` of them are emitted as frames.
 fn add_color_pair_gradient_frames(
     scene: &mut Scene,
     symbol: &str,
@@ -219,7 +221,7 @@ fn add_color_pair_gradient_frames(
     Ok(())
 }
 
-/// build_rain_pool's initialize_raindrop.
+/// `build_rain_pool`'s `initialize_raindrop`.
 fn initialize_raindrop(ctx: &mut EngineCtx, id: CharId) {
     let ch = &mut ctx.terminal.arena[id.0 as usize];
     ch.layer = 1;
@@ -236,7 +238,7 @@ fn initialize_raindrop(ctx: &mut EngineCtx, id: CharId) {
     );
 }
 
-/// build_spark_pool's _build_spark_characters.
+/// `build_spark_pool`'s _`build_spark_characters`.
 fn initialize_spark(
     ctx: &mut EngineCtx,
     id: CharId,
@@ -269,7 +271,7 @@ fn initialize_spark(
     }
 }
 
-/// ThunderstormIterator._setup_raindrop.
+/// `ThunderstormIterator`._`setup_raindrop`.
 fn setup_raindrop(ctx: &mut EngineCtx, id: CharId) {
     let origin = ctx.terminal.arena[id.0 as usize].motion.current_coord;
     let speed = ctx.rng.uniform(0.5, 1.5);
@@ -310,7 +312,7 @@ fn setup_raindrop(ctx: &mut EngineCtx, id: CharId) {
     ctx.activate_path(&mut NoopHooks, id, &fall_path);
 }
 
-/// ThunderstormIterator._setup_sparks_for_impact.
+/// `ThunderstormIterator`._`setup_sparks_for_impact`.
 fn setup_sparks_for_impact(ctx: &mut EngineCtx, id: CharId) {
     let impact_coord = ctx.terminal.arena[id.0 as usize].motion.current_coord;
     let speed = ctx.rng.uniform(0.1, 0.25);
@@ -353,6 +355,7 @@ fn setup_sparks_for_impact(ctx: &mut EngineCtx, id: CharId) {
 }
 
 impl Thunderstorm {
+    #[must_use]
     pub fn new(config: ThunderstormConfig) -> Self {
         // build_rain_pool / build_spark_pool construction (preallocation runs
         // in build(), where ctx is available, in upstream __init__ order).
@@ -366,7 +369,7 @@ impl Thunderstorm {
                 .expect(
                     "spark symbols validated in ThunderstormConfig::default",
                 );
-        Thunderstorm {
+        Self {
             config,
             delay: 0,
             strike_progression_delay: 0,
@@ -386,7 +389,7 @@ impl Thunderstorm {
         }
     }
 
-    /// ThunderstormIterator.build_strike_characters.
+    /// `ThunderstormIterator.build_strike_characters`.
     fn build_strike_characters(&mut self, ctx: &mut EngineCtx, count: usize) {
         for _ in 0..count {
             let strike_char = ctx.terminal.add_character("|", Coord::new(1, 1));
@@ -394,7 +397,7 @@ impl Thunderstorm {
         }
     }
 
-    /// ThunderstormIterator.get_next_strike_char.
+    /// `ThunderstormIterator.get_next_strike_char`.
     fn get_next_strike_char(&mut self, ctx: &mut EngineCtx) -> CharId {
         if self.available_strike_chars.is_empty() {
             self.build_strike_characters(ctx, 20);
@@ -406,7 +409,7 @@ impl Thunderstorm {
         strike_char
     }
 
-    /// ThunderstormIterator.setup_lightning_strike (recursive branching).
+    /// `ThunderstormIterator.setup_lightning_strike` (recursive branching).
     fn setup_lightning_strike(
         &mut self,
         ctx: &mut EngineCtx,
@@ -472,7 +475,7 @@ impl Thunderstorm {
         self.strike_branch_chance = 0.05;
     }
 
-    /// ThunderstormIterator.lightning_strike.
+    /// `ThunderstormIterator.lightning_strike`.
     fn lightning_strike(&mut self, ctx: &mut EngineCtx) {
         self.setup_lightning_strike(ctx, None);
         let strike_base_color = self.config.lightning_color;
@@ -605,7 +608,7 @@ impl Thunderstorm {
         }
     }
 
-    /// ThunderstormIterator.step_lightning_strike.
+    /// `ThunderstormIterator.step_lightning_strike`.
     fn step_lightning_strike(&mut self, ctx: &mut EngineCtx) {
         if self.strike_progression_delay != 0 {
             self.strike_progression_delay -= 1;
@@ -654,7 +657,7 @@ impl Thunderstorm {
                                     particle,
                                     &spark_gradient,
                                     spark_glow_time,
-                                )
+                                );
                             },
                             setup_sparks_for_impact,
                         );
@@ -726,7 +729,7 @@ impl Thunderstorm {
         self.delay = ctx.rng.randint(1, 7);
     }
 
-    /// ThunderstormIterator.pre_storm_text_fade.
+    /// `ThunderstormIterator.pre_storm_text_fade`.
     fn pre_storm_text_fade(&mut self, ctx: &mut EngineCtx) {
         let characters = {
             let filter = CharacterFilter::default();
@@ -742,7 +745,7 @@ impl Thunderstorm {
         }
     }
 
-    /// ThunderstormIterator.post_storm_text_fade_in.
+    /// `ThunderstormIterator.post_storm_text_fade_in`.
     fn post_storm_text_fade_in(&mut self, ctx: &mut EngineCtx) {
         let characters = {
             let filter = CharacterFilter::default();
@@ -772,7 +775,7 @@ impl EffectHooks for Thunderstorm {
                 self.storm_start_time = ctx.clock.now_monotonic();
             }
             CB_HIDE_CHARACTER => {
-                ctx.terminal.set_character_visibility(character, false)
+                ctx.terminal.set_character_visibility(character, false);
             }
             CB_MAKE_CHAR_GLOW => {
                 let coord = ctx.terminal.arena[character.0 as usize]
@@ -787,14 +790,14 @@ impl EffectHooks for Thunderstorm {
                 }
             }
             CB_RETURN_STRIKE_TO_POOL => {
-                self.available_strike_chars.push(character)
+                self.available_strike_chars.push(character);
             }
             CB_SET_STRIKE_IN_PROGRESS_FALSE => self.strike_in_progress = false,
             CB_RECLAIM_RAIN => {
-                self.rain_pool.reclaim(ctx, character, true, true)
+                self.rain_pool.reclaim(ctx, character, true, true);
             }
             CB_RECLAIM_SPARK => {
-                self.spark_pool.reclaim(ctx, character, true, true)
+                self.spark_pool.reclaim(ctx, character, true, true);
             }
             _ => {}
         }
@@ -827,7 +830,7 @@ impl Effect for Thunderstorm {
                         particle,
                         &spark_gradient,
                         spark_glow_time,
-                    )
+                    );
                 })
                 .map_err(EngineError::Other)?;
         }

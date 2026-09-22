@@ -3,7 +3,7 @@
 // tools/gen_hexterm.py note)
 // - do not hand-edit.
 
-/// xterm code -> "rrggbb" (no '#'), exactly upstream's xterm_to_hex_map.
+/// xterm code -> "rrggbb" (no '#'), exactly upstream's `xterm_to_hex_map`.
 pub const XTERM_TO_HEX: [&str; 256] = [
     "000000", // 0
     "800000", // 1

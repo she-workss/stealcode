@@ -18,9 +18,7 @@ fn all_states_emit_geometry() {
                 draw_mode(resolved.mode, size.pixels(), 1.25, &resolved.opts);
             assert!(
                 !frame.dots.is_empty(),
-                "{:?}/{:?} produced zero dots",
-                state,
-                size
+                "{state:?}/{size:?} produced zero dots"
             );
             for d in &frame.dots {
                 assert!(d.r.is_finite() && d.r >= 0.0);

@@ -1,6 +1,6 @@
-//! CharacterVisual, Frame, Scene, and Animation, ported from
+//! `CharacterVisual`, Frame, Scene, and Animation, ported from
 //! engine/animation.py. Scene/Animation stepping that fires events lives on
-//! EngineCtx (ctx.rs); everything here is state plus event-free logic.
+//! `EngineCtx` (ctx.rs); everything here is state plus event-free logic.
 
 use std::{collections::VecDeque, rc::Rc};
 
@@ -12,7 +12,7 @@ use crate::utils::{
     ordered_map::OrderedMap,
 };
 
-/// Handling of preexisting SGR colors in the input (TerminalConfig option).
+/// Handling of preexisting SGR colors in the input (`TerminalConfig` option).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExistingColorHandling {
     Always,
@@ -59,34 +59,37 @@ impl FormattedSymbol {
         if text.len() <= INLINE_SYMBOL_CAPACITY {
             let mut bytes = [0u8; INLINE_SYMBOL_CAPACITY];
             bytes[..text.len()].copy_from_slice(text.as_bytes());
-            FormattedSymbol::Inline {
+            Self::Inline {
                 bytes,
                 len: text.len() as u8,
             }
         } else {
-            FormattedSymbol::Heap(text.into())
+            Self::Heap(text.into())
         }
     }
 
     #[inline]
+    #[must_use]
+    #[allow(unsafe_code)] // inherent: the inline block is always a valid UTF-8 &str prefix
     pub fn as_str(&self) -> &str {
         match self {
-            FormattedSymbol::Inline { bytes, len } => {
+            Self::Inline { bytes, len } => {
                 // SAFETY: built from a &str prefix, so the range is valid
                 // UTF-8.
                 unsafe {
                     std::str::from_utf8_unchecked(&bytes[..*len as usize])
                 }
             }
-            FormattedSymbol::Heap(text) => text,
+            Self::Heap(text) => text,
         }
     }
 
     /// Append to a UTF-8 byte buffer, copying the whole inline block in one go.
     #[inline]
+    #[allow(unsafe_code)] // inherent: unchecked copy/len publish of a valid UTF-8 block
     pub fn append_to(&self, out: &mut Vec<u8>) {
         match self {
-            FormattedSymbol::Inline { bytes, len } => {
+            Self::Inline { bytes, len } => {
                 if out.len() + INLINE_SYMBOL_CAPACITY > out.capacity() {
                     out.reserve(INLINE_SYMBOL_CAPACITY);
                 }
@@ -103,8 +106,8 @@ impl FormattedSymbol {
                     out.set_len(start + *len as usize);
                 }
             }
-            FormattedSymbol::Heap(text) => {
-                out.extend_from_slice(text.as_bytes())
+            Self::Heap(text) => {
+                out.extend_from_slice(text.as_bytes());
             }
         }
     }
@@ -148,8 +151,9 @@ pub struct VisualParams {
 }
 
 impl CharacterVisual {
+    #[must_use]
     pub fn new(symbol: &str, p: VisualParams) -> Self {
-        let mut vis = CharacterVisual {
+        let mut vis = Self {
             symbol: symbol.to_string(),
             bold: p.bold,
             italic: p.italic,
@@ -178,8 +182,9 @@ impl CharacterVisual {
         vis
     }
 
+    #[must_use]
     pub fn plain(symbol: &str) -> Self {
-        CharacterVisual::new(symbol, VisualParams::default())
+        Self::new(symbol, VisualParams::default())
     }
 
     /// SGR emission in upstream's fixed order; `dim` intentionally omitted;
@@ -219,9 +224,9 @@ impl CharacterVisual {
     }
 }
 
-/// animation.Frame. Frames live in Scene.all_frames (stable storage);
-/// Scene.frames / Scene.played_frames hold indices into it, preserving the
-/// upstream object-identity semantics of frame_index_map.
+/// animation.Frame. Frames live in `Scene.all_frames` (stable storage);
+/// Scene.frames / `Scene.played_frames` hold indices into it, preserving the
+/// upstream object-identity semantics of `frame_index_map`.
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub character_visual: Rc<CharacterVisual>,
@@ -240,11 +245,11 @@ pub struct Scene {
     pub use_xterm_colors: bool,
     /// Stable frame storage; never reordered.
     pub all_frames: Vec<Frame>,
-    /// Remaining frame queue (indices into all_frames).
+    /// Remaining frame queue (indices into `all_frames`).
     pub frames: VecDeque<usize>,
-    /// Played frames (indices into all_frames).
+    /// Played frames (indices into `all_frames`).
     pub played_frames: VecDeque<usize>,
-    /// Tick index -> frame index (upstream frame_index_map).
+    /// Tick index -> frame index (upstream `frame_index_map`).
     pub frame_index_map: Vec<usize>,
     pub easing_total_steps: i64,
     pub easing_current_step: i64,
@@ -253,6 +258,7 @@ pub struct Scene {
 }
 
 impl Scene {
+    #[must_use]
     pub fn new(
         scene_id: &str,
         is_looping: bool,
@@ -261,7 +267,7 @@ impl Scene {
         no_color: bool,
         use_xterm_colors: bool,
     ) -> Self {
-        Scene {
+        Self {
             scene_id: scene_id.to_string(),
             is_looping,
             sync,
@@ -279,8 +285,8 @@ impl Scene {
         }
     }
 
-    /// Scene._get_color_code. Upstream memoizes into a process-global ClassVar
-    /// dict; the memo is value-transparent so we just recompute.
+    /// Scene._`get_color_code`. Upstream memoizes into a process-global
+    /// `ClassVar` dict; the memo is value-transparent so we just recompute.
     fn get_color_code(&self, color: Option<&Color>) -> Option<ColorCode> {
         let color = color?;
         if self.no_color {
@@ -297,7 +303,7 @@ impl Scene {
         Some(ColorCode::Rgb(color.rgb_color.to_string()))
     }
 
-    /// Scene.add_frame with the preexisting-color/bold overrides.
+    /// `Scene.add_frame` with the preexisting-color/bold overrides.
     pub fn add_frame(
         &mut self,
         symbol: &str,
@@ -347,7 +353,7 @@ impl Scene {
         }
     }
 
-    /// Scene.get_next_visual: tick the head frame, retiring it (and looping)
+    /// `Scene.get_next_visual`: tick the head frame, retiring it (and looping)
     /// exactly as upstream.
     pub fn get_next_visual(&mut self) -> Rc<CharacterVisual> {
         let head = self.frames[0];
@@ -365,7 +371,7 @@ impl Scene {
         next_visual
     }
 
-    /// Scene.apply_gradient_to_symbols with the exact cyclic_distribution
+    /// `Scene.apply_gradient_to_symbols` with the exact `cyclic_distribution`
     /// generator semantics (repeat factor + overflow-remainder rule).
     pub fn apply_gradient_to_symbols(
         &mut self,
@@ -480,7 +486,7 @@ impl Scene {
         Ok(())
     }
 
-    /// Scene.reset_scene: restore played + remaining frames in original order
+    /// `Scene.reset_scene`: restore played + remaining frames in original order
     /// (played first), zero tick counters and the easing step.
     pub fn reset_scene(&mut self) {
         // Remaining frames get ticks_elapsed zeroed as they move to played;
@@ -510,8 +516,9 @@ pub struct Animation {
 }
 
 impl Animation {
+    #[must_use]
     pub fn new(input_symbol: &str) -> Self {
-        Animation {
+        Self {
             scenes: OrderedMap::new(),
             active_scene: None,
             use_xterm_colors: false,
@@ -526,7 +533,7 @@ impl Animation {
         }
     }
 
-    /// Animation.new_scene: auto-ids are stringified integers probing upward;
+    /// `Animation.new_scene`: auto-ids are stringified integers probing upward;
     /// duplicate explicit ids silently overwrite (faithful).
     pub fn new_scene(
         &mut self,
@@ -574,7 +581,7 @@ impl Animation {
         scene_id
     }
 
-    /// Animation.active_scene_is_complete: no scene, no remaining frames, or
+    /// `Animation.active_scene_is_complete`: no scene, no remaining frames, or
     /// looping.
     pub fn active_scene_is_complete(&self) -> bool {
         match &self.active_scene {
@@ -587,7 +594,7 @@ impl Animation {
         }
     }
 
-    /// Animation._get_color_code (identical logic to Scene's; the upstream
+    /// Animation._`get_color_code` (identical logic to Scene's; the upstream
     /// per-instance memo is value-transparent and omitted).
     fn get_color_code(&self, color: Option<&Color>) -> Option<ColorCode> {
         let color = color?;
@@ -605,7 +612,7 @@ impl Animation {
         Some(ColorCode::Rgb(color.rgb_color.to_string()))
     }
 
-    /// Animation.set_appearance.
+    /// `Animation.set_appearance`.
     pub fn set_appearance(
         &mut self,
         input_symbol: &str,
@@ -614,14 +621,15 @@ impl Animation {
         colors: Option<ColorPair>,
     ) {
         let symbol = symbol.unwrap_or(input_symbol);
-        let mut colors = colors.unwrap_or_default();
-        let mut bold = false;
-        if self.existing_color_handling == ExistingColorHandling::Always
-            && uses_input_preexisting_colors
-        {
-            colors = ColorPair::new(self.input_fg_color, self.input_bg_color);
-            bold = self.input_bold;
-        }
+        let uses_preexisting = self.existing_color_handling
+            == ExistingColorHandling::Always
+            && uses_input_preexisting_colors;
+        let colors = if uses_preexisting {
+            ColorPair::new(self.input_fg_color, self.input_bg_color)
+        } else {
+            colors.unwrap_or_default()
+        };
+        let bold = uses_preexisting && self.input_bold;
         let fg_code = self.get_color_code(colors.fg_color.as_ref());
         let bg_code = self.get_color_code(colors.bg_color.as_ref());
         self.current_character_visual = Rc::new(CharacterVisual::new(
@@ -636,8 +644,11 @@ impl Animation {
         ));
     }
 
-    /// Animation.adjust_color_brightness: hand-rolled RGB->HSL->RGB with
-    /// round() (banker's) at the end - unlike shift_color_towards's truncation.
+    /// `Animation.adjust_color_brightness`: hand-rolled RGB->HSL->RGB with
+    /// `round()` (banker's) at the end - unlike `shift_color_towards`'s
+    /// truncation.
+    #[must_use]
+    #[allow(clippy::float_cmp)] // exact identity checks: max/min return one of the same operands
     pub fn adjust_color_brightness(color: &Color, brightness: f64) -> Color {
         use crate::utils::pycompat::round_half_even;
 
@@ -653,17 +664,16 @@ impl Animation {
                 hue_value -= 1.0;
             }
             if hue_value < 1.0 / 6.0 {
-                return lightness_scaled
-                    + (color_intensity - lightness_scaled) * 6.0 * hue_value;
+                return ((color_intensity - lightness_scaled) * 6.0)
+                    .mul_add(hue_value, lightness_scaled);
             }
             if hue_value < 1.0 / 2.0 {
                 return color_intensity;
             }
             if hue_value < 2.0 / 3.0 {
-                return lightness_scaled
-                    + (color_intensity - lightness_scaled)
-                        * (2.0 / 3.0 - hue_value)
-                        * 6.0;
+                return ((color_intensity - lightness_scaled)
+                    * (2.0 / 3.0 - hue_value))
+                    .mul_add(6.0, lightness_scaled);
             }
             lightness_scaled
         }
@@ -675,7 +685,7 @@ impl Animation {
 
         let max_val = normalized_red.max(normalized_green).max(normalized_blue);
         let min_val = normalized_red.min(normalized_green).min(normalized_blue);
-        let mut lightness = (max_val + min_val) / 2.0;
+        let mut lightness = f64::midpoint(max_val, min_val);
 
         let lightness_threshold = 0.5;
         let (hue_value, saturation) = if max_val == min_val {
@@ -711,9 +721,9 @@ impl Animation {
             let color_intensity = if lightness < lightness_threshold {
                 lightness * (1.0 + saturation)
             } else {
-                lightness + saturation - lightness * saturation
+                lightness.mul_add(-saturation, lightness + saturation)
             };
-            let lightness_scaled = 2.0 * lightness - color_intensity;
+            let lightness_scaled = 2.0f64.mul_add(lightness, -color_intensity);
             (
                 hue_to_rgb(
                     lightness_scaled,

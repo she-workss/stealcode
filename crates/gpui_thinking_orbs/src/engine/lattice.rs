@@ -40,7 +40,7 @@ fn solve_cycle_into(
     if count == 0 {
         return (active, 0.0);
     }
-    let cyc = 2.0 * count as f32 * slot_dur + rest;
+    let cyc = (2.0 * count as f32).mul_add(slot_dur, rest);
     let tc = time % cyc;
     if tc < 2.0 * count as f32 * slot_dur {
         // The guard above and this division are two independent float
@@ -49,9 +49,9 @@ fn solve_cycle_into(
         // slot_dur = 0.42, tc = 7.559999466. Without the clamp `2*count-1-slot`
         // wraps to `usize::MAX` and the loop below indexes out of bounds.
         let slot = ((tc / slot_dur).floor() as usize).min(2 * count - 1);
-        let p = (tc - slot as f32 * slot_dur) / slot_dur;
+        let p = (slot as f32).mul_add(-slot_dur, tc) / slot_dur;
         let p = p.clamp(0.0, 1.0);
-        let ep = p * p * (3.0 - 2.0 * p);
+        let ep = p * p * 2.0f32.mul_add(-p, 3.0);
         let emphasis = (PI * p).sin().max(0.0).sqrt();
         if slot < count {
             for a in amount.iter_mut().take(slot) {
@@ -102,18 +102,18 @@ fn apply_moves(
         let sa = a.sin();
         match mv.axis {
             0 => {
-                let y2 = y * ca - z * sa;
-                z = y * sa + z * ca;
+                let y2 = f32::mul_add(z, -sa, y * ca);
+                z = f32::mul_add(z, ca, y * sa);
                 y = y2;
             }
             1 => {
-                let x2 = x * ca + z * sa;
-                z = -x * sa + z * ca;
+                let x2 = f32::mul_add(z, sa, x * ca);
+                z = f32::mul_add(z, ca, -x * sa);
                 x = x2;
             }
             _ => {
-                let x2 = x * ca - y * sa;
-                y = x * sa + y * ca;
+                let x2 = f32::mul_add(y, -sa, x * ca);
+                y = f32::mul_add(y, ca, x * sa);
                 x = x2;
             }
         }
@@ -127,7 +127,8 @@ fn make_moves_into(count: usize, moves: &mut Vec<Move>) {
     for i in 0..count {
         let i_f = i as f32;
         let axis = (hash_d(i_f, 2.3) * 3.0).floor().min(2.0) as u8;
-        let lo = -1.0 + 0.5 * (hash_d(i_f, 5.9) * 4.0).floor().min(3.0);
+        let lo =
+            0.5f32.mul_add((hash_d(i_f, 5.9) * 4.0).floor().min(3.0), -1.0);
         let dir = if hash_d(i_f, 7.7) < 0.5 { 1.0 } else { -1.0 };
         moves.push(Move {
             axis,
@@ -149,9 +150,9 @@ pub(super) fn draw_globe_into(
     let cx = size / 2.0;
     let cy = size / 2.0;
     let radius = (size / 2.0) * 0.82;
-    let tilt = 0.4 + 0.06 * (t * 0.35).sin();
+    let tilt = 0.06f32.mul_add((t * 0.35).sin(), 0.4);
     let pt = make_proj(t * spin, tilt, cx, cy, radius);
-    let scan = t * (spin + (1.7 - spin) * o.scan_mul.unwrap_or(1.0));
+    let scan = t * f32::mul_add(1.7 - spin, o.scan_mul.unwrap_or(1.0), spin);
     let rs = radius_scale(size, o.rs_pow.unwrap_or(0.6));
     let dim_base = o.dim_base.unwrap_or(1.0);
 
@@ -167,7 +168,7 @@ pub(super) fn draw_globe_into(
     let inv_lat = 1.0 / lat_rings as f32;
 
     for li in 0..=lat_rings {
-        let lat = -PI / 2.0 + (li as f32 * inv_lat) * PI;
+        let lat = (li as f32 * inv_lat).mul_add(PI, -PI / 2.0);
         let cos_lat = lat.cos();
         let sin_lat = lat.sin();
         let lon_count = ((cos_lat.abs() * lon_density).round() as usize).max(1);
@@ -175,21 +176,22 @@ pub(super) fn draw_globe_into(
         with_unit_circle(lon_count, |circle| {
             for (lj, p) in circle.iter().enumerate() {
                 let lon = lj as f32 * lon_step;
-                let (clon, slon) = (p[0], p[1]);
+                let (clon, slon) = (*p).into();
                 let (px, py, z) =
                     pt.project(cos_lat * clon, sin_lat, cos_lat * slon);
-                let depth = (z + 1.0) / 2.0;
-                let d = angle_delta(lon + t * spin, scan);
+                let depth = f32::midpoint(z, 1.0);
+                let d = angle_delta(t.mul_add(spin, lon), scan);
                 let boost = (-(d * d) / 0.18).exp() * z.max(0.0);
                 dots.push(
                     Dot::new(
                         px,
                         py,
                         z,
-                        (r_base + r_depth * depth + r_boost * boost) * rs,
-                        ink_far - ink_span * depth,
+                        r_boost.mul_add(boost, r_depth.mul_add(depth, r_base))
+                            * rs,
+                        ink_span.mul_add(-depth, ink_far),
                     )
-                    .with_a(dim_base + (1.0 - dim_base) * boost.min(1.0)),
+                    .with_a((1.0 - dim_base).mul_add(boost.min(1.0), dim_base)),
                 );
             }
         });
@@ -208,7 +210,13 @@ pub(super) fn draw_rubik_into(
     let r = (size / 2.0) * 0.82;
     // Keep the lattice almost still so each quarter-turn reads as the action,
     // rather than getting lost inside a continuously spinning globe.
-    let pt = make_proj(t * 0.12, 0.35 + 0.035 * (t * 0.45).sin(), cx, cy, r);
+    let pt = make_proj(
+        t * 0.12,
+        0.035f32.mul_add((t * 0.45).sin(), 0.35),
+        cx,
+        cy,
+        r,
+    );
     let rs = radius_scale(size, o.rs_pow.unwrap_or(0.6));
     let move_count =
         count_usize(o.move_count, 14.0, 0, MAX_MOVE_COUNT as usize);
@@ -236,7 +244,7 @@ pub(super) fn draw_rubik_into(
             let inv_lat = 1.0 / lat_rings as f32;
 
             for li in 0..=lat_rings {
-                let lat = -PI / 2.0 + (li as f32 * inv_lat) * PI;
+                let lat = (li as f32 * inv_lat).mul_add(PI, -PI / 2.0);
                 let cos_lat = lat.cos();
                 let sin_lat = lat.sin();
                 let lon_count =
@@ -250,20 +258,28 @@ pub(super) fn draw_rubik_into(
                             active,
                         );
                         let (px, py, zr) = pt.project(x, y, z);
-                        let depth = (zr + 1.0) / 2.0;
+                        let depth = f32::midpoint(zr, 1.0);
                         let active_mix = if in_active { emphasis } else { 0.0 };
                         dots.push(
                             Dot::new(
                                 px,
                                 py,
                                 zr,
-                                (r_base
-                                    + r_depth * depth
-                                    + r_active * 2.1 * active_mix)
-                                    * rs,
-                                ink_far - ink_span * depth - 0.24 * active_mix,
+                                (r_active * 2.1).mul_add(
+                                    active_mix,
+                                    r_depth.mul_add(depth, r_base),
+                                ) * rs,
+                                0.24f32.mul_add(
+                                    -active_mix,
+                                    ink_span.mul_add(-depth, ink_far),
+                                ),
                             )
-                            .with_a(0.58 + 0.14 * depth + 0.28 * active_mix),
+                            .with_a(
+                                0.28f32.mul_add(
+                                    active_mix,
+                                    0.14f32.mul_add(depth, 0.58),
+                                ),
+                            ),
                         );
                     }
                 });
@@ -289,31 +305,33 @@ pub(super) fn draw_wave_into(size: f32, t: f32, o: &ModeOpts, out: &mut Frame) {
     let inv_r = 1.0 / r;
 
     for ri in 0..=rings {
-        let lat = -PI / 2.0 + (ri as f32 * inv_rings) * PI;
+        let lat = (ri as f32 * inv_rings).mul_add(PI, -PI / 2.0);
         let cos_lat = lat.cos();
         let sin_lat = lat.sin();
-        let w = 0.62 * (t * 2.1 - ri as f32 * 0.52).sin()
-            + 0.38 * (t * 1.27 + ri as f32 * 0.83).sin();
-        let rr = r * (0.88 + 0.105 * w);
+        let w = 0.38f32.mul_add(
+            (ri as f32).mul_add(0.83, t * 1.27).sin(),
+            0.62 * (ri as f32).mul_add(-0.52, t * 2.1).sin(),
+        );
+        let rr = r * 0.105f32.mul_add(w, 0.88);
         let lon_count = ((cos_lat.abs() * lon_density).round() as usize).max(1);
         let crest = w.max(0.0);
-        let crest_r = 1.0 + 0.4 * crest;
+        let crest_r = 0.4f32.mul_add(crest, 1.0);
         let crest_ink = 0.1 * crest;
         with_unit_circle(lon_count, |circle| {
             for p in circle {
-                let (clon, slon) = (p[0], p[1]);
+                let (clon, slon) = (*p).into();
                 let (px, py, z) = pt.project(
                     cos_lat * clon * rr,
                     sin_lat * rr,
                     cos_lat * slon * rr,
                 );
-                let depth = (z * inv_r + 1.0) / 2.0;
+                let depth = f32::mul_add(z, inv_r, 1.0) / 2.0;
                 dots.push(Dot::new(
                     px,
                     py,
                     z,
-                    (r_base + r_depth * depth) * crest_r * rs,
-                    0.66 - 0.56 * depth - crest_ink,
+                    r_depth.mul_add(depth, r_base) * crest_r * rs,
+                    0.56f32.mul_add(-depth, 0.66) - crest_ink,
                 ));
             }
         });

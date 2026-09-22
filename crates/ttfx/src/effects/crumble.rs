@@ -1,4 +1,4 @@
-//! crumble, ported from effects/effect_crumble.py.
+//! crumble, ported from `effects/effect_crumble.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -70,8 +70,9 @@ pub struct Crumble {
 }
 
 impl Crumble {
+    #[must_use]
     pub fn new(config: CrumbleConfig) -> Self {
-        Crumble {
+        Self {
             config,
             pending_chars: Vec::new(),
             character_final_color_map: FxHashMap::default(),
@@ -192,7 +193,9 @@ impl Effect for Crumble {
                             .map_err(EngineError::Other)?,
                     ),
                     None => {
-                        if !has_existing_colors {
+                        if has_existing_colors {
+                            None
+                        } else {
                             Some(
                                 Gradient::with_steps(
                                     &[dynamic_neutral_gray, white],
@@ -201,8 +204,6 @@ impl Effect for Crumble {
                                 )
                                 .map_err(EngineError::Other)?,
                             )
-                        } else {
-                            None
                         }
                     }
                 };

@@ -36,6 +36,7 @@ pub struct StreamState {
 }
 
 impl StreamState {
+    #[must_use]
     pub fn new(decoder: &GreedyDecoder) -> Self {
         let hdim = decoder.predictor.hidden;
         let n = decoder.predictor.layers.len();
@@ -109,9 +110,9 @@ pub fn decode_frames(
         model.decoder.joint.out.matvec(&summed, &mut logits);
         let mut best = 0usize;
         let mut best_v = logits[0];
-        for i in 1..n_cls {
-            if logits[i] > best_v {
-                best_v = logits[i];
+        for (i, &v) in logits.iter().enumerate().take(n_cls).skip(1) {
+            if v > best_v {
+                best_v = v;
                 best = i;
             }
         }
@@ -215,6 +216,7 @@ impl std::fmt::Debug for LiveTranscriber {
 }
 
 impl LiveTranscriber {
+    #[must_use]
     pub fn new(model: &Nemotron, prompt_id: u32, batch_mel: usize) -> Self {
         let st = StreamState::new(&model.decoder);
         let senc: Box<dyn StreamEncoder> =
@@ -224,6 +226,7 @@ impl LiveTranscriber {
 
     /// Build from an already-initialized encoder (CPU or GPU) plus
     /// predictor state.
+    #[must_use]
     pub fn with_encoder(
         prompt_id: u32,
         st: StreamState,
@@ -301,7 +304,7 @@ impl LiveTranscriber {
         Ok(())
     }
 
-    /// End of stream: encode+decode the leftover tail (< BATCH_MEL).
+    /// End of stream: encode+decode the leftover tail (< `BATCH_MEL`).
     pub fn flush(&mut self, model: &mut Nemotron) -> Result<()> {
         grow_mel(model, &self.pcm, &mut self.mel, &mut self.mel_next, true);
         let total = model.frontend.n_frames(self.pcm.len()).min(self.mel_next);
@@ -313,16 +316,19 @@ impl LiveTranscriber {
     }
 
     /// Committed tokens so far.
+    #[must_use]
     pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
 
     /// Mel frames computed so far.
-    pub fn mel_next(&self) -> usize {
+    #[must_use]
+    pub const fn mel_next(&self) -> usize {
         self.mel_next
     }
 
     /// Current committed transcript (language tags stripped).
+    #[must_use]
     pub fn text(&self, model: &Nemotron) -> String {
         let ids: Vec<u32> = self.tokens.iter().map(|t| t.id).collect();
         model.tokenizer.decode_transcript(&ids, true)
@@ -356,7 +362,7 @@ impl LiveTranscriber {
         // the tail actually yields - otherwise the last frame (and the
         // last tokens) would be dropped.
         let count = if fin {
-            ((new_mel / 2 + 1) / 2 + 1) / 2 + 1
+            (new_mel / 2).div_ceil(2).div_ceil(2) + 1
         } else {
             new_mel.div_ceil(8)
         };
@@ -377,14 +383,14 @@ impl LiveTranscriber {
 
 impl LiveAsr<Nemotron> for LiveTranscriber {
     fn push(&mut self, model: &mut Nemotron, pcm: &[f32]) -> Result<()> {
-        LiveTranscriber::push(self, model, pcm)
+        Self::push(self, model, pcm)
     }
 
     fn flush(&mut self, model: &mut Nemotron) -> Result<()> {
-        LiveTranscriber::flush(self, model)
+        Self::flush(self, model)
     }
 
     fn text(&self, model: &Nemotron) -> String {
-        LiveTranscriber::text(self, model)
+        Self::text(self, model)
     }
 }

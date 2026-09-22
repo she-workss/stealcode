@@ -41,68 +41,70 @@ impl OrbState {
     /// Kept at its original array type for source compatibility. New code
     /// should iterate [`Self::ALL_STATES`].
     #[deprecated(since = "0.2.0", note = "use OrbState::ALL_STATES")]
-    pub const ALL: [OrbState; 9] = [
-        OrbState::Working,
-        OrbState::Searching,
-        OrbState::Solving,
-        OrbState::Listening,
-        OrbState::Connecting,
-        OrbState::Weaving,
-        OrbState::Composing,
-        OrbState::Breathing,
-        OrbState::Shaping,
+    pub const ALL: [Self; 9] = [
+        Self::Working,
+        Self::Searching,
+        Self::Solving,
+        Self::Listening,
+        Self::Connecting,
+        Self::Weaving,
+        Self::Composing,
+        Self::Breathing,
+        Self::Shaping,
     ];
     /// All states in playground / gallery order.
     ///
     /// This is a slice so adding future states does not change its public type.
-    pub const ALL_STATES: &'static [OrbState] = &[
-        OrbState::Working,
-        OrbState::Searching,
-        OrbState::Solving,
-        OrbState::Listening,
-        OrbState::Connecting,
-        OrbState::Weaving,
-        OrbState::Composing,
-        OrbState::Breathing,
-        OrbState::Shaping,
-        OrbState::Focusing,
-        OrbState::Reasoning,
-        OrbState::Recalling,
+    pub const ALL_STATES: &'static [Self] = &[
+        Self::Working,
+        Self::Searching,
+        Self::Solving,
+        Self::Listening,
+        Self::Connecting,
+        Self::Weaving,
+        Self::Composing,
+        Self::Breathing,
+        Self::Shaping,
+        Self::Focusing,
+        Self::Reasoning,
+        Self::Recalling,
     ];
 
     /// Human-readable status label (matches upstream aria defaults).
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            OrbState::Working => "Working…",
-            OrbState::Searching => "Searching…",
-            OrbState::Solving => "Solving…",
-            OrbState::Listening => "Listening…",
-            OrbState::Connecting => "Connecting…",
-            OrbState::Weaving => "Weaving…",
-            OrbState::Composing => "Composing…",
-            OrbState::Breathing => "Thinking…",
-            OrbState::Shaping => "Shaping…",
-            OrbState::Focusing => "Focusing…",
-            OrbState::Reasoning => "Reasoning…",
-            OrbState::Recalling => "Recalling…",
+            Self::Working => "Working…",
+            Self::Searching => "Searching…",
+            Self::Solving => "Solving…",
+            Self::Listening => "Listening…",
+            Self::Connecting => "Connecting…",
+            Self::Weaving => "Weaving…",
+            Self::Composing => "Composing…",
+            Self::Breathing => "Thinking…",
+            Self::Shaping => "Shaping…",
+            Self::Focusing => "Focusing…",
+            Self::Reasoning => "Reasoning…",
+            Self::Recalling => "Recalling…",
         }
     }
 
-    /// Stable snake_case name (matches the web package `state` prop).
-    pub fn as_str(self) -> &'static str {
+    /// Stable `snake_case` name (matches the web package `state` prop).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
-            OrbState::Working => "working",
-            OrbState::Searching => "searching",
-            OrbState::Solving => "solving",
-            OrbState::Listening => "listening",
-            OrbState::Connecting => "connecting",
-            OrbState::Weaving => "weaving",
-            OrbState::Composing => "composing",
-            OrbState::Breathing => "breathing",
-            OrbState::Shaping => "shaping",
-            OrbState::Focusing => "focusing",
-            OrbState::Reasoning => "reasoning",
-            OrbState::Recalling => "recalling",
+            Self::Working => "working",
+            Self::Searching => "searching",
+            Self::Solving => "solving",
+            Self::Listening => "listening",
+            Self::Connecting => "connecting",
+            Self::Weaving => "weaving",
+            Self::Composing => "composing",
+            Self::Breathing => "breathing",
+            Self::Shaping => "shaping",
+            Self::Focusing => "focusing",
+            Self::Reasoning => "reasoning",
+            Self::Recalling => "recalling",
         }
     }
 }
@@ -126,40 +128,39 @@ pub enum OrbSize {
 
 impl OrbSize {
     /// All sizes in compact-to-prominent gallery order.
-    pub const ALL_SIZES: &'static [OrbSize] = &[
-        OrbSize::Inline,
-        OrbSize::Avatar,
-        OrbSize::Large,
-        OrbSize::Hero,
-    ];
+    pub const ALL_SIZES: &'static [Self] =
+        &[Self::Inline, Self::Avatar, Self::Large, Self::Hero];
 
     /// Logical pixel edge length of the orb.
-    pub fn pixels(self) -> f32 {
+    #[must_use]
+    pub const fn pixels(self) -> f32 {
         match self {
-            OrbSize::Inline => 20.0,
-            OrbSize::Avatar => 64.0,
-            OrbSize::Large => 96.0,
-            OrbSize::Hero => 128.0,
+            Self::Inline => 20.0,
+            Self::Avatar => 64.0,
+            Self::Large => 96.0,
+            Self::Hero => 128.0,
         }
     }
 
     /// Stable lowercase name for controls and command-line arguments.
-    pub fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
-            OrbSize::Inline => "inline",
-            OrbSize::Avatar => "avatar",
-            OrbSize::Large => "large",
-            OrbSize::Hero => "hero",
+            Self::Inline => "inline",
+            Self::Avatar => "avatar",
+            Self::Large => "large",
+            Self::Hero => "hero",
         }
     }
 
     /// Compact playground label.
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            OrbSize::Inline => "20 · inline",
-            OrbSize::Avatar => "64 · avatar",
-            OrbSize::Large => "96 · large",
-            OrbSize::Hero => "128 · hero",
+            Self::Inline => "20 · inline",
+            Self::Avatar => "64 · avatar",
+            Self::Large => "96 · large",
+            Self::Hero => "128 · hero",
         }
     }
 }
@@ -196,20 +197,21 @@ pub enum ModeKey {
 }
 
 impl ModeKey {
-    pub fn from_state(state: OrbState) -> Self {
+    #[must_use]
+    pub const fn from_state(state: OrbState) -> Self {
         match state {
-            OrbState::Working => ModeKey::Orbits,
-            OrbState::Searching => ModeKey::Globe,
-            OrbState::Solving => ModeKey::Rubik,
-            OrbState::Listening => ModeKey::Wave,
-            OrbState::Connecting => ModeKey::Web,
-            OrbState::Weaving => ModeKey::Braid,
-            OrbState::Composing => ModeKey::Ribbon,
-            OrbState::Breathing => ModeKey::Ring,
-            OrbState::Shaping => ModeKey::Morph,
-            OrbState::Focusing => ModeKey::Focus,
-            OrbState::Reasoning => ModeKey::Gyroscope,
-            OrbState::Recalling => ModeKey::Echo,
+            OrbState::Working => Self::Orbits,
+            OrbState::Searching => Self::Globe,
+            OrbState::Solving => Self::Rubik,
+            OrbState::Listening => Self::Wave,
+            OrbState::Connecting => Self::Web,
+            OrbState::Weaving => Self::Braid,
+            OrbState::Composing => Self::Ribbon,
+            OrbState::Breathing => Self::Ring,
+            OrbState::Shaping => Self::Morph,
+            OrbState::Focusing => Self::Focus,
+            OrbState::Reasoning => Self::Gyroscope,
+            OrbState::Recalling => Self::Echo,
         }
     }
 }

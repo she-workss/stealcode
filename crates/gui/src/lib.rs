@@ -142,19 +142,19 @@ impl UpdateManager {
 
     fn poll_events(&mut self) {
         use auto_update::UpdateWorkerEvent;
-        if let Some(rx) = &self.rx_event {
-            if let Ok(event) = rx.try_recv() {
-                match event {
-                    UpdateWorkerEvent::Status(status) => self.status = status,
-                    UpdateWorkerEvent::Checked(version) => {
-                        self.status = match &version {
-                            Some(version) => {
-                                format!("Update available: v{version}")
-                            }
-                            None => "Up to date".to_string(),
-                        };
-                        self.available_version = version;
-                    }
+        if let Some(rx) = &self.rx_event
+            && let Ok(event) = rx.try_recv()
+        {
+            match event {
+                UpdateWorkerEvent::Status(status) => self.status = status,
+                UpdateWorkerEvent::Checked(version) => {
+                    self.status = match &version {
+                        Some(version) => {
+                            format!("Update available: v{version}")
+                        }
+                        None => "Up to date".to_string(),
+                    };
+                    self.available_version = version;
                 }
             }
         }
@@ -270,7 +270,7 @@ impl Render for StealcodeApp {
                         Button::new(sound.label())
                             .label(sound.label())
                             .on_click(move |_, _, _| {
-                                sound::engine::play(sound)
+                                sound::engine::play(sound);
                             })
                     }),
                 ),
@@ -285,7 +285,7 @@ impl Render for StealcodeApp {
                         .child(
                             Button::new("voice_toggle_btn")
                                 .label(toggle_label)
-                                .when(is_recording, |btn| btn.danger())
+                                .when(is_recording, ButtonVariants::danger)
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.voice.toggle();
                                     cx.notify();
@@ -384,7 +384,9 @@ fn open_app_window(
     window_handle: &Arc<Mutex<Option<WindowHandle<Root>>>>,
     cx: &mut App,
 ) {
-    let mut state = window_handle.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = window_handle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(handle) = state.as_ref() {
         let is_alive = handle
             .update(cx, |_, window, _| {
@@ -410,6 +412,7 @@ fn open_app_window(
     match result {
         Ok(handle) => {
             *state = Some(handle);
+            drop(state);
         }
         Err(e) => error!("failed to open window: {e:?}"),
     }
@@ -508,18 +511,17 @@ pub fn run_desktop(
             let main_window_handle = main_window_handle.clone();
             async move |cx: &mut AsyncApp| {
                 loop {
-                    if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                        if let tray_icon::TrayIconEvent::Click {
+                    if let Ok(event) = TrayIconEvent::receiver().try_recv()
+                        && let tray_icon::TrayIconEvent::Click {
                             button: tray_icon::MouseButton::Left,
                             button_state: tray_icon::MouseButtonState::Up,
                             ..
                         } = event
-                        {
-                            let handle = main_window_handle.clone();
-                            let _ = cx.update(move |cx| {
-                                open_app_window(&handle, cx);
-                            });
-                        }
+                    {
+                        let handle = main_window_handle.clone();
+                        let () = cx.update(move |cx| {
+                            open_app_window(&handle, cx);
+                        });
                     }
                     if let Ok(event) = MenuEvent::receiver().try_recv() {
                         match event.id().as_ref() {
@@ -527,7 +529,7 @@ pub fn run_desktop(
                                 show_notification();
                             }
                             "exit" => {
-                                let _ = cx.update(|cx| {
+                                let () = cx.update(|cx| {
                                     cx.quit();
                                 });
                             }

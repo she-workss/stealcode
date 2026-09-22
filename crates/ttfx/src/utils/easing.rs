@@ -6,8 +6,8 @@
 
 use std::f64::consts::PI;
 
-/// A named easing or a custom cubic bezier (make_easing). Copyable so Paths and
-/// Scenes can carry it by value.
+/// A named easing or a custom cubic bezier (`make_easing`). Copyable so Paths
+/// and Scenes can carry it by value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Easing {
     Linear,
@@ -41,196 +41,211 @@ pub enum Easing {
     InBounce,
     OutBounce,
     InOutBounce,
-    /// easing.make_easing(x1, y1, x2, y2): CSS-style cubic bezier.
+    /// `easing.make_easing(x1`, y1, x2, y2): CSS-style cubic bezier.
     CubicBezier(f64, f64, f64, f64),
 }
 
 impl Easing {
-    /// CLI parser for the 31 named functions (argutils.Ease.type_parser).
-    pub fn parse(s: &str) -> Option<Easing> {
+    /// CLI parser for the 31 named functions (`argutils.Ease.type_parser`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_lowercase().as_str() {
-            "linear" => Easing::Linear,
-            "in_sine" => Easing::InSine,
-            "out_sine" => Easing::OutSine,
-            "in_out_sine" => Easing::InOutSine,
-            "in_quad" => Easing::InQuad,
-            "out_quad" => Easing::OutQuad,
-            "in_out_quad" => Easing::InOutQuad,
-            "in_cubic" => Easing::InCubic,
-            "out_cubic" => Easing::OutCubic,
-            "in_out_cubic" => Easing::InOutCubic,
-            "in_quart" => Easing::InQuart,
-            "out_quart" => Easing::OutQuart,
-            "in_out_quart" => Easing::InOutQuart,
-            "in_quint" => Easing::InQuint,
-            "out_quint" => Easing::OutQuint,
-            "in_out_quint" => Easing::InOutQuint,
-            "in_expo" => Easing::InExpo,
-            "out_expo" => Easing::OutExpo,
-            "in_out_expo" => Easing::InOutExpo,
-            "in_circ" => Easing::InCirc,
-            "out_circ" => Easing::OutCirc,
-            "in_out_circ" => Easing::InOutCirc,
-            "in_back" => Easing::InBack,
-            "out_back" => Easing::OutBack,
-            "in_out_back" => Easing::InOutBack,
-            "in_elastic" => Easing::InElastic,
-            "out_elastic" => Easing::OutElastic,
-            "in_out_elastic" => Easing::InOutElastic,
-            "in_bounce" => Easing::InBounce,
-            "out_bounce" => Easing::OutBounce,
-            "in_out_bounce" => Easing::InOutBounce,
+            "linear" => Self::Linear,
+            "in_sine" => Self::InSine,
+            "out_sine" => Self::OutSine,
+            "in_out_sine" => Self::InOutSine,
+            "in_quad" => Self::InQuad,
+            "out_quad" => Self::OutQuad,
+            "in_out_quad" => Self::InOutQuad,
+            "in_cubic" => Self::InCubic,
+            "out_cubic" => Self::OutCubic,
+            "in_out_cubic" => Self::InOutCubic,
+            "in_quart" => Self::InQuart,
+            "out_quart" => Self::OutQuart,
+            "in_out_quart" => Self::InOutQuart,
+            "in_quint" => Self::InQuint,
+            "out_quint" => Self::OutQuint,
+            "in_out_quint" => Self::InOutQuint,
+            "in_expo" => Self::InExpo,
+            "out_expo" => Self::OutExpo,
+            "in_out_expo" => Self::InOutExpo,
+            "in_circ" => Self::InCirc,
+            "out_circ" => Self::OutCirc,
+            "in_out_circ" => Self::InOutCirc,
+            "in_back" => Self::InBack,
+            "out_back" => Self::OutBack,
+            "in_out_back" => Self::InOutBack,
+            "in_elastic" => Self::InElastic,
+            "out_elastic" => Self::OutElastic,
+            "in_out_elastic" => Self::InOutElastic,
+            "in_bounce" => Self::InBounce,
+            "out_bounce" => Self::OutBounce,
+            "in_out_bounce" => Self::InOutBounce,
             _ => return None,
         })
     }
 
+    #[must_use]
+    #[allow(clippy::float_cmp)] // endpoint checks: easing is exact at p == 0.0 / 1.0
     pub fn ease(&self, p: f64) -> f64 {
         match *self {
-            Easing::Linear => p,
-            Easing::InSine => 1.0 - ((p * PI) / 2.0).cos(),
-            Easing::OutSine => ((p * PI) / 2.0).sin(),
-            Easing::InOutSine => -((PI * p).cos() - 1.0) / 2.0,
-            Easing::InQuad => p.powf(2.0),
-            Easing::OutQuad => 1.0 - (1.0 - p) * (1.0 - p),
-            Easing::InOutQuad => {
+            Self::Linear => p,
+            Self::InSine => 1.0 - ((p * PI) / 2.0).cos(),
+            Self::OutSine => ((p * PI) / 2.0).sin(),
+            Self::InOutSine => -((PI * p).cos() - 1.0) / 2.0,
+            Self::InQuad => p.powi(2),
+            Self::OutQuad => (1.0 - p).mul_add(-(1.0 - p), 1.0),
+            Self::InOutQuad => {
                 if p < 0.5 {
-                    2.0 * p.powf(2.0)
+                    2.0 * p.powi(2)
                 } else {
-                    1.0 - (-2.0 * p + 2.0).powf(2.0) / 2.0
+                    1.0 - (-2.0f64).mul_add(p, 2.0).powi(2) / 2.0
                 }
             }
-            Easing::InCubic => p.powf(3.0),
-            Easing::OutCubic => 1.0 - (1.0 - p).powf(3.0),
-            Easing::InOutCubic => {
+            Self::InCubic => p.powi(3),
+            Self::OutCubic => 1.0 - (1.0 - p).powi(3),
+            Self::InOutCubic => {
                 if p < 0.5 {
-                    4.0 * p.powf(3.0)
+                    4.0 * p.powi(3)
                 } else {
-                    1.0 - (-2.0 * p + 2.0).powf(3.0) / 2.0
+                    1.0 - (-2.0f64).mul_add(p, 2.0).powi(3) / 2.0
                 }
             }
-            Easing::InQuart => p.powf(4.0),
-            Easing::OutQuart => 1.0 - (1.0 - p).powf(4.0),
-            Easing::InOutQuart => {
+            Self::InQuart => p.powi(4),
+            Self::OutQuart => 1.0 - (1.0 - p).powi(4),
+            Self::InOutQuart => {
                 if p < 0.5 {
-                    8.0 * p.powf(4.0)
+                    8.0 * p.powi(4)
                 } else {
-                    1.0 - (-2.0 * p + 2.0).powf(4.0) / 2.0
+                    1.0 - (-2.0f64).mul_add(p, 2.0).powi(4) / 2.0
                 }
             }
-            Easing::InQuint => p.powf(5.0),
-            Easing::OutQuint => 1.0 - (1.0 - p).powf(5.0),
-            Easing::InOutQuint => {
+            Self::InQuint => p.powi(5),
+            Self::OutQuint => 1.0 - (1.0 - p).powi(5),
+            Self::InOutQuint => {
                 if p < 0.5 {
-                    16.0 * p.powf(5.0)
+                    16.0 * p.powi(5)
                 } else {
-                    1.0 - (-2.0 * p + 2.0).powf(5.0) / 2.0
+                    1.0 - (-2.0f64).mul_add(p, 2.0).powi(5) / 2.0
                 }
             }
-            Easing::InExpo => {
+            Self::InExpo => {
                 if p == 0.0 {
                     0.0
                 } else {
-                    2.0_f64.powf(10.0 * p - 10.0)
+                    10.0f64.mul_add(p, -10.0).exp2()
                 }
             }
-            Easing::OutExpo => {
+            Self::OutExpo => {
                 if p == 1.0 {
                     1.0
                 } else {
-                    1.0 - 2.0_f64.powf(-10.0 * p)
+                    1.0 - (-10.0 * p).exp2()
                 }
             }
-            Easing::InOutExpo => {
+            Self::InOutExpo => {
                 if p == 0.0 {
                     0.0
                 } else if p == 1.0 {
                     1.0
                 } else if p < 0.5 {
-                    2.0_f64.powf(20.0 * p - 10.0) / 2.0
+                    20.0f64.mul_add(p, -10.0).exp2() / 2.0
                 } else {
-                    (2.0 - 2.0_f64.powf(-20.0 * p + 10.0)) / 2.0
+                    (2.0 - (-20.0f64).mul_add(p, 10.0).exp2()) / 2.0
                 }
             }
-            Easing::InCirc => 1.0 - (1.0 - p.powf(2.0)).sqrt(),
-            Easing::OutCirc => (1.0 - (p - 1.0).powf(2.0)).sqrt(),
-            Easing::InOutCirc => {
+            Self::InCirc => 1.0 - p.mul_add(-p, 1.0).sqrt(),
+            Self::OutCirc => (p - 1.0).mul_add(-(p - 1.0), 1.0).sqrt(),
+            Self::InOutCirc => {
                 if p < 0.5 {
-                    (1.0 - (1.0 - (2.0 * p).powf(2.0)).sqrt()) / 2.0
+                    (1.0 - (2.0 * p).mul_add(-(2.0 * p), 1.0).sqrt()) / 2.0
                 } else {
-                    ((1.0 - (-2.0 * p + 2.0).powf(2.0)).sqrt() + 1.0) / 2.0
+                    f64::midpoint(
+                        (-2.0f64)
+                            .mul_add(p, 2.0)
+                            .mul_add(-(-2.0f64).mul_add(p, 2.0), 1.0)
+                            .sqrt(),
+                        1.0,
+                    )
                 }
             }
-            Easing::InBack => {
+            Self::InBack => {
                 let c1 = 1.70158;
                 let c3 = c1 + 1.0;
-                c3 * p.powf(3.0) - c1 * p.powf(2.0)
+                f64::mul_add(c1, -p.powi(2), c3 * p.powi(3))
             }
-            Easing::OutBack => {
+            Self::OutBack => {
                 let c1 = 1.70158;
                 let c3 = c1 + 1.0;
-                1.0 + c3 * (p - 1.0).powf(3.0) + c1 * (p - 1.0).powf(2.0)
+                f64::mul_add(
+                    c1,
+                    (p - 1.0).powi(2),
+                    f64::mul_add(c3, (p - 1.0).powi(3), 1.0),
+                )
             }
-            Easing::InOutBack => {
+            Self::InOutBack => {
                 let c1 = 1.70158;
                 let c2 = c1 * 1.525;
                 if p < 0.5 {
-                    ((2.0 * p).powf(2.0) * ((c2 + 1.0) * 2.0 * p - c2)) / 2.0
-                } else {
-                    ((2.0 * p - 2.0).powf(2.0)
-                        * ((c2 + 1.0) * (p * 2.0 - 2.0) + c2)
-                        + 2.0)
+                    ((2.0 * p).powi(2) * f64::mul_add((c2 + 1.0) * 2.0, p, -c2))
                         / 2.0
+                } else {
+                    2.0f64.mul_add(p, -2.0).powi(2).mul_add(
+                        f64::mul_add(c2 + 1.0, p.mul_add(2.0, -2.0), c2),
+                        2.0,
+                    ) / 2.0
                 }
             }
-            Easing::InElastic => {
+            Self::InElastic => {
                 let c4 = (2.0 * PI) / 3.0;
                 if p == 0.0 {
                     0.0
                 } else if p == 1.0 {
                     1.0
                 } else {
-                    -(2.0_f64.powf(10.0 * p - 10.0))
-                        * ((p * 10.0 - 10.75) * c4).sin()
+                    -10.0f64.mul_add(p, -10.0).exp2()
+                        * (p.mul_add(10.0, -10.75) * c4).sin()
                 }
             }
-            Easing::OutElastic => {
+            Self::OutElastic => {
                 let c4 = (2.0 * PI) / 3.0;
                 if p == 0.0 {
                     0.0
                 } else if p == 1.0 {
                     1.0
                 } else {
-                    2.0_f64.powf(-10.0 * p) * ((p * 10.0 - 0.75) * c4).sin()
-                        + 1.0
+                    (-10.0 * p)
+                        .exp2()
+                        .mul_add((p.mul_add(10.0, -0.75) * c4).sin(), 1.0)
                 }
             }
-            Easing::InOutElastic => {
+            Self::InOutElastic => {
                 let c5 = (2.0 * PI) / 4.5;
                 if p == 0.0 {
                     0.0
                 } else if p == 1.0 {
                     1.0
                 } else if p < 0.5 {
-                    -(2.0_f64.powf(20.0 * p - 10.0)
-                        * ((20.0 * p - 11.125) * c5).sin())
+                    -(20.0f64.mul_add(p, -10.0).exp2()
+                        * (20.0f64.mul_add(p, -11.125) * c5).sin())
                         / 2.0
                 } else {
-                    (2.0_f64.powf(-20.0 * p + 10.0)
-                        * ((20.0 * p - 11.125) * c5).sin())
+                    ((-20.0f64).mul_add(p, 10.0).exp2()
+                        * (20.0f64.mul_add(p, -11.125) * c5).sin())
                         / 2.0
                         + 1.0
                 }
             }
-            Easing::InBounce => 1.0 - out_bounce(1.0 - p),
-            Easing::OutBounce => out_bounce(p),
-            Easing::InOutBounce => {
+            Self::InBounce => 1.0 - out_bounce(1.0 - p),
+            Self::OutBounce => out_bounce(p),
+            Self::InOutBounce => {
                 if p < 0.5 {
-                    (1.0 - out_bounce(1.0 - 2.0 * p)) / 2.0
+                    (1.0 - out_bounce(2.0f64.mul_add(-p, 1.0))) / 2.0
                 } else {
-                    (1.0 + out_bounce(2.0 * p - 1.0)) / 2.0
+                    f64::midpoint(1.0, out_bounce(2.0f64.mul_add(p, -1.0)))
                 }
             }
-            Easing::CubicBezier(x1, y1, x2, y2) => {
+            Self::CubicBezier(x1, y1, x2, y2) => {
                 bezier_easing(x1, y1, x2, y2, p)
             }
         }
@@ -241,34 +256,36 @@ fn out_bounce(p: f64) -> f64 {
     let n1 = 7.5625;
     let d1 = 2.75;
     if p < 1.0 / d1 {
-        n1 * p.powf(2.0)
+        n1 * p.powi(2)
     } else if p < 2.0 / d1 {
-        n1 * (p - 1.5 / d1).powf(2.0) + 0.75
+        f64::mul_add(n1, (p - 1.5 / d1).powi(2), 0.75)
     } else if p < 2.5 / d1 {
-        n1 * (p - 2.25 / d1).powf(2.0) + 0.9375
+        f64::mul_add(n1, (p - 2.25 / d1).powi(2), 0.9375)
     } else {
-        n1 * (p - 2.625 / d1).powf(2.0) + 0.984375
+        f64::mul_add(n1, (p - 2.625 / d1).powi(2), 0.984_375)
     }
 }
 
-/// easing.make_easing's bezier_easing: Newton-Raphson on x with the exact
+/// `easing.make_easing`'s `bezier_easing`: Newton-Raphson on x with the exact
 /// upstream constants (20 iterations, 1e-5 convergence, 1e-6 derivative bail).
-/// Upstream lru_caches this; we just recompute (behavior-identical).
+/// Upstream `lru_caches` this; we just recompute (behavior-identical).
 fn bezier_easing(x1: f64, y1: f64, x2: f64, y2: f64, progress: f64) -> f64 {
     let sample_curve_x = |t: f64| {
-        3.0 * x1 * (1.0 - t).powf(2.0) * t
-            + 3.0 * x2 * (1.0 - t) * t.powf(2.0)
-            + t.powf(3.0)
+        (3.0 * x2 * (1.0 - t))
+            .mul_add(t.powi(2), 3.0 * x1 * (1.0 - t).powi(2) * t)
+            + t.powi(3)
     };
     let sample_curve_y = |t: f64| {
-        3.0 * y1 * (1.0 - t).powf(2.0) * t
-            + 3.0 * y2 * (1.0 - t) * t.powf(2.0)
-            + t.powf(3.0)
+        (3.0 * y2 * (1.0 - t))
+            .mul_add(t.powi(2), 3.0 * y1 * (1.0 - t).powi(2) * t)
+            + t.powi(3)
     };
     let sample_curve_derivative_x = |t: f64| {
-        3.0 * (1.0 - t).powf(2.0) * x1
-            + 6.0 * (1.0 - t) * t * (x2 - x1)
-            + 3.0 * t.powf(2.0) * (1.0 - x2)
+        (3.0 * t.powi(2)).mul_add(
+            1.0 - x2,
+            (6.0 * (1.0 - t) * t)
+                .mul_add(x2 - x1, 3.0 * (1.0 - t).powi(2) * x1),
+        )
     };
 
     if progress <= 0.0 {
@@ -304,8 +321,9 @@ pub struct EasingTracker {
 }
 
 impl EasingTracker {
-    pub fn new(easing_function: Easing, total_steps: i64) -> Self {
-        EasingTracker {
+    #[must_use]
+    pub const fn new(easing_function: Easing, total_steps: i64) -> Self {
+        Self {
             easing_function,
             total_steps,
             current_step: 0,
@@ -327,13 +345,14 @@ impl EasingTracker {
         self.eased_value
     }
 
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.current_step = 0;
         self.progress_ratio = 0.0;
         self.eased_value = 0.0;
     }
 
-    pub fn is_complete(&self) -> bool {
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
         self.current_step >= self.total_steps
     }
 }
@@ -352,12 +371,13 @@ pub struct SequenceStep<'a, T> {
 }
 
 impl<T> SequenceEaser<T> {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         sequence: Vec<T>,
         easing_function: Easing,
         total_steps: i64,
     ) -> Self {
-        SequenceEaser {
+        Self {
             sequence,
             easing_tracker: EasingTracker::new(easing_function, total_steps),
         }
@@ -393,11 +413,12 @@ impl<T> SequenceEaser<T> {
         }
     }
 
-    pub fn is_complete(&self) -> bool {
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
         self.easing_tracker.is_complete()
     }
 
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.easing_tracker.reset();
     }
 }
@@ -421,7 +442,7 @@ mod tests {
         assert_eq!(easer.step().added, &[NonClone(1)]);
         assert_eq!(easer.step().added, &[NonClone(2)]);
         assert_eq!(easer.step().added, &[NonClone(3)]);
-        assert!(easer.step().added.is_empty());
+        assert_eq!(easer.step().added, []);
 
         easer.reset();
         assert_eq!(easer.step().added, &[NonClone(0)]);

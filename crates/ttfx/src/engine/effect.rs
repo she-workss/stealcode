@@ -1,4 +1,4 @@
-//! Effect trait and run loop (base_effect.py equivalents).
+//! Effect trait and run loop (`base_effect.py` equivalents).
 
 use std::io::Write;
 
@@ -7,9 +7,9 @@ use crate::engine::{
     error::EngineError,
 };
 
-/// One effect: build() once (upstream iterator __init__/build), then
-/// next_frame() until None (upstream __next__/StopIteration). Every effect
-/// also implements EffectHooks for its registered callbacks.
+/// One effect: `build()` once (upstream iterator __init__/build), then
+/// `next_frame()` until None (upstream __next__/`StopIteration`). Every effect
+/// also implements `EffectHooks` for its registered callbacks.
 pub trait Effect: EffectHooks {
     fn build(&mut self, ctx: &mut EngineCtx) -> Result<(), EngineError>;
     fn next_frame(&mut self, ctx: &mut EngineCtx) -> Option<String>;
@@ -21,7 +21,7 @@ pub enum RunOutcome {
     TerminalResized,
 }
 
-/// __main__ run loop with terminal_output(): prep canvas, stream frames,
+/// __main__ run loop with `terminal_output()`: prep canvas, stream frames,
 /// always restore the cursor (even on error - RAII would not run on a raw
 /// process exit, so this is explicit).
 ///
@@ -67,7 +67,7 @@ pub fn run_effect(
             .map_err(io_err)?;
     }
     out.flush().ok();
-    result.map(|_| outcome)
+    result.map(|()| outcome)
 }
 
 fn requested_stop(

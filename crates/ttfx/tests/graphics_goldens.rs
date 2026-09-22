@@ -1,9 +1,10 @@
-//! Gradient/color goldens vs CPython (tools/goldens/gen_graphics.py).
+//! Gradient/color goldens vs `CPython` (`tools/goldens/gen_graphics.py`).
 
 use ttfx::utils::graphics::{
     Color, Gradient, GradientDirection, shift_color_towards,
 };
 
+#[allow(clippy::float_cmp)] // label formatting: only exact integers take the ".1" form
 fn generate_lines() -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
 
@@ -34,7 +35,7 @@ fn generate_lines() -> Vec<String> {
                 "({})",
                 steps
                     .iter()
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             )

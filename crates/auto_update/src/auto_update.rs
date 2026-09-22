@@ -1,5 +1,5 @@
-//! StealCode's self-updater, paired with a separate `auto_update_helper` binary
-//! for the Windows-only file swap).
+//! `StealCode`'s self-updater, paired with a separate `auto_update_helper`
+//! binary for the Windows-only file swap).
 
 use std::{
     env,
@@ -176,6 +176,7 @@ pub fn find_asset_by_name<'a>(
         })
 }
 
+#[must_use]
 pub fn is_update_available(current: &Version, candidate: &Version) -> bool {
     candidate > current
 }
@@ -556,7 +557,7 @@ fn macos_app_dir() -> Result<PathBuf> {
         .to_path_buf()
 }
 
-/// Relaunches StealCode after a successful `update_now_blocking` and exits
+/// Relaunches `StealCode` after a successful `update_now_blocking` and exits
 /// the current process. On Windows the binary swap is done by
 /// `auto_update_helper.exe --launch true` (see `restart_and_update`); on
 /// Unix the new binary is already in place, so the current executable is
@@ -846,7 +847,7 @@ pub async fn cleanup_windows() -> Result<()> {
 /// `install_release_windows`) when the current process is started *after*
 /// that staging finished. Used by the GUI and the TUI at startup: if
 /// `install\stealcode.exe` and `updates\versions.txt` both exist, the helper is
-/// spawned with `--launch true` so the swap happens and StealCode relaunches
+/// spawned with `--launch true` so the swap happens and `StealCode` relaunches
 /// as the new version; the caller should then exit the current (stale)
 /// process. Returns true when the swap was handed off.
 #[cfg(windows)]
@@ -951,7 +952,7 @@ pub fn cleanup_windows_blocking() -> Result<()> {
 }
 
 /// Called when the person explicitly clicks "Restart to update" while
-/// StealCode is running: relaunches via the helper (which then launches the
+/// `StealCode` is running: relaunches via the helper (which then launches the
 /// new binary itself), instead of quietly deferring to the next quit. Never
 /// returns on success - the process must exit for the swap to happen.
 #[cfg(windows)]

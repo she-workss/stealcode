@@ -350,25 +350,25 @@ impl UpdateManagerTui {
         }
     }
 
-    fn toggle(&mut self) {
+    const fn toggle(&mut self) {
         self.auto_update_enabled = !self.auto_update_enabled;
     }
 
     fn poll_events(&mut self) {
         use auto_update::UpdateWorkerEvent;
-        if let Some(rx) = &self.rx_event {
-            if let Ok(event) = rx.try_recv() {
-                match event {
-                    UpdateWorkerEvent::Status(status) => self.status = status,
-                    UpdateWorkerEvent::Checked(version) => {
-                        self.status = match &version {
-                            Some(version) => {
-                                format!("Update available: v{version}")
-                            }
-                            None => "Up to date".to_string(),
-                        };
-                        self.available_version = version;
-                    }
+        if let Some(rx) = &self.rx_event
+            && let Ok(event) = rx.try_recv()
+        {
+            match event {
+                UpdateWorkerEvent::Status(status) => self.status = status,
+                UpdateWorkerEvent::Checked(version) => {
+                    self.status = match &version {
+                        Some(version) => {
+                            format!("Update available: v{version}")
+                        }
+                        None => "Up to date".to_string(),
+                    };
+                    self.available_version = version;
                 }
             }
         }
@@ -408,11 +408,11 @@ impl AppState {
         }
     }
 
-    fn scheme(&self) -> &ColorScheme {
+    const fn scheme(&self) -> &ColorScheme {
         &SCHEMES[self.scheme_idx]
     }
 
-    fn next_counter(&mut self) -> u32 {
+    const fn next_counter(&mut self) -> u32 {
         let n = self.counter;
         self.counter += 1;
         n
@@ -426,7 +426,7 @@ impl AppState {
     }
 }
 
-fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
+const fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
     x >= rect.x
         && x < rect.x + rect.width
         && y >= rect.y
@@ -538,11 +538,10 @@ fn restore_terminal(
     color_mode: ColorMode,
 ) -> Result<()> {
     let backend = terminal.backend_mut();
-    let fg_osc;
-    let bg_osc;
-    match color_mode {
-        ColorMode::Dynamic(orig) => {
-            fg_osc = match orig.fg {
+
+    let (fg_osc, bg_osc) = match color_mode {
+        ColorMode::Dynamic(orig) => (
+            match orig.fg {
                 Some(rgb) => Osc::ChangeDynamicColors(
                     DynamicColorNumber::TextForegroundColor,
                     vec![ColorOrQuery::Color(rgb)],
@@ -550,8 +549,8 @@ fn restore_terminal(
                 None => Osc::ResetDynamicColor(
                     DynamicColorNumber::TextForegroundColor,
                 ),
-            };
-            bg_osc = match orig.bg {
+            },
+            match orig.bg {
                 Some(rgb) => Osc::ChangeDynamicColors(
                     DynamicColorNumber::TextBackgroundColor,
                     vec![ColorOrQuery::Color(rgb)],
@@ -559,15 +558,13 @@ fn restore_terminal(
                 None => Osc::ResetDynamicColor(
                     DynamicColorNumber::TextBackgroundColor,
                 ),
-            };
-        }
-        ColorMode::SgrOnly => {
-            fg_osc =
-                Osc::ResetDynamicColor(DynamicColorNumber::TextForegroundColor);
-            bg_osc =
-                Osc::ResetDynamicColor(DynamicColorNumber::TextBackgroundColor);
-        }
-    }
+            },
+        ),
+        ColorMode::SgrOnly => (
+            Osc::ResetDynamicColor(DynamicColorNumber::TextForegroundColor),
+            Osc::ResetDynamicColor(DynamicColorNumber::TextBackgroundColor),
+        ),
+    };
     write!(
         backend,
         "{}{}{}{}{}{}{}{}",

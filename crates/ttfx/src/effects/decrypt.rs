@@ -1,4 +1,4 @@
-//! decrypt, ported from effects/effect_decrypt.py.
+//! decrypt, ported from `effects/effect_decrypt.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -72,8 +72,9 @@ pub struct Decrypt {
 }
 
 impl Decrypt {
+    #[must_use]
     pub fn new(config: DecryptConfig) -> Self {
-        let mut effect = Decrypt {
+        let mut effect = Self {
             config,
             typing_pending_chars: Vec::new(),
             decrypting_pending_chars: Vec::new(),
@@ -85,7 +86,7 @@ impl Decrypt {
         effect
     }
 
-    /// DecryptIterator.make_encrypted_symbols (_DecryptChars ranges).
+    /// `DecryptIterator.make_encrypted_symbols` (_`DecryptChars` ranges).
     fn make_encrypted_symbols(&mut self) {
         for n in 33u32..127 {
             self.encrypted_symbols
@@ -105,9 +106,9 @@ impl Decrypt {
         }
     }
 
-    /// DecryptIterator.make_decrypting_animation_scenes.
+    /// `DecryptIterator.make_decrypting_animation_scenes`.
     fn make_decrypting_animation_scenes(
-        &mut self,
+        &self,
         ctx: &mut EngineCtx,
         id: CharId,
     ) -> Result<(), EngineError> {
@@ -246,7 +247,7 @@ impl Decrypt {
         Ok(())
     }
 
-    /// DecryptIterator.prepare_data_for_type_effect.
+    /// `DecryptIterator.prepare_data_for_type_effect`.
     fn prepare_data_for_type_effect(
         &mut self,
         ctx: &mut EngineCtx,
@@ -307,7 +308,7 @@ impl Decrypt {
         Ok(())
     }
 
-    /// DecryptIterator.prepare_data_for_decrypt_effect.
+    /// `DecryptIterator.prepare_data_for_decrypt_effect`.
     fn prepare_data_for_decrypt_effect(
         &mut self,
         ctx: &mut EngineCtx,

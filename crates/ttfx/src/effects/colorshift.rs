@@ -1,4 +1,4 @@
-//! colorshift, ported from effects/effect_colorshift.py.
+//! colorshift, ported from `effects/effect_colorshift.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -105,8 +105,9 @@ pub struct ColorShift {
 }
 
 impl ColorShift {
+    #[must_use]
     pub fn new(config: ColorShiftConfig) -> Self {
-        ColorShift {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             loop_tracker_map: FxHashMap::default(),
@@ -115,7 +116,7 @@ impl ColorShift {
 }
 
 impl EffectHooks for ColorShift {
-    /// ColorShiftIterator.loop_tracker.
+    /// `ColorShiftIterator.loop_tracker`.
     fn dispatch_callback(
         &mut self,
         ctx: &mut EngineCtx,

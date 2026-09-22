@@ -87,6 +87,7 @@ impl Default for ThinkingOrb {
 }
 
 impl ThinkingOrb {
+    #[must_use]
     pub fn new() -> Self {
         let state = OrbState::Working;
         let size = OrbSize::Avatar;
@@ -113,28 +114,33 @@ impl ThinkingOrb {
         }
     }
 
-    pub fn state(mut self, state: OrbState) -> Self {
+    #[must_use]
+    pub const fn state(mut self, state: OrbState) -> Self {
         self.state = state;
         self
     }
 
-    pub fn size(mut self, size: OrbSize) -> Self {
+    #[must_use]
+    pub const fn size(mut self, size: OrbSize) -> Self {
         self.size = size;
         self
     }
 
-    pub fn theme(mut self, theme: OrbTheme) -> Self {
+    #[must_use]
+    pub const fn theme(mut self, theme: OrbTheme) -> Self {
         self.theme = theme;
         self
     }
 
-    pub fn speed(mut self, speed: f32) -> Self {
+    #[must_use]
+    pub const fn speed(mut self, speed: f32) -> Self {
         self.speed = sanitize_speed(speed);
         self
     }
 
     /// Same clock rules as [`Self::set_paused`]: entering pause records
     /// `paused_at`; leaving folds the elapsed pause into `paused_total`.
+    #[must_use]
     pub fn paused(mut self, paused: bool) -> Self {
         apply_pause_clock(
             &mut self.paused,
@@ -145,7 +151,8 @@ impl ThinkingOrb {
         self
     }
 
-    pub fn reduced_motion(mut self, reduced: bool) -> Self {
+    #[must_use]
+    pub const fn reduced_motion(mut self, reduced: bool) -> Self {
         self.reduced_motion = reduced;
         self
     }
@@ -153,7 +160,8 @@ impl ThinkingOrb {
     /// Cap the redraw rate. Values are clamped to `1.0..=240.0`.
     ///
     /// Lower is cheaper: cost scales linearly with this number.
-    pub fn target_fps(mut self, fps: f32) -> Self {
+    #[must_use]
+    pub const fn target_fps(mut self, fps: f32) -> Self {
         self.target_fps = sanitize_fps(fps);
         self
     }
@@ -163,7 +171,8 @@ impl ThinkingOrb {
     /// A background window's animation is not visible to anyone, so this is
     /// usually free. Set it to `false` if the orb must keep moving in a window
     /// that is visible but unfocused - a side panel, or a floating HUD.
-    pub fn pause_when_inactive(mut self, pause: bool) -> Self {
+    #[must_use]
+    pub const fn pause_when_inactive(mut self, pause: bool) -> Self {
         self.pause_when_inactive = pause;
         self
     }
@@ -172,9 +181,10 @@ impl ThinkingOrb {
     ///
     /// GPUI 0.2 has no intersection observer. When you keep the entity mounted
     /// in a scrollable list but it has scrolled away, call
-    /// [`Self::set_visible`]`(false)` (or build with `.visible(false)`) so the
-    /// timer stops. Prefer unmounting when you can.
-    pub fn visible(mut self, visible: bool) -> Self {
+    /// [`Self::set_visible`] with `false` (or build with `.visible(false)`) so
+    /// the timer stops. Prefer unmounting when you can.
+    #[must_use]
+    pub const fn visible(mut self, visible: bool) -> Self {
         self.visible = visible;
         self
     }
@@ -210,6 +220,9 @@ impl ThinkingOrb {
 
     pub fn set_speed(&mut self, speed: f32, cx: &mut Context<'_, Self>) {
         let speed = sanitize_speed(speed);
+        // Exact comparison is intentional: both sides are sanitized, and only
+        // a real change should trigger a redraw.
+        #[allow(clippy::float_cmp)]
         if self.speed != speed {
             self.speed = speed;
             self.geometry_dirty = true;
@@ -268,39 +281,48 @@ impl ThinkingOrb {
         }
     }
 
-    pub fn pause_when_inactive_value(&self) -> bool {
+    #[must_use]
+    pub const fn pause_when_inactive_value(&self) -> bool {
         self.pause_when_inactive
     }
 
-    pub fn is_visible(&self) -> bool {
+    #[must_use]
+    pub const fn is_visible(&self) -> bool {
         self.visible
     }
 
-    pub fn state_value(&self) -> OrbState {
+    #[must_use]
+    pub const fn state_value(&self) -> OrbState {
         self.state
     }
 
-    pub fn size_value(&self) -> OrbSize {
+    #[must_use]
+    pub const fn size_value(&self) -> OrbSize {
         self.size
     }
 
-    pub fn theme_value(&self) -> OrbTheme {
+    #[must_use]
+    pub const fn theme_value(&self) -> OrbTheme {
         self.theme
     }
 
-    pub fn speed_value(&self) -> f32 {
+    #[must_use]
+    pub const fn speed_value(&self) -> f32 {
         self.speed
     }
 
-    pub fn is_paused(&self) -> bool {
+    #[must_use]
+    pub const fn is_paused(&self) -> bool {
         self.paused
     }
 
-    pub fn reduced_motion_value(&self) -> bool {
+    #[must_use]
+    pub const fn reduced_motion_value(&self) -> bool {
         self.reduced_motion
     }
 
-    pub fn target_fps_value(&self) -> f32 {
+    #[must_use]
+    pub const fn target_fps_value(&self) -> f32 {
         self.target_fps
     }
 
@@ -351,7 +373,7 @@ impl ThinkingOrb {
     ///
     /// This replaces `window.request_animation_frame()`, which re-notifies at
     /// the display's refresh rate - 60 Hz or more - with no way to opt down.
-    fn schedule_tick(&mut self, cx: &mut Context<'_, Self>) {
+    fn schedule_tick(&mut self, cx: &Context<'_, Self>) {
         // Parent renders may happen between animation frames. Keep the timer
         // already in flight rather than cancel/reallocate it and push the next
         // frame farther into the future.
@@ -379,10 +401,8 @@ fn apply_pause_clock(
 ) {
     if *paused == want {
         // Still clear a stuck paused_at if someone left it set while unpaused.
-        if !want {
-            if let Some(at) = paused_at.take() {
-                *paused_total += at.elapsed();
-            }
+        if !want && let Some(at) = paused_at.take() {
+            *paused_total += at.elapsed();
         }
         return;
     }
@@ -396,7 +416,7 @@ fn apply_pause_clock(
     }
 }
 
-fn sanitize_speed(speed: f32) -> f32 {
+const fn sanitize_speed(speed: f32) -> f32 {
     if speed.is_finite() {
         speed.clamp(0.0, 100.0)
     } else {
@@ -404,7 +424,7 @@ fn sanitize_speed(speed: f32) -> f32 {
     }
 }
 
-fn sanitize_fps(fps: f32) -> f32 {
+const fn sanitize_fps(fps: f32) -> f32 {
     if fps.is_finite() {
         fps.clamp(1.0, 240.0)
     } else {
@@ -437,7 +457,7 @@ impl Render for ThinkingOrb {
             if self.appearance.is_none() {
                 self.appearance =
                     Some(cx.observe_window_appearance(window, |_, _, cx| {
-                        cx.notify()
+                        cx.notify();
                     }));
             }
         } else {

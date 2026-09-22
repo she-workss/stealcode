@@ -1,8 +1,8 @@
-//! binarypath, ported from effects/effect_binarypath.py.
+//! binarypath, ported from `effects/effect_binarypath.py`.
 //!
-//! The inner _BinaryRepresentation class is the `BinaryRepresentation` struct.
-//! No observable set iteration beyond the engine-canonical active_characters
-//! (docs/ordering-inventory.md).
+//! The inner _`BinaryRepresentation` class is the `BinaryRepresentation`
+//! struct. No observable set iteration beyond the engine-canonical
+//! `active_characters` (docs/ordering-inventory.md).
 
 use rustc_hash::FxHashMap;
 
@@ -68,7 +68,7 @@ impl Default for BinaryPathConfig {
         }
     }
 }
-/// BinaryPathIterator._BinaryRepresentation.
+/// `BinaryPathIterator`._`BinaryRepresentation`.
 #[derive(Debug)]
 struct BinaryRepresentation {
     character: CharId,
@@ -79,7 +79,7 @@ struct BinaryRepresentation {
 }
 
 impl BinaryRepresentation {
-    /// _BinaryRepresentation._travel_complete.
+    /// _`BinaryRepresentation`._`travel_complete`.
     fn travel_complete(&self, ctx: &EngineCtx) -> bool {
         self.binary_characters.iter().all(|&bin_char| {
             ctx.terminal.arena[bin_char.0 as usize].motion.current_coord
@@ -94,7 +94,7 @@ enum Phase {
     Wipe,
 }
 
-/// typing.Literal["col", "row"].
+/// `typing.Literal["col", "row"]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Orientation {
     Col,
@@ -115,8 +115,9 @@ pub struct BinaryPath {
 }
 
 impl BinaryPath {
+    #[must_use]
     pub fn new(config: BinaryPathConfig) -> Self {
-        BinaryPath {
+        Self {
             config,
             pending_binary_representations: Vec::new(),
             character_final_color_map: FxHashMap::default(),
@@ -226,17 +227,13 @@ impl Effect for BinaryPath {
                 let column_direction = if last_coord.column > input_coord.column
                 {
                     -1
-                } else if last_coord.column == input_coord.column {
-                    0
                 } else {
-                    1
+                    i64::from(last_coord.column != input_coord.column)
                 };
                 let row_direction = if last_coord.row > input_coord.row {
                     -1
-                } else if last_coord.row == input_coord.row {
-                    0
                 } else {
-                    1
+                    i64::from(last_coord.row != input_coord.row)
                 };
                 let max_column_distance =
                     (last_coord.column - input_coord.column).abs();
@@ -520,7 +517,9 @@ impl Effect for BinaryPath {
 
             if self.phase == Phase::Wipe {
                 for _ in 0..2 {
-                    if !self.final_wipe_chars.is_empty() {
+                    if self.final_wipe_chars.is_empty() {
+                        self.complete = true;
+                    } else {
                         let next_group = self.final_wipe_chars.remove(0);
                         for character in next_group {
                             ctx.activate_scene(self, character, "brighten_scn");
@@ -528,8 +527,6 @@ impl Effect for BinaryPath {
                                 .set_character_visibility(character, true);
                             ctx.active_characters.insert(character);
                         }
-                    } else {
-                        self.complete = true;
                     }
                 }
             }

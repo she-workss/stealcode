@@ -1,4 +1,4 @@
-//! wipe, ported from effects/effect_wipe.py.
+//! wipe, ported from `effects/effect_wipe.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -72,17 +72,18 @@ pub struct Wipe {
     config: WipeConfig,
     character_final_color_map: FxHashMap<CharId, ColorPair>,
     easer: Option<SequenceEaser<Vec<CharId>>>,
-    wipe_delay: i64,
+    delay: i64,
 }
 
 impl Wipe {
+    #[must_use]
     pub fn new(config: WipeConfig) -> Self {
-        let wipe_delay = config.wipe_delay;
-        Wipe {
+        let delay = config.wipe_delay;
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             easer: None,
-            wipe_delay,
+            delay,
         }
     }
 }
@@ -192,7 +193,7 @@ impl Effect for Wipe {
     fn next_frame(&mut self, ctx: &mut EngineCtx) -> Option<String> {
         let easer_complete = self.easer.as_ref().unwrap().is_complete();
         if !ctx.active_characters.is_empty() || !easer_complete {
-            if self.wipe_delay == 0 {
+            if self.delay == 0 {
                 let mut easer = self.easer.take().unwrap();
                 let step = easer.step();
                 for group in step.added {
@@ -215,9 +216,9 @@ impl Effect for Wipe {
                     }
                 }
                 self.easer = Some(easer);
-                self.wipe_delay = self.config.wipe_delay;
+                self.delay = self.config.wipe_delay;
             } else {
-                self.wipe_delay -= 1;
+                self.delay -= 1;
             }
             ctx.update(self);
             return Some(ctx.frame());

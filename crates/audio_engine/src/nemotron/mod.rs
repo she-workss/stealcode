@@ -143,7 +143,7 @@ impl AsrModel for Nemotron {
         pcm: &[f32],
         language: Option<&str>,
     ) -> Result<Transcription> {
-        Nemotron::transcribe(self, pcm, language)
+        Self::transcribe(self, pcm, language)
     }
 
     fn live(&mut self, mode: LatencyMode) -> Result<Box<dyn LiveAsr<Self>>> {

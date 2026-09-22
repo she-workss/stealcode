@@ -38,9 +38,9 @@ pub(super) fn draw_orbits_into(
         let h1 = hash_d(orb_f, 1.7);
         let h2 = hash_d(orb_f, 5.2);
         let h3 = hash_d(orb_f, 8.9);
-        let ro = r * (0.45 + 0.52 * h1);
+        let ro = r * 0.52f32.mul_add(h1, 0.45);
         let th = h1 * 2.0 * PI;
-        let phi = (2.0 * h2 - 1.0).acos();
+        let phi = 2.0f32.mul_add(h2, -1.0).acos();
         // Build a stable plane basis by crossing the normal with whichever
         // world axis is least parallel to it.
         let nx = phi.sin() * th.cos();
@@ -51,50 +51,55 @@ pub(super) fn draw_orbits_into(
         } else {
             (0.0, -nz, ny)
         };
-        let ul = (ux * ux + uy * uy + uz * uz).sqrt().max(1e-6);
+        let ul = f32::mul_add(uz, uz, f32::mul_add(uy, uy, ux * ux))
+            .sqrt()
+            .max(1e-6);
         ux /= ul;
         uy /= ul;
         uz /= ul;
-        let vx = ny * uz - nz * uy;
-        let vy = nz * ux - nx * uz;
-        let vz = nx * uy - ny * ux;
-        let speed = (0.25 + 0.55 * h3) * if h3 > 0.5 { 1.0 } else { -1.0 };
+        let vx = nz.mul_add(-uy, ny * uz);
+        let vy = nx.mul_add(-uz, nz * ux);
+        let vz = ny.mul_add(-ux, nx * uy);
+        let speed =
+            0.55f32.mul_add(h3, 0.25) * if h3 > 0.5 { 1.0 } else { -1.0 };
         let inv_ro = 1.0 / ro;
 
         // Ghost topology is invariant; reuse its unit-circle samples instead
         // of evaluating 2 × orbit_n × ghost_n trig functions every frame.
         with_unit_circle(ghost_n, |circle| {
             for p in circle {
-                let (ca, sa) = (p[0], p[1]);
+                let (ca, sa) = (*p).into();
                 let (px, py, z) = pt.project(
-                    (ux * ca + vx * sa) * ro,
-                    (uy * ca + vy * sa) * ro,
-                    (uz * ca + vz * sa) * ro,
+                    vx.mul_add(sa, ux * ca) * ro,
+                    vy.mul_add(sa, uy * ca) * ro,
+                    vz.mul_add(sa, uz * ca) * ro,
                 );
-                let depth = (z * inv_ro + 1.0) / 2.0;
+                let depth = f32::mul_add(z, inv_ro, 1.0) / 2.0;
                 dots.push(
                     Dot::new(px, py, z, ghost_r, 0.72)
-                        .with_a(ghost_a * (0.4 + 0.6 * depth)),
+                        .with_a(ghost_a * 0.6f32.mul_add(depth, 0.4)),
                 );
             }
         });
         // the particles doing the work
         for m in 0..particles {
-            let a =
-                t * speed + (m as f32 / particles as f32) * 2.0 * PI + h2 * 6.0;
+            let a = h2.mul_add(
+                6.0,
+                ((m as f32 / particles as f32) * 2.0).mul_add(PI, t * speed),
+            );
             let (ca, sa) = (a.cos(), a.sin());
             let (px, py, z) = pt.project(
-                (ux * ca + vx * sa) * ro,
-                (uy * ca + vy * sa) * ro,
-                (uz * ca + vz * sa) * ro,
+                vx.mul_add(sa, ux * ca) * ro,
+                vy.mul_add(sa, uy * ca) * ro,
+                vz.mul_add(sa, uz * ca) * ro,
             );
-            let depth = (z * inv_ro + 1.0) / 2.0;
+            let depth = f32::mul_add(z, inv_ro, 1.0) / 2.0;
             dots.push(Dot::new(
                 px,
                 py,
                 z,
-                (part_r + part_r_depth * depth) * rs,
-                0.3 - 0.22 * depth,
+                part_r_depth.mul_add(depth, part_r) * rs,
+                0.22f32.mul_add(-depth, 0.3),
             ));
         }
     }

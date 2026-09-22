@@ -1,9 +1,9 @@
-//! Mel-spectrogram frontend mirroring NeMo's
-//! AudioToMelSpectrogramPreprocessor / FilterbankFeatures:
-//!   preemphasis (0.97), STFT (n_fft, hop, hann symmetric,
+//! Mel-spectrogram frontend mirroring `NeMo`'s
+//! `AudioToMelSpectrogramPreprocessor` / `FilterbankFeatures`:
+//!   preemphasis (0.97), STFT (`n_fft`, hop, hann symmetric,
 //!   zero-padded `constant` center padding), power spectrum,
 //!   mel filterbank (from the GGUF `preprocessor.fb` tensor),
-//!   log(x + 2^-24). Dithering is training-only in NeMo, so it is
+//!   log(x + 2^-24). Dithering is training-only in `NeMo`, so it is
 //!   not applied here.
 
 use anyhow::{Result, bail};
@@ -16,9 +16,9 @@ const LOG_ZERO_GUARD: f32 = 5.960_464_5e-8; // 2^-24
 #[derive(Debug)]
 pub struct MelFrontend {
     cfg: PreprocessorConfig,
-    /// hann(win_length, symmetric) zero-padded to n_fft.
+    /// `hann(win_length`, symmetric) zero-padded to `n_fft`.
     window: Vec<f32>,
-    /// Mel filterbank [n_fft/2 + 1, n_mels] (from GGUF).
+    /// Mel filterbank [`n_fft/2` + 1, `n_mels`] (from GGUF).
     fb: Vec<f32>,
     /// Twiddle factors for the real-input FFT: the even/odd packed
     /// half-size FFT (`n_fft / 2`).
@@ -47,9 +47,9 @@ impl MelFrontend {
         // torch.hann_window(win_length, periodic=False)
         let mut window = vec![0.0f32; cfg.n_fft];
         let wl = cfg.win_length;
-        for n in 0..wl {
+        for (n, w) in window.iter_mut().enumerate().take(wl) {
             let x = 2.0 * std::f32::consts::PI * n as f32 / (wl as f32 - 1.0);
-            window[n] = 0.5 * (1.0 - x.cos());
+            *w = 0.5 * (1.0 - x.cos());
         }
 
         let n = cfg.n_fft;
@@ -82,12 +82,13 @@ impl MelFrontend {
 
     /// Frame count for `n_samples` (librosa/torch center=True):
     /// n // hop + 1.
-    pub fn n_frames(&self, n_samples: usize) -> usize {
+    #[must_use]
+    pub const fn n_frames(&self, n_samples: usize) -> usize {
         n_samples / self.cfg.hop + 1
     }
 
     /// Compute the mel spectrogram of a full utterance.
-    /// Returns frame-major [n_frames, n_mels] f32.
+    /// Returns frame-major [`n_frames`, `n_mels`] f32.
     pub fn compute(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
         let (n_fft, hop, n_mels, preemph) = {
             let c = &self.cfg;
@@ -102,7 +103,7 @@ impl MelFrontend {
         if n > 0 {
             sig[0] = pcm[0];
             for i in 1..n {
-                sig[i] = pcm[i] - preemph * pcm[i - 1];
+                sig[i] = f32::mul_add(preemph, -pcm[i - 1], pcm[i]);
             }
         }
 
@@ -125,7 +126,7 @@ impl MelFrontend {
             for k in 0..=half {
                 let re = self.fft_re[k];
                 let im = self.fft_im[k];
-                row[k] = re * re + im * im;
+                row[k] = im.mul_add(im, re * re);
             }
         }
 
@@ -149,7 +150,7 @@ impl MelFrontend {
                 let fb_col = &self.fb[m * n_freq..(m + 1) * n_freq];
                 let mut acc = 0.0f64;
                 for k in 0..n_freq {
-                    acc += spec_row[k] as f64 * fb_col[k] as f64;
+                    acc = (spec_row[k] as f64).mul_add(fb_col[k] as f64, acc);
                 }
                 mel_row[m] = (acc as f32 + LOG_ZERO_GUARD).ln();
             }
@@ -159,7 +160,7 @@ impl MelFrontend {
 
     /// STFT column for one window (in-place, no windowing by caller).
     /// The signal is real, so it uses the even/odd packing trick: one
-    /// complex FFT of length n_fft/2 plus a per-bin recombination
+    /// complex FFT of length `n_fft/2` plus a per-bin recombination
     /// (Sorensen), which halves the transform work.
     fn fft_frame(&mut self, frame: &[f32]) {
         let n = self.cfg.n_fft;
@@ -185,9 +186,9 @@ impl MelFrontend {
             let zm_im = self.fft_im[m % half];
             let zn_re = self.fft_re[(half - m) % half];
             let zn_im = self.fft_im[(half - m) % half];
-            let xe_re = (zm_re + zn_re) * 0.5;
+            let xe_re = f32::midpoint(zm_re, zn_re);
             let xe_im = (zm_im - zn_im) * 0.5;
-            let xo_re = (zm_im + zn_im) * 0.5;
+            let xo_re = f32::midpoint(zm_im, zn_im);
             let xo_im = -(zm_re - zn_re) * 0.5;
             // W_n^m; m == half wraps to W^(n/2) = -1 (index would be
             // out of the twiddle table).
@@ -196,8 +197,10 @@ impl MelFrontend {
             } else {
                 (-1.0, 0.0)
             };
-            self.out_re[m] = xe_re + wr * xo_re - wi * xo_im;
-            self.out_im[m] = xe_im + wr * xo_im + wi * xo_re;
+            self.out_re[m] =
+                f32::mul_add(wi, -xo_im, f32::mul_add(wr, xo_re, xe_re));
+            self.out_im[m] =
+                f32::mul_add(wi, xo_re, f32::mul_add(wr, xo_im, xe_im));
         }
         self.fft_re[..=half].copy_from_slice(&self.out_re[..=half]);
         self.fft_im[..=half].copy_from_slice(&self.out_im[..=half]);
@@ -225,10 +228,14 @@ impl MelFrontend {
             let step = n / len;
             for i in (0..n).step_by(len) {
                 for k in 0..half {
-                    let t_re = re[i + k + half] * tw[2 * k * step]
-                        - im[i + k + half] * tw[2 * k * step + 1];
-                    let t_im = re[i + k + half] * tw[2 * k * step + 1]
-                        + im[i + k + half] * tw[2 * k * step];
+                    let t_re = im[i + k + half].mul_add(
+                        -tw[2 * k * step + 1],
+                        re[i + k + half] * tw[2 * k * step],
+                    );
+                    let t_im = im[i + k + half].mul_add(
+                        tw[2 * k * step],
+                        re[i + k + half] * tw[2 * k * step + 1],
+                    );
                     re[i + k + half] = re[i + k] - t_re;
                     im[i + k + half] = im[i + k] - t_im;
                     re[i + k] += t_re;
@@ -242,6 +249,7 @@ impl MelFrontend {
 
 /// Downmix interleaved multi-channel audio to mono 16 kHz (linear
 /// resample).
+#[must_use]
 pub fn to_mono_16k(
     raw_audio: &[f32],
     channels: usize,
@@ -255,7 +263,9 @@ pub fn to_mono_16k(
             .map(|c| c.iter().sum::<f32>() / channels as f32)
             .collect()
     };
-    if sample_rate != 16000 {
+    if sample_rate == 16000 {
+        mono
+    } else {
         let ratio = 16000.0 / sample_rate as f32;
         let out_len = (mono.len() as f32 * ratio) as usize;
         let mut resampled = Vec::with_capacity(out_len);
@@ -264,11 +274,9 @@ pub fn to_mono_16k(
             let idx0 = src_idx.floor() as usize;
             let idx1 = (idx0 + 1).min(mono.len() - 1);
             let frac = src_idx - idx0 as f32;
-            resampled.push(mono[idx0] * (1.0 - frac) + mono[idx1] * frac);
+            resampled.push(mono[idx1].mul_add(frac, mono[idx0] * (1.0 - frac)));
         }
         resampled
-    } else {
-        mono
     }
 }
 
@@ -308,8 +316,8 @@ mod tests {
                     let x = frame[i] as f64 * window[i] as f64;
                     let a = -2.0 * std::f64::consts::PI * k as f64 * i as f64
                         / n as f64;
-                    re += x * a.cos();
-                    im += x * a.sin();
+                    re = x.mul_add(a.cos(), re);
+                    im = x.mul_add(a.sin(), im);
                 }
                 let d_re = fe.fft_re[k] as f64 - re;
                 let d_im = fe.fft_im[k] as f64 - im;

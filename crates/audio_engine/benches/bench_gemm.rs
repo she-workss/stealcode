@@ -1,7 +1,7 @@
 //! Criterion benchmarks of the Q8 and f32 GEMM kernels for the
 //! streaming encoder shapes (n = 16 = the encoder batch).
 //!
-//!   cargo bench -p audio_engine --bench bench_gemm
+//!   cargo bench -p `audio_engine` --bench `bench_gemm`
 //!
 //! Every shape is measured in two regimes:
 //!   - `hot`: weights stay in cache (compute ceiling);
@@ -46,6 +46,9 @@ fn flush(flush: &mut [u8]) {
     black_box(s);
 }
 
+// `BenchmarkGroup::finish` consumes the group, so the lint's suggested
+// explicit `drop` is a use-after-move.
+#[allow(clippy::significant_drop_tightening)]
 fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
     let s = setup(m, k, n);
     let bytes = m as u64 * s.padded_row as u64;
@@ -55,7 +58,7 @@ fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
     hot.bench_function("portable", |b| {
         let mut y = vec![0.0f32; m * n];
         b.iter(|| {
-            black_box(q8_gemm(
+            q8_gemm(
                 m,
                 k,
                 n,
@@ -66,7 +69,8 @@ fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
                 QOFF,
                 &s.x,
                 &mut y,
-            ))
+            );
+            black_box(());
         });
     });
     hot.finish();
@@ -81,8 +85,8 @@ fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
         let mut y = vec![0.0f32; m * n];
         b.iter_batched(
             || flush(&mut flush_buf),
-            |_| {
-                black_box(q8_gemm(
+            |()| {
+                q8_gemm(
                     m,
                     k,
                     n,
@@ -93,7 +97,8 @@ fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
                     QOFF,
                     &s.x,
                     &mut y,
-                ))
+                );
+                black_box(());
             },
             BatchSize::SmallInput,
         );
@@ -101,6 +106,7 @@ fn bench_shape(c: &mut Criterion, name: &str, m: usize, k: usize, n: usize) {
     cold.finish();
 }
 
+#[allow(clippy::significant_drop_tightening)] // see bench_shape
 fn bench_sgemm_shape(
     c: &mut Criterion,
     name: &str,
@@ -123,7 +129,8 @@ fn bench_sgemm_shape(
     hot.bench_function("portable", |b| {
         let mut y = vec![0.0f32; m * n];
         b.iter(|| {
-            black_box(gemm_into(m, k, n, &a, &bm, &mut y));
+            gemm_into(m, k, n, &a, &bm, &mut y);
+            black_box(());
         });
     });
     hot.finish();
@@ -135,8 +142,9 @@ fn bench_sgemm_shape(
         let mut y = vec![0.0f32; m * n];
         b.iter_batched(
             || flush(&mut flush_buf),
-            |_| {
-                black_box(gemm_into(m, k, n, &a, &bm, &mut y));
+            |()| {
+                gemm_into(m, k, n, &a, &bm, &mut y);
+                black_box(());
             },
             BatchSize::SmallInput,
         );

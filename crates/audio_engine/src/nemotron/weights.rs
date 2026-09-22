@@ -6,14 +6,14 @@
 //! loaded as f32.
 //!
 //! Quant layout note: this model's converter (NVIDIA gguf-py fork)
-//! writes its "Q8_0" as 34-byte blocks `[f16 d][i8 x32]`, value = d*q,
+//! writes its "`Q8_0`" as 34-byte blocks `[f16 d][i8 x32]`, value = d*q,
 //! NOT llama.cpp's 36-byte `[f32 d][i8 x32]`. Verified empirically:
 //! every dtype-8 tensor is 34 bytes/block and dequantizes to sane
 //! weights (no NaN/inf).
 //!
 //! Matrices are consumed as `[out, in]` row-major against activations
 //! in transposed `[in, T]` layout (see `Lin::forward_t`), so a forward
-//! is one sgemm (the portable std::simd kernel, multi-threaded).
+//! is one sgemm (the portable `std::simd` kernel, multi-threaded).
 
 use std::{ops::Range, sync::Arc};
 
@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use crate::sgemm_kernel;
 
 /// C = A @ B (row-major, `c` accumulates nothing: beta = 0) via the
-/// portable std::simd kernel. All three operands are contiguous
+/// portable `std::simd` kernel. All three operands are contiguous
 /// row-major (a `[m, k]`, b `[k, n]`, c `[m, n]`).
 #[allow(unsafe_code)]
 unsafe fn gemm(
@@ -47,18 +47,18 @@ use crate::gguf::{Gguf, f16_to_f32};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Q8Variant {
-    /// f32 scale + i8x32, value = d*q, 36 bytes/block (llama.cpp Q8_0).
+    /// f32 scale + i8x32, value = d*q, 36 bytes/block (llama.cpp `Q8_0`).
     Q8_0,
     /// f16 scale + i8x32, value = d*q, 34 bytes/block (this model's
-    /// NVIDIA-converter Q8_0 layout).
+    /// NVIDIA-converter `Q8_0` layout).
     Q8F16,
 }
 
 impl Q8Variant {
-    fn block_bytes(self) -> usize {
+    const fn block_bytes(self) -> usize {
         match self {
-            Q8Variant::Q8_0 => 36,
-            Q8Variant::Q8F16 => 34,
+            Self::Q8_0 => 36,
+            Self::Q8F16 => 34,
         }
     }
 }
@@ -93,16 +93,16 @@ impl Q8Bytes {
 /// the int8 vec-dot kernel directly on the stored bytes, so no f32
 /// dequantization (and no multi-GB cache) is ever built.
 ///
-/// The bytes are either owned or borrowed from the GGUF mapping (see
-/// [`Q8Bytes`]): a model loaded straight from a file keeps every matrix
-/// mapped, so loading costs no 640 MB heap copy. Fused/concatenated
-/// matrices (`concat_rows`/`concat_vert`) are always owned.
+/// The bytes are either owned or borrowed from the GGUF mapping: a model loaded
+/// straight from a file keeps every matrix mapped, so loading costs no 640 MB
+/// heap copy. Fused/concatenated matrices (`concat_rows`/`concat_vert`) are
+/// always owned.
 pub struct Q8Mat {
     bytes: Q8Bytes,
     /// Precomputed per-block f16 scales (`rows x row_len.div_ceil(32)`,
     /// row-major, f16 bits). The GEMM hot loop decoded the same f16
     /// scales on every batch (`read_q8_scale` 377ms + `f16_to_f32` 297ms
-    /// excl. in the live_desktop profile); decoding once at load removes
+    /// excl. in the `live_desktop` profile); decoding once at load removes
     /// that per-batch repeat for a few MB of RAM. f16 (not f32) halves
     /// the precomputed scales' footprint.
     scales: Vec<u16>,
@@ -213,15 +213,18 @@ impl Q8Mat {
         }
     }
 
-    pub fn rows(&self) -> usize {
+    #[must_use]
+    pub const fn rows(&self) -> usize {
         self.rows
     }
 
-    pub fn row_len(&self) -> usize {
+    #[must_use]
+    pub const fn row_len(&self) -> usize {
         self.row_len
     }
 
     /// Raw quantized block bytes (m rows x `padded_row`).
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
@@ -232,12 +235,13 @@ impl Q8Mat {
     /// that is a multiple of 32 (so the combined row stays
     /// block-aligned). Returns `None` otherwise - callers fall back to
     /// two separate matvecs.
-    pub fn concat_rows(a: &Q8Mat, b: &Q8Mat) -> Option<Q8Mat> {
+    #[must_use]
+    pub fn concat_rows(a: &Self, b: &Self) -> Option<Self> {
         if a.rows != b.rows || a.row_len != b.row_len || a.variant != b.variant
         {
             return None;
         }
-        if a.row_len % 32 != 0 {
+        if !a.row_len.is_multiple_of(32) {
             return None;
         }
         let irow = a.padded_row;
@@ -247,7 +251,7 @@ impl Q8Mat {
             bytes.extend_from_slice(&abytes[j * irow..(j + 1) * irow]);
             bytes.extend_from_slice(&bbytes[j * irow..(j + 1) * irow]);
         }
-        Q8Mat::new(bytes, a.rows, 2 * a.row_len, a.variant).ok()
+        Self::new(bytes, a.rows, 2 * a.row_len, a.variant).ok()
     }
 
     /// Stack two matrices vertically (concatenate along the output
@@ -266,12 +270,13 @@ impl Q8Mat {
         Self::new(bytes, a.rows + b.rows, a.row_len, a.variant).ok()
     }
 
-    /// Bytes per row (blocks_per_row * block_bytes).
-    pub fn padded_row(&self) -> usize {
+    /// Bytes per row (`blocks_per_row` * `block_bytes`).
+    #[must_use]
+    pub const fn padded_row(&self) -> usize {
         self.padded_row
     }
 
-    /// y[j] = sum over blocks of (d*dot(x, q_b)) + bias[j], computed as
+    /// y\[j\] = sum over blocks of (d*dot(x, `q_b`)) + bias\[j\], computed as
     /// an int8 x int8 vec-dot against the block-quantized activations
     /// (n = 1 specialization of `q8_gemm`).
     pub fn matvec(&self, x: &[f32], bias: Option<&[f32]>, y: &mut [f32]) {
@@ -342,19 +347,19 @@ impl Q8Mat {
             let base = j * self.padded_row;
             for blk in 0..blocks_per_row {
                 let b = base + blk * bb;
-                let d = read_block_scale(bytes, b, &self.variant);
+                let d = read_block_scale(bytes, b, self.variant);
                 let vals = &bytes[b + qoff..b + bb];
                 let in_row = blk * 32;
                 let keep = 32usize.min(self.row_len.saturating_sub(in_row));
-                for i in 0..keep {
-                    out.push(d * (vals[i] as i8 as f32));
+                for &v in vals.iter().take(keep) {
+                    out.push(d * (v as i8 as f32));
                 }
             }
         }
     }
 }
 
-fn read_block_scale(bytes: &[u8], b: usize, variant: &Q8Variant) -> f32 {
+const fn read_block_scale(bytes: &[u8], b: usize, variant: Q8Variant) -> f32 {
     match variant {
         Q8Variant::Q8_0 => f32::from_le_bytes([
             bytes[b],
@@ -408,7 +413,7 @@ const fn f32_to_f16_bits(v: f32) -> u16 {
     sign | ((exp as u16) << 10) | (mant as u16)
 }
 
-/// A linear layer with optional bias, stored as Q8_0/Q8F16 or f32.
+/// A linear layer with optional bias, stored as `Q8_0/Q8F16` or f32.
 pub struct Lin {
     pub q: Option<Q8Mat>,
     pub f: Option<Vec<f32>>,
@@ -538,11 +543,13 @@ impl std::fmt::Debug for Conv2d {
 }
 
 impl Conv2d {
-    pub fn f_out(&self, f_in: usize) -> usize {
+    #[must_use]
+    pub const fn f_out(&self, f_in: usize) -> usize {
         (f_in + self.pad_f.0 + self.pad_f.1 - self.kw) / self.stride_f + 1
     }
 
-    pub fn t_out(&self, t_in: usize) -> usize {
+    #[must_use]
+    pub const fn t_out(&self, t_in: usize) -> usize {
         (t_in + self.pad_t.0 + self.pad_t.1 - self.kh) / self.stride_t + 1
     }
 
@@ -644,7 +651,7 @@ impl Conv2d {
                                             + fi as usize)
                                             * c_in
                                             + ic_abs;
-                                        acc += x[xi] * w[wbase + wi];
+                                        acc = x[xi].mul_add(w[wbase + wi], acc);
                                     }
                                 }
                             }
@@ -678,7 +685,7 @@ impl Conv2d {
                                     let xi = (ti as usize * f_in + fi as usize)
                                         * c_in
                                         + ic_abs;
-                                    acc += x[xi] * w[wbase + wi];
+                                    acc = x[xi].mul_add(w[wbase + wi], acc);
                                 }
                             }
                         }
@@ -691,7 +698,7 @@ impl Conv2d {
 }
 
 /// 1D depthwise conv over time (conformer conv module), kernel
-/// `[d_model, kh]` row-major, groups = d_model. Zero left/right pads.
+/// `[d_model, kh]` row-major, groups = `d_model`. Zero left/right pads.
 pub struct Conv1dDw {
     pub w: Vec<f32>,
     pub dim: usize,
@@ -771,8 +778,8 @@ impl LayerNorm {
     }
 }
 
-/// BatchNorm1d with running stats (NeMo conv block; unused when the
-/// model uses conv_norm=layer_norm, kept for completeness).
+/// `BatchNorm1d` with running stats (`NeMo` conv block; unused when the
+/// model uses `conv_norm=layer_norm`, kept for completeness).
 pub struct BatchNorm1d {
     pub weight: Vec<f32>,
     pub bias: Vec<f32>,
@@ -791,9 +798,10 @@ impl std::fmt::Debug for BatchNorm1d {
 impl BatchNorm1d {
     pub fn forward(&self, x: &[f32], out: &mut [f32]) {
         for i in 0..self.dim {
-            out[i] = (x[i] - self.mean[i])
-                * (self.weight[i] / (self.var[i] + self.eps).sqrt())
-                + self.bias[i];
+            out[i] = (x[i] - self.mean[i]).mul_add(
+                self.weight[i] / (self.var[i] + self.eps).sqrt(),
+                self.bias[i],
+            );
         }
     }
 }
@@ -872,8 +880,9 @@ pub fn load_lin(
 
 /// Load a 2D conv weight, torch `[out, in, kh, kw]` (gguf dims
 /// fastest-first). `name` is the tensor base (e.g.
-/// "encoder.pre_encode.conv.0"); ".weight"/".bias" are appended.
+/// "`encoder.pre_encode.conv.0`"); ".weight"/".bias" are appended.
 /// `groups` for depthwise convs (groups == in == out).
+#[allow(clippy::too_many_arguments)] // mirrors torch's Conv2d config fields
 pub fn load_conv2d(
     gguf: &Gguf,
     name: &str,
@@ -986,7 +995,7 @@ pub fn load_ln(
     })
 }
 
-/// BatchNorm1d from NeMo state dict (running stats optional).
+/// `BatchNorm1d` from `NeMo` state dict (running stats optional).
 pub fn load_batchnorm(
     gguf: &Gguf,
     name: &str,

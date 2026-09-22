@@ -1,11 +1,11 @@
-//! synthgrid, ported from effects/effect_synthgrid.py.
+//! synthgrid, ported from `effects/effect_synthgrid.py`.
 //!
-//! The module-level GridLine class is the `GridLine` struct; its constructor
-//! lives on `Synthgrid` (make_grid_line) for EffectHooks access. Groups are
+//! The module-level `GridLine` class is the `GridLine` struct; its constructor
+//! lives on `Synthgrid` (`make_grid_line`) for `EffectHooks` access. Groups are
 //! `(group_number, Vec<CharId>)` tuples; the SCENE_COMPLETE-driven group
-//! tracker is a Vec indexed by group_number, decremented via an effect
-//! callback (upstream EventHandler.Callback(update_group_tracker, n)).
-//! No observable set iteration beyond the engine-canonical active_characters
+//! tracker is a Vec indexed by `group_number`, decremented via an effect
+//! callback (upstream `EventHandler.Callback(update_group_tracker`, n)).
+//! No observable set iteration beyond the engine-canonical `active_characters`
 //! (docs/ordering-inventory.md).
 
 use rustc_hash::FxHashMap;
@@ -32,7 +32,7 @@ use crate::{
     },
 };
 
-/// Callback id: update_group_tracker(group_number) - decrements the tracker.
+/// Callback id: `update_group_tracker(group_number)` - decrements the tracker.
 const CB_UPDATE_GROUP_TRACKER: u32 = 0;
 
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ enum Direction {
     Vertical,
 }
 
-/// GridLine (module-level class in effect_synthgrid.py).
+/// `GridLine` (module-level class in `effect_synthgrid.py`).
 #[derive(Debug)]
 struct GridLine {
     direction: Direction,
@@ -152,18 +152,18 @@ impl GridLine {
         }
     }
 
-    /// GridLine.is_extended.
-    fn is_extended(&self) -> bool {
+    /// `GridLine.is_extended`.
+    const fn is_extended(&self) -> bool {
         self.collapsed_characters.is_empty()
     }
 
-    /// GridLine.is_collapsed.
-    fn is_collapsed(&self) -> bool {
+    /// `GridLine.is_collapsed`.
+    const fn is_collapsed(&self) -> bool {
         self.extended_characters.is_empty()
     }
 }
 
-/// _phase strings from SynthGridIterator.__next__.
+/// _phase strings from `SynthGridIterator`.__next__.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     GridExpand,
@@ -177,7 +177,8 @@ pub struct SynthGrid {
     config: SynthGridConfig,
     pending_groups: Vec<(i64, Vec<CharId>)>,
     grid_lines: Vec<GridLine>,
-    /// group_tracker dict, indexed by group_number (keys are 0..n in order).
+    /// `group_tracker` dict, indexed by `group_number` (keys are 0..n in
+    /// order).
     group_tracker: Vec<i64>,
     character_final_color_map: FxHashMap<CharId, ColorPair>,
     phase: Phase,
@@ -186,8 +187,9 @@ pub struct SynthGrid {
 }
 
 impl SynthGrid {
+    #[must_use]
     pub fn new(config: SynthGridConfig) -> Self {
-        SynthGrid {
+        Self {
             config,
             pending_groups: Vec::new(),
             grid_lines: Vec::new(),
@@ -199,7 +201,7 @@ impl SynthGrid {
         }
     }
 
-    /// SynthGridIterator.find_even_gap.
+    /// `SynthGridIterator.find_even_gap`.
     fn find_even_gap(dimension: i64) -> i64 {
         let dimension = dimension - 2;
         if dimension <= 0 {
@@ -232,7 +234,8 @@ impl SynthGrid {
         best
     }
 
-    /// GridLine.__init__ (needs EffectHooks for activate_scene, so lives here).
+    /// `GridLine`.__init__ (needs `EffectHooks` for `activate_scene`, so lives
+    /// here).
     fn make_grid_line(
         &mut self,
         ctx: &mut EngineCtx,
@@ -523,7 +526,7 @@ impl Effect for SynthGrid {
                 let final_colors = self
                     .character_final_color_map
                     .get(&character)
-                    .cloned()
+                    .copied()
                     .unwrap_or_default();
                 ctx.terminal.arena[character.0 as usize]
                     .animation
@@ -578,11 +581,9 @@ impl Effect for SynthGrid {
         {
             match self.phase {
                 Phase::GridExpand => {
-                    if !self
-                        .grid_lines
-                        .iter()
-                        .all(|grid_line| grid_line.is_extended())
-                    {
+                    if self.grid_lines.iter().all(GridLine::is_extended) {
+                        self.phase = Phase::AddChars;
+                    } else {
                         let mut grid_lines =
                             std::mem::take(&mut self.grid_lines);
                         for grid_line in &mut grid_lines {
@@ -591,8 +592,6 @@ impl Effect for SynthGrid {
                             }
                         }
                         self.grid_lines = grid_lines;
-                    } else {
-                        self.phase = Phase::AddChars;
                     }
                 }
                 Phase::AddChars => {
@@ -617,11 +616,9 @@ impl Effect for SynthGrid {
                     }
                 }
                 Phase::Collapse => {
-                    if !self
-                        .grid_lines
-                        .iter()
-                        .all(|grid_line| grid_line.is_collapsed())
-                    {
+                    if self.grid_lines.iter().all(GridLine::is_collapsed) {
+                        self.phase = Phase::Complete;
+                    } else {
                         let mut grid_lines =
                             std::mem::take(&mut self.grid_lines);
                         for grid_line in &mut grid_lines {
@@ -630,8 +627,6 @@ impl Effect for SynthGrid {
                             }
                         }
                         self.grid_lines = grid_lines;
-                    } else {
-                        self.phase = Phase::Complete;
                     }
                 }
                 Phase::Complete => {}

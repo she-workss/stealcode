@@ -116,7 +116,12 @@ pub fn parse_easing(s: &str) -> Result<Easing, String> {
 pub fn parse_character_group(
     s: &str,
 ) -> Result<crate::engine::terminal::CharacterGroup, String> {
-    use crate::engine::terminal::CharacterGroup::*;
+    use crate::engine::terminal::CharacterGroup::{
+        CenterToOutside, ColumnLeftToRight, ColumnRightToLeft,
+        DiagonalBottomLeftToTopRight, DiagonalBottomRightToTopLeft,
+        DiagonalTopLeftToBottomRight, DiagonalTopRightToBottomLeft,
+        OutsideToCenter, RowBottomToTop, RowTopToBottom,
+    };
     Ok(match s {
         "column_left_to_right" => ColumnLeftToRight,
         "column_right_to_left" => ColumnRightToLeft,
@@ -136,7 +141,11 @@ pub fn parse_character_group(
 pub fn parse_character_sort(
     s: &str,
 ) -> Result<crate::engine::terminal::CharacterSort, String> {
-    use crate::engine::terminal::CharacterSort::*;
+    use crate::engine::terminal::CharacterSort::{
+        BottomToTopLeftToRight, BottomToTopRightToLeft, MiddleRowToOutside,
+        OutsideRowToMiddle, Random, TopToBottomLeftToRight,
+        TopToBottomRightToLeft,
+    };
     Ok(match s {
         "random" => Random,
         "top_to_bottom_left_to_right" => TopToBottomLeftToRight,

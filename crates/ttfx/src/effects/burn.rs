@@ -1,12 +1,12 @@
-//! burn, ported from effects/effect_burn.py.
+//! burn, ported from `effects/effect_burn.py`.
 //!
-//! RNG order mirrors BurnIterator.__init__: PrimsSimple construction (random
-//! starting coord) first, then the smoke ParticlePool preallocation (2000
-//! symbol choice() draws), then the build() body (algo run to completion),
-//! then per-frame randint(2, 4) + smoke emission draws.
+//! RNG order mirrors `BurnIterator`.__init__: `PrimsSimple` construction
+//! (random starting coord) first, then the smoke `ParticlePool` preallocation
+//! (2000 symbol `choice()` draws), then the `build()` body (algo run to
+//! completion), then per-frame randint(2, 4) + smoke emission draws.
 //!
-//! No new observable set iterations: char_link_order and the pool's available
-//! deque are ordered upstream lists; BreadthFirst is not used here
+//! No new observable set iterations: `char_link_order` and the pool's available
+//! deque are ordered upstream lists; `BreadthFirst` is not used here
 //! (docs/ordering-inventory.md unchanged).
 
 use rustc_hash::FxHashMap;
@@ -32,10 +32,10 @@ use crate::{
     },
 };
 
-/// Callback id: EventHandler.Callback(lambda c: self._emit_smoke(c.input_coord,
-/// ...)).
+/// Callback id: EventHandler.Callback(lambda c:
+/// self._`emit_smoke(c.input_coord`, ...)).
 const CB_EMIT_SMOKE: u32 = 0;
-/// Callback id: ParticlePool.reclaim_on_event's reclaim closure.
+/// Callback id: `ParticlePool.reclaim_on_event`'s reclaim closure.
 const CB_RECLAIM_SMOKE: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -90,22 +90,24 @@ const SMOKE_SYMBOLS: [&str; 6] = [".", ",", "'", "`", "#", "*"];
 pub struct Burn {
     config: BurnConfig,
     character_final_color_map: FxHashMap<CharId, Color>,
-    /// PrimsSimple.char_link_order, consumed FIFO in next_frame.
+    /// `PrimsSimple.char_link_order`, consumed FIFO in `next_frame`.
     char_link_order: Vec<CharId>,
-    /// Option so _emit_smoke can move the pool out of self while the on_emit
-    /// closure needs &mut self for event dispatch (see emit_smoke).
+    /// Option so _`emit_smoke` can move the pool out of self while the
+    /// `on_emit` closure needs &mut self for event dispatch (see
+    /// `emit_smoke`).
     smoke_particles: Option<ParticlePool>,
     /// Makes each reclaim Callback registration unique, mirroring Python's
-    /// fresh closure object per reclaim_on_event call (identity inequality
+    /// fresh closure object per `reclaim_on_event` call (identity inequality
     /// lets registrations accumulate upstream instead of raising
-    /// DuplicateEventRegistrationError; firing reclaim repeatedly is
+    /// `DuplicateEventRegistrationError`; firing reclaim repeatedly is
     /// idempotent, so behavior is identical).
     emission_counter: i64,
 }
 
 impl Burn {
+    #[must_use]
     pub fn new(config: BurnConfig) -> Self {
-        Burn {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             char_link_order: Vec::new(),
@@ -114,23 +116,23 @@ impl Burn {
         }
     }
 
-    /// BurnIterator._has_input_colors.
+    /// `BurnIterator`._`has_input_colors`.
     fn has_input_colors(ctx: &EngineCtx, id: CharId) -> bool {
         let anim = &ctx.terminal.arena[id.0 as usize].animation;
         anim.input_fg_color.is_some() || anim.input_bg_color.is_some()
     }
 
-    /// BurnIterator._is_burnable.
-    fn is_burnable(&self, ctx: &EngineCtx, id: CharId) -> bool {
+    /// `BurnIterator`._`is_burnable`.
+    fn is_burnable(ctx: &EngineCtx, id: CharId) -> bool {
         ctx.terminal.arena[id.0 as usize].input_symbol != " "
             || (ctx.terminal.config.existing_color_handling
                 != ExistingColorHandling::Ignore
                 && Self::has_input_colors(ctx, id))
     }
 
-    /// BurnIterator._make_smoke_pool's initialize_smoke: one reusable "smoke"
-    /// scene (10-frame 504F4F->C7C7C7 fade) and layer 2. Passed to every pool
-    /// call; runs only for newly created particles.
+    /// `BurnIterator`._`make_smoke_pool`'s `initialize_smoke`: one reusable
+    /// "smoke" scene (10-frame 504F4F->C7C7C7 fade) and layer 2. Passed to
+    /// every pool call; runs only for newly created particles.
     fn initialize_smoke(ctx: &mut EngineCtx, id: CharId) {
         let (input_symbol, uses_pre) = {
             let ch = &ctx.terminal.arena[id.0 as usize];
@@ -164,7 +166,7 @@ impl Burn {
         ch.layer = 2;
     }
 
-    /// BurnIterator._emit_smoke.
+    /// `BurnIterator`._`emit_smoke`.
     fn emit_smoke(&mut self, ctx: &mut EngineCtx, origin: Coord) {
         if ctx.rng.random() > self.config.smoke_chance {
             return;
@@ -260,7 +262,10 @@ impl Effect for Burn {
         let mut algo =
             PrimsSimple::new(ctx, None, true).map_err(EngineError::Other)?;
         let mut pool = ParticlePool::new(
-            SMOKE_SYMBOLS.iter().map(|s| s.to_string()).collect(),
+            SMOKE_SYMBOLS
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             Some(2000),
             None,
         )
@@ -270,8 +275,10 @@ impl Effect for Burn {
         self.smoke_particles = Some(pool);
 
         // BurnIterator.build()
-        let burn_char_order: Vec<String> =
-            BURN_CHAR_ORDER.iter().map(|s| s.to_string()).collect();
+        let burn_char_order: Vec<String> = BURN_CHAR_ORDER
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let final_gradient = Gradient::new(
             &self.config.final_gradient_stops,
             &self.config.final_gradient_steps,
@@ -463,7 +470,7 @@ impl Effect for Burn {
             for _ in 0..ctx.rng.randint(2, 4) {
                 if !self.char_link_order.is_empty() {
                     let next_char = self.char_link_order.remove(0);
-                    if !self.is_burnable(ctx, next_char) {
+                    if !Self::is_burnable(ctx, next_char) {
                         continue;
                     }
                     ctx.activate_scene(self, next_char, "burn");

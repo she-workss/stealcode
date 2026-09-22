@@ -1,6 +1,6 @@
 //! Waypoint, Segment, Path, Motion - state from engine/motion.py. The stepping
-//! logic that fires events (Path.step, Motion.move, activate_path) lives on
-//! EngineCtx (ctx.rs) so actions run inline at upstream emission points.
+//! logic that fires events (Path.step, Motion.move, `activate_path`) lives on
+//! `EngineCtx` (ctx.rs) so actions run inline at upstream emission points.
 
 use std::rc::Rc;
 
@@ -17,7 +17,7 @@ use crate::{
 /// Waypoints are cloned constantly - into segments, into origin segments on
 /// every path activation, and into event keys - so both owned fields are
 /// reference counted and a clone is two refcount bumps.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waypoint {
     pub waypoint_id: Rc<str>,
     pub coord: Coord,
@@ -25,6 +25,7 @@ pub struct Waypoint {
 }
 
 impl Waypoint {
+    #[must_use]
     pub fn key(&self) -> WaypointKey {
         WaypointKey {
             coord: self.coord,
@@ -44,8 +45,9 @@ pub struct Segment {
 }
 
 impl Segment {
-    pub fn new(start: Waypoint, end: Waypoint, distance: f64) -> Self {
-        Segment {
+    #[must_use]
+    pub const fn new(start: Waypoint, end: Waypoint, distance: f64) -> Self {
+        Self {
             start,
             end,
             distance,
@@ -89,7 +91,7 @@ impl Path {
                 "Path speed must be greater than 0. Received: {speed}"
             ));
         }
-        Ok(Path {
+        Ok(Self {
             path_id: path_id.to_string(),
             speed,
             ease,
@@ -107,7 +109,7 @@ impl Path {
         })
     }
 
-    /// Path.new_waypoint: auto-id like scenes; duplicate explicit id errors.
+    /// `Path.new_waypoint`: auto-id like scenes; duplicate explicit id errors.
     pub fn new_waypoint(
         &mut self,
         coord: Coord,
@@ -146,7 +148,7 @@ impl Path {
         Ok(waypoint)
     }
 
-    /// Path._add_waypoint_to_path.
+    /// Path._`add_waypoint_to_path`.
     fn add_waypoint_to_path(&mut self, waypoint: Waypoint) {
         self.waypoints.push(waypoint);
         if self.waypoints.len() < 2 {
@@ -186,8 +188,9 @@ pub struct Motion {
 }
 
 impl Motion {
-    pub fn new(input_coord: Coord) -> Self {
-        Motion {
+    #[must_use]
+    pub const fn new(input_coord: Coord) -> Self {
+        Self {
             paths: OrderedMap::new(),
             current_coord: input_coord,
             active_path: None,
@@ -195,11 +198,11 @@ impl Motion {
         }
     }
 
-    pub fn set_coordinate(&mut self, coord: Coord) {
+    pub const fn set_coordinate(&mut self, coord: Coord) {
         self.current_coord = coord;
     }
 
-    /// Motion.new_path: auto-id probing; duplicate explicit id errors.
+    /// `Motion.new_path`: auto-id probing; duplicate explicit id errors.
     pub fn new_path(
         &mut self,
         speed: f64,
@@ -229,11 +232,11 @@ impl Motion {
         Ok(path_id)
     }
 
-    pub fn movement_is_complete(&self) -> bool {
+    pub const fn movement_is_complete(&self) -> bool {
         self.active_path.is_none()
     }
 
-    /// Motion.deactivate_path: None clears unconditionally; otherwise only
+    /// `Motion.deactivate_path`: None clears unconditionally; otherwise only
     /// clears when the given path is the active one.
     pub fn deactivate_path(&mut self, path_id: Option<&str>) {
         match path_id {

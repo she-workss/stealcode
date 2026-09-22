@@ -206,18 +206,20 @@ impl SanitizedPath {
         Self::ref_cast(path.as_ref())
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[must_use]
+    pub const fn from_arc(path: Arc<Path>) -> SanitizedArcPath {
+        SanitizedArcPath(path)
+    }
+
+    #[cfg(target_os = "windows")]
     #[must_use]
     pub fn from_arc(path: Arc<Path>) -> SanitizedArcPath {
-        #[cfg(not(target_os = "windows"))]
-        return SanitizedArcPath(path);
-        #[cfg(target_os = "windows")]
-        {
-            let simplified = dunce::simplified(path.as_ref());
-            if simplified == path.as_ref() {
-                SanitizedArcPath(path)
-            } else {
-                SanitizedArcPath(Arc::from(simplified))
-            }
+        let simplified = dunce::simplified(path.as_ref());
+        if simplified == path.as_ref() {
+            SanitizedArcPath(path)
+        } else {
+            SanitizedArcPath(Arc::from(simplified))
         }
     }
 
@@ -323,6 +325,7 @@ impl PathStyle {
     }
 
     #[cfg(not(target_os = "windows"))]
+    #[must_use]
     pub const fn local() -> Self {
         Self::Posix
     }

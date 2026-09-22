@@ -12,8 +12,7 @@ use crate::gguf::f16_to_f32;
 
 /// `c[m, n] = a[m, k] @ b[k, n]` (all row-major), writing into an
 /// existing `c` of exactly `m * n` elements.
-/// Uses the std::simd kernels.
-#[allow(unsafe_code, unused_unsafe)]
+/// Uses the `std::simd` kernels.
 pub fn gemm_into(
     m: usize,
     k: usize,
@@ -40,8 +39,8 @@ pub fn gemm_into(
 // thin encoder batches (weight bytes are read once per GEMM instead of
 // being widened to f32).
 
-/// Q8 block scale: block_bytes 34 -> Q8F16 (f16 d + i8 x32, this model's
-/// layout), 36 -> Q8_0 (f32 d + i8 x32). `base` points at the block's
+/// Q8 block scale: `block_bytes` 34 -> Q8F16 (f16 d + i8 x32, this model's
+/// layout), 36 -> `Q8_0` (f32 d + i8 x32). `base` points at the block's
 /// first byte.
 pub(crate) fn read_q8_scale(w: &[u8], base: usize, block_bytes: usize) -> f32 {
     if block_bytes == 34 {
@@ -63,7 +62,7 @@ pub(crate) fn quantize_col(
     xqrow: &mut [i8],
     dxrow: &mut [f32],
 ) {
-    for b in 0..nblocks {
+    for (b, dxb) in dxrow.iter_mut().enumerate().take(nblocks) {
         let k0 = b * 32;
         let len = 32usize.min(k - k0);
         let mut maxv = 0.0f32;
@@ -74,16 +73,16 @@ pub(crate) fn quantize_col(
             }
         }
         let s = if maxv == 0.0 { 1.0 } else { maxv / 127.0 };
-        dxrow[b] = s;
-        if maxv != 0.0 {
+        *dxb = s;
+        if maxv == 0.0 {
+            for j in 0..len {
+                xqrow[k0 + j] = 0;
+            }
+        } else {
             let inv = 1.0 / s;
             for j in 0..len {
                 let q = (x[(k0 + j) * n + nj] * inv).round() as i8;
                 xqrow[k0 + j] = q;
-            }
-        } else {
-            for j in 0..len {
-                xqrow[k0 + j] = 0;
             }
         }
     }
@@ -94,7 +93,7 @@ pub(crate) fn quantize_col(
 /// each `k.div_ceil(32)` blocks of `block_bytes`, scale at `qoff`-byte
 /// offset before the 32 i8 values) and `b` = `x` is f32 `[k, n]`
 /// row-major. Writes `[m, n]` row-major into `y` (beta = 0).
-/// Uses the std::simd kernels.
+/// Uses the `std::simd` kernels.
 #[allow(clippy::too_many_arguments)]
 pub fn q8_gemm(
     m: usize,
@@ -172,9 +171,10 @@ pub fn q8_gemm_scalar(
                     let xb = nj * k + k0;
                     let mut dot = 0.0f32;
                     for j in 0..len {
-                        dot += (w[wb + j] as i8 as f32) * (xq[xb + j] as f32);
+                        dot = (w[wb + j] as i8 as f32)
+                            .mul_add(xq[xb + j] as f32, dot);
                     }
-                    acc += s * dot;
+                    acc = s.mul_add(dot, acc);
                 }
                 yrow[nj] = acc;
             }
@@ -194,10 +194,10 @@ pub fn q8_gemm_scalar(
                         let xb = nj * k + k0;
                         let mut dot = 0.0f32;
                         for j in 0..len {
-                            dot +=
-                                (w[wb + j] as i8 as f32) * (xq[xb + j] as f32);
+                            dot = (w[wb + j] as i8 as f32)
+                                .mul_add(xq[xb + j] as f32, dot);
                         }
-                        acc += s * dot;
+                        acc = s.mul_add(dot, acc);
                     }
                     yrow[nj] = acc;
                 }
@@ -210,7 +210,7 @@ pub fn q8_gemm_scalar(
 mod tests {
     use super::*;
 
-    /// f32 -> IEEE-754 half bits (for building valid q8_0 scale bytes).
+    /// f32 -> IEEE-754 half bits (for building valid `q8_0` scale bytes).
     fn half_f32_to_u16(v: f32) -> u16 {
         let bits = v.to_bits();
         let sign = ((bits >> 16) & 0x8000) as u16;

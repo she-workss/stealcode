@@ -1,12 +1,12 @@
-//! ParticlePool / ParticleReset, ported from
-//! engine/effect_support/particles.py.
+//! `ParticlePool` / `ParticleReset`, ported from
+//! `engine/effect_support/particles.py`.
 //!
-//! The pool lives in effect state and operates through &mut EngineCtx. The
+//! The pool lives in effect state and operates through &mut `EngineCtx`. The
 //! upstream `initializer` / `on_emit` closures become explicit closure
-//! parameters receiving (ctx, particle_id) - for new-particle setup the effect
-//! passes its initializer to the creating call. Reclaim-on-event is wired by
-//! the effect as a Callback action dispatching back to `reclaim` (plan.md
-//! §4.2).
+//! parameters receiving (ctx, `particle_id`) - for new-particle setup the
+//! effect passes its initializer to the creating call. Reclaim-on-event is
+//! wired by the effect as a Callback action dispatching back to `reclaim`
+//! (plan.md §4.2).
 
 use std::collections::VecDeque;
 
@@ -27,7 +27,7 @@ pub struct ParticleReset {
 
 impl Default for ParticleReset {
     fn default() -> Self {
-        ParticleReset {
+        Self {
             clear_paths: true,
             clear_scenes: false,
             clear_events: false,
@@ -50,8 +50,8 @@ pub struct ParticlePool {
 }
 
 impl ParticlePool {
-    /// ParticlePool.__init__ (without preallocation - call `preallocate` after
-    /// construction so the initializer closure can run against ctx).
+    /// `ParticlePool`.__init__ (without preallocation - call `preallocate`
+    /// after construction so the initializer closure can run against ctx).
     pub fn new(
         symbols: Vec<String>,
         max_size: Option<usize>,
@@ -62,7 +62,7 @@ impl ParticlePool {
                 "ParticlePool requires at least one symbol.".to_string()
             );
         }
-        Ok(ParticlePool {
+        Ok(Self {
             symbols,
             max_size,
             coord: coord.unwrap_or(Coord::new(0, 0)),
@@ -93,7 +93,7 @@ impl ParticlePool {
         Ok(())
     }
 
-    /// ParticlePool._create_particle.
+    /// `ParticlePool`._`create_particle`.
     fn create_particle(
         &mut self,
         ctx: &mut EngineCtx,
@@ -110,7 +110,7 @@ impl ParticlePool {
         particle
     }
 
-    /// ParticlePool._reset_particle.
+    /// `ParticlePool`._`reset_particle`.
     fn reset_particle(ctx: &mut EngineCtx, id: CharId, reset: ParticleReset) {
         let ch = &mut ctx.terminal.arena[id.0 as usize];
         if reset.deactivate_path {
@@ -169,7 +169,7 @@ impl ParticlePool {
         Some(particle)
     }
 
-    /// ParticlePool.emit: acquire -> position -> on_emit -> visibility ->
+    /// ParticlePool.emit: acquire -> position -> `on_emit` -> visibility ->
     /// activate.
     #[allow(clippy::too_many_arguments)]
     pub fn emit(

@@ -22,25 +22,29 @@ use crate::api;
 
 const DEFAULT_PORT: u16 = 8000;
 
+#[cfg(unix)]
+async fn terminate_signal() -> std::io::Result<()> {
+    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?
+        .recv()
+        .await;
+    Ok(())
+}
+
 async fn shutdown_signal() -> anyhow::Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::terminate(),
-        )?
-        .recv()
-        .await;
-        Ok(())
-    };
+    let terminate = terminate_signal();
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    let terminate = std::future::pending::<std::io::Result<()>>();
     tokio::select! {
         result = ctrl_c => {
             result?;
             info!("received Ctrl+C");
         }
-        _ = terminate => info!("received SIGTERM"),
+        result = terminate => {
+            result?;
+            info!("received SIGTERM");
+        }
     }
     info!("starting graceful shutdown");
     Ok(())

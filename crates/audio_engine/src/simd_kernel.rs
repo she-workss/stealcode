@@ -36,6 +36,13 @@
 //! tile (16 × 32 B per 64 FMA = 8 B/FMA), so the portable f32 kernel
 //! competes head-to-head with the hand-written AVX2 path.
 
+// Hand-written SIMD kernels: the raw `core::arch`/`core::intrinsics` loads
+// and the `#[target_feature]` wrappers are inherently unsafe and every site
+// carries its own SAFETY justification. They are also hot enough that
+// `#[inline(always)]` into the `#[target_feature]` caller is intentional -
+// it is what gives the `std::simd` ops 256/512-bit codegen.
+#![allow(unsafe_code, clippy::inline_always)]
+
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
     __m256i, _mm_cvtph_ps, _mm_cvtss_f32, _mm_set1_epi16, _mm256_abs_epi8,
@@ -83,7 +90,7 @@ fn scale_from_f16(h: u16) -> f32 {
 
 /// Generates a safe dispatcher for a `std::simd` kernel:
 ///
-/// - on x86_64, if `avx2 + fma` are detected at runtime the work goes to
+/// - on `x86_64`, if `avx2 + fma` are detected at runtime the work goes to
 ///   `$avx2` (compiled with `#[target_feature(enable = "avx2,fma")]` so LLVM
 ///   lowers the `std::simd` ops to 256-bit vectors even when the crate baseline
 ///   is SSE2, i.e. without `-Ctarget-cpu=native`);
@@ -98,6 +105,9 @@ fn scale_from_f16(h: u16) -> f32 {
 /// boundary (see their dispatchers).
 macro_rules! dispatch_avx2 {
     ($pub:ident, $impl:ident, $avx2:ident, $ret:ty, [$($arg:ident: $ty:ty),*]) => {
+        // The generated signatures are fixed by the wrapped SIMD kernel
+        // (e.g. `dwconv_forward` takes 8 args); allow per expansion.
+        #[allow(clippy::too_many_arguments)]
         pub fn $pub($($arg: $ty),*) -> $ret {
             #[cfg(target_arch = "x86_64")]
             {
@@ -111,6 +121,7 @@ macro_rules! dispatch_avx2 {
 
         #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2,fma")]
+        #[allow(clippy::too_many_arguments)]
         unsafe fn $avx2($($arg: $ty),*) -> $ret {
             $impl($($arg),*)
         }
@@ -122,8 +133,7 @@ macro_rules! dispatch_avx2 {
 /// `k % 32 == 0`; `n` is tiled in chunks of 16 columns. Other shapes
 /// fall back to the scalar kernel in `sgemm_kernel`. `wscales`, when
 /// `Some`, holds the precomputed per-block f16 weight scale bits
-/// (`m x k/32` row-major, see `Q8Mat`); the hot loop widens one with
-/// [`scale_from_f16`] instead of the branchy `read_q8_scale` decode.
+/// (`m x k/32` row-major, see `Q8Mat`).
 #[allow(
     clippy::too_many_arguments,
     clippy::manual_is_multiple_of,
@@ -325,7 +335,6 @@ pub(crate) fn q8_gemm_simd_q(
 /// q8 values fits i16 (127² + 127² < 32767), so the block's 32
 /// products are folded pairwise in i16 before widening to f32 -
 /// one fewer wide conversion than the plain i32 widen chain.
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 /// Software-prefetch the next row's first cache lines (and its page
 /// walk) while the current row's blocks are still streaming: the
 /// 34 B/block stride is too irregular for the hardware prefetcher to
@@ -336,7 +345,7 @@ pub(crate) fn q8_gemm_simd_q(
 /// both measured: the former is neutral, the latter ~12% slower, so the
 /// single line is kept.
 #[inline(always)]
-fn prefetch_next_row(
+const fn prefetch_next_row(
     w: &[u8],
     rowbase: usize,
     padded_row: usize,
@@ -347,12 +356,15 @@ fn prefetch_next_row(
         // row within w's m * padded_row bytes.
         unsafe {
             core::intrinsics::prefetch_read_data::<i8, 1>(
-                w.as_ptr().add(rowbase + padded_row) as *const i8,
+                w.as_ptr().add(rowbase + padded_row).cast::<i8>(),
             );
         }
     }
 }
 
+// The 13-argument signature is fixed by the kernel shape (row chunk + Q8
+// layout + output slice); a context struct would only obscure the body.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn q8_gemm_simd_chunk_impl(
     ci: usize,
@@ -378,7 +390,7 @@ fn q8_gemm_simd_chunk_impl(
         // SAFETY: k % 32 == 0: xq has k elements.
         let xqrow = unsafe { std::slice::from_raw_parts(xq.as_ptr(), k) };
         let dxrow = &dx[..nblocks];
-        for i in 0..rows {
+        for (i, out) in yrow.iter_mut().enumerate() {
             prefetch_next_row(w, (i0 + i) * padded_row, padded_row, rows - i);
             let rowbase = (i0 + i) * padded_row;
             // ponytail: precomputed row scales are one mul-free lookup;
@@ -396,7 +408,7 @@ fn q8_gemm_simd_chunk_impl(
                 // the 32 i8 values at wbase + qoff are within w.
                 let wq = unsafe {
                     Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
-                        w.as_ptr().add(wbase + qoff) as *const i8,
+                        w.as_ptr().add(wbase + qoff).cast::<i8>(),
                         L,
                     ))
                 };
@@ -414,7 +426,7 @@ fn q8_gemm_simd_chunk_impl(
                 let s8 = p32.extract::<0, 8>() + p32.extract::<8, 8>();
                 acc = s8.mul_add(Simd::<f32, 8>::splat(dw * dxrow[b]), acc);
             }
-            yrow[i] = acc.reduce_sum();
+            *out = acc.reduce_sum();
         }
         return;
     }
@@ -442,7 +454,7 @@ fn q8_gemm_simd_chunk_impl(
                 // 32 i8 values at wbase + qoff are within w.
                 let wq = unsafe {
                     Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
-                        w.as_ptr().add(wbase + qoff) as *const i8,
+                        w.as_ptr().add(wbase + qoff).cast::<i8>(),
                         L,
                     ))
                 };
@@ -454,7 +466,7 @@ fn q8_gemm_simd_chunk_impl(
                     // elements.
                     let xqj = unsafe {
                         Simd::<i8, L>::from_slice(std::slice::from_raw_parts(
-                            xq.as_ptr().add(nj * k + b * L) as *const i8,
+                            xq.as_ptr().add(nj * k + b * L).cast::<i8>(),
                             L,
                         ))
                     };
@@ -934,7 +946,7 @@ pub fn gemm_simd_into(
     debug_assert_eq!(c.len(), m * n);
     crate::pool::install(|| {
         let mut bt = Vec::new();
-        if n % S != 0 || m % 8 != 0 {
+        if !n.is_multiple_of(S) || !m.is_multiple_of(8) {
             bt.resize(n * k, 0.0f32);
             for kk in 0..k {
                 let src = &b[kk * n..(kk + 1) * n];
@@ -1021,6 +1033,9 @@ unsafe fn gemm_simd_chunk_avx2(
 /// `a` element out over the 16 columns with a `splat` `mul_add`.
 /// 8 + S vector loads per chunk of 8×S FMAs; on AVX2 the 16-lane FMAs
 /// lower to 2×256-bit.
+// The argument list is fixed by the tile shape; `needless_range_loop` is
+// wrong for the `t` loop below, which indexes every row of the 2D tile.
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 #[inline(always)]
 fn gemm_tile8(
     i0: usize,
@@ -1036,24 +1051,24 @@ fn gemm_tile8(
     let mut acc = [Simd::<f32, S>::splat(0.0); 8];
     let mut ktail = [0.0f32; 8 * S];
     while j + S <= n {
-        for r in 0..8 {
-            acc[r] = Simd::<f32, S>::splat(0.0);
+        for slot in &mut acc {
+            *slot = Simd::<f32, S>::splat(0.0);
         }
         ktail.fill(0.0);
         let mut kk = 0;
         while kk + S <= k {
             let mut a8 = [Simd::<f32, S>::splat(0.0); 8];
-            for r in 0..8 {
+            for (r, slot) in a8.iter_mut().enumerate() {
                 // SAFETY: kk + S <= k: S floats at (i0 + r) * k + kk
                 // within a's m * k elements.
-                a8[r] = unsafe {
+                *slot = unsafe {
                     Simd::<f32, S>::from_slice(std::slice::from_raw_parts(
                         a.as_ptr().add((i0 + r) * k + kk),
                         S,
                     ))
                 };
             }
-            let a_arr = a8.map(|v| v.to_array());
+            let a_arr = a8.map(std::simd::Simd::to_array);
             for t in 0..S {
                 // SAFETY: j + t < n (j + S <= n, t < S), j + S <= n:
                 // S floats at (kk + t) * n + j within b's k * n
@@ -1073,8 +1088,8 @@ fn gemm_tile8(
         while kk < k {
             for r in 0..8 {
                 for t in 0..S {
-                    ktail[r * S + t] +=
-                        a[(i0 + r) * k + kk] * b[kk * n + j + t];
+                    ktail[r * S + t] = a[(i0 + r) * k + kk]
+                        .mul_add(b[kk * n + j + t], ktail[r * S + t]);
                 }
             }
             kk += 1;
@@ -1123,7 +1138,7 @@ fn gemm_row(
                     S,
                 ))
             };
-            for t in 0..4 {
+            for (t, ac) in acc.iter_mut().enumerate() {
                 // SAFETY: j + t < n, kk + S <= k: S floats at
                 // (j + t) * k + kk within bt's n * k elements.
                 let bv = unsafe {
@@ -1132,7 +1147,7 @@ fn gemm_row(
                         S,
                     ))
                 };
-                acc[t] = av.mul_add(bv, acc[t]);
+                *ac = av.mul_add(bv, *ac);
             }
             kk += S;
         }
@@ -1141,7 +1156,7 @@ fn gemm_row(
         while kk < k {
             let av = a[i0 * k + kk];
             for t in 0..4 {
-                ktail[t] += av * bt[(j + t) * k + kk];
+                ktail[t] = av.mul_add(bt[(j + t) * k + kk], ktail[t]);
             }
             kk += 1;
         }
@@ -1196,14 +1211,14 @@ fn gemm_cols_tail(
             kk += S;
         }
         while kk < k {
-            ktail += a[(i0 + r) * k + kk] * bt[t * k + kk];
+            ktail = a[(i0 + r) * k + kk].mul_add(bt[t * k + kk], ktail);
             kk += 1;
         }
         c[(c0 + r) * n + t] = acc.reduce_sum() + ktail;
     }
 }
 
-/// LayerNorm over one row: `out[i] = (x[i] - mean) * inv * w[i] + b[i]`
+/// `LayerNorm` over one row: `out[i] = (x[i] - mean) * inv * w[i] + b[i]`
 /// with `mean/var` over the row and `inv = 1/sqrt(var/d + eps)`.
 /// Mean and variance are computed with one `reduce_sum` per S-lane
 /// chunk; the affine pass is two `mul_add`s per chunk.
@@ -1247,7 +1262,7 @@ fn ln_forward_impl(x: &[f32], w: &[f32], b: &[f32], eps: f32, out: &mut [f32]) {
     }
     for &v in &x[i..] {
         let diff = v - mean;
-        var += diff * diff;
+        var = diff.mul_add(diff, var);
     }
     let inv = 1.0 / (var / d as f32 + eps).sqrt();
     let mut i = 0;
@@ -1277,7 +1292,7 @@ fn ln_forward_impl(x: &[f32], w: &[f32], b: &[f32], eps: f32, out: &mut [f32]) {
     }
     for (ii, &v) in x[i..].iter().enumerate() {
         let idx = i + ii;
-        out[idx] = (v - mean) * inv * w[idx] + b[idx];
+        out[idx] = ((v - mean) * inv).mul_add(w[idx], b[idx]);
     }
 }
 
@@ -1360,7 +1375,7 @@ fn silu_into_impl(v: &mut [f32]) {
 
 dispatch_avx2!(silu_into, silu_into_impl, silu_into_avx2, (), [v: &mut [f32]]);
 
-/// ReLU in place.
+/// `ReLU` in place.
 #[inline(always)]
 fn relu_into_impl(v: &mut [f32]) {
     let zero = Simd::<f32, S>::splat(0.0);
@@ -1499,7 +1514,7 @@ fn score_dot_impl(
     }
     let mut sum = acc.reduce_sum();
     for i in i..hd {
-        sum += (qu[i] + uh[i]) * kk[i] + (qv[i] + vh[i]) * p[i];
+        sum += (qv[i] + vh[i]).mul_add(p[i], (qu[i] + uh[i]) * kk[i]);
     }
     sum * scale
 }
@@ -1554,13 +1569,11 @@ fn softmax_v_impl<'a, F>(
     // only as the streaming window grows.
     if band <= 64 {
         let mut sum = 0.0f32;
-        let mut i = 0;
         let mut e = [0.0f32; 64];
-        for kk in k0..k1 {
+        for (i, kk) in (k0..k1).enumerate() {
             let val = (srow[kk * n_heads + h] - maxv).exp();
             e[i] = val;
             sum += val;
-            i += 1;
         }
         let inv = 1.0 / sum;
         let mut j = 0;
@@ -1581,12 +1594,12 @@ fn softmax_v_impl<'a, F>(
             out[j..j + S].copy_from_slice(&acc.to_array());
             j += S;
         }
-        for i in j..head_dim {
+        for (i, o) in out.iter_mut().enumerate().take(head_dim).skip(j) {
             let mut acc = 0.0f32;
             for (ii, kk) in (k0..k1).enumerate() {
-                acc += e[ii] * inv * v_at(kk)[i];
+                acc = (e[ii] * inv).mul_add(v_at(kk)[i], acc);
             }
-            out[i] = acc;
+            *o = acc;
         }
     } else {
         let mut e = vec![0.0f32; band];
@@ -1615,17 +1628,17 @@ fn softmax_v_impl<'a, F>(
             out[j..j + S].copy_from_slice(&acc.to_array());
             j += S;
         }
-        for i in j..head_dim {
+        for (i, o) in out.iter_mut().enumerate().take(head_dim).skip(j) {
             let mut acc = 0.0f32;
             for (ii, kk) in (k0..k1).enumerate() {
-                acc += e[ii] * inv * v_at(kk)[i];
+                acc = (e[ii] * inv).mul_add(v_at(kk)[i], acc);
             }
-            out[i] = acc;
+            *o = acc;
         }
     }
 }
 
-/// Runtime dispatch for [`softmax_v_impl`]: on x86_64 with runtime-verified
+/// Runtime dispatch for `softmax_v_impl`: on `x86_64` with runtime-verified
 /// AVX2+FMA the `#[target_feature]` wrapper (which inlines the impl and
 /// thus compiles its `std::simd` ops with avx2 codegen) is used, otherwise
 /// the plain impl. Written by hand (not `dispatch_avx2!`) because the
@@ -1648,7 +1661,7 @@ pub fn softmax_v<'a, F>(
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             // SAFETY: the avx2+fma feature set was runtime-verified above.
             return unsafe {
-                softmax_v_avx2(srow, k0, k1, n_heads, h, v_at, head_dim, out)
+                softmax_v_avx2(srow, k0, k1, n_heads, h, v_at, head_dim, out);
             };
         }
     }
@@ -1673,11 +1686,13 @@ unsafe fn softmax_v_avx2<'a, F>(
     softmax_v_impl(srow, k0, k1, n_heads, h, v_at, head_dim, out);
 }
 
-/// 1D depthwise conv: `out[ot * dim + c] = sum_k x[(ot - pad_left + k)
-/// * dim + c] * w[c * kh + k]` for `ot in 0..t_out`, `t_out =
-/// t + pad_left + pad_right - kh + 1`. The `w` rows (one per channel)
-/// are loaded once per (ot, channel-chunk) - the `kh`-length dot is
-/// one S-lane `mul_add` chain when `kh <= S`.
+/// 1D depthwise conv:
+/// `out[ot * dim + c] = sum_k x[(ot - pad_left + k) * dim + c] * w[c * kh + k]`
+/// for `ot in 0..t_out`, `t_out = t + pad_left + pad_right - kh + 1`.
+/// The `w` rows (one per channel) are loaded once per (ot, channel-chunk);
+/// the `kh`-length dot is one S-lane `mul_add` chain when `kh <= S`.
+// The 8-argument signature is fixed by the conv shape.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn dwconv_forward_impl(
     x: &[f32],
@@ -1732,7 +1747,7 @@ fn dwconv_forward_impl(
                 if ti < 0 || ti as usize >= t {
                     continue;
                 }
-                acc += x[ti as usize * dim + c] * w[c * kh + k];
+                acc = x[ti as usize * dim + c].mul_add(w[c * kh + k], acc);
             }
             orow[c] = acc;
         }
@@ -1791,7 +1806,7 @@ fn f32_matvec_impl(
         }
         let mut sum = acc.reduce_sum();
         for i in i..inp {
-            sum += row[i] * x[i];
+            sum = row[i].mul_add(x[i], sum);
         }
         y[j] = sum;
     }
@@ -1942,7 +1957,7 @@ mod tests {
             for j in 0..n {
                 let mut acc = 0.0f32;
                 for kk in 0..k {
-                    acc += a[i * k + kk] * b[kk * n + j];
+                    acc = a[i * k + kk].mul_add(b[kk * n + j], acc);
                 }
                 y_ref[i * n + j] = acc;
             }
@@ -1990,7 +2005,7 @@ mod tests {
             / dim as f32;
         let inv = 1.0 / (var + eps).sqrt();
         for i in 0..dim {
-            y_ref[i] = (x[i] - mean) * inv * w[i] + b[i];
+            y_ref[i] = ((x[i] - mean) * inv).mul_add(w[i], b[i]);
         }
         for i in 0..dim {
             let d = (y[i] - y_ref[i]).abs();
@@ -2067,14 +2082,12 @@ mod tests {
         for i in 0..head_dim {
             let qui = qu[i] + uh[i];
             let qvi = qv[i] + vh[i];
-            acc += qui * kk_d[i] + qvi * pos_row[i];
+            acc += qvi.mul_add(pos_row[i], qui * kk_d[i]);
         }
         let want = acc * scale;
         assert!(
             (got - want).abs() <= 1e-3 * (1.0 + want.abs()),
-            "score: {} vs {}",
-            got,
-            want
+            "score: {got} vs {want}"
         );
     }
 
@@ -2084,11 +2097,11 @@ mod tests {
         let h = (band / 2) % n_heads;
         let mut srow = vec![0.0f32; k1 * n_heads];
         let mut v = vec![0.0f32; band * head_dim];
-        for i in 0..srow.len() {
-            srow[i] = ((i * 19) % 71) as f32 / 31.0 - 1.0;
+        for (i, s) in srow.iter_mut().enumerate() {
+            *s = ((i * 19) % 71) as f32 / 31.0 - 1.0;
         }
-        for i in 0..v.len() {
-            v[i] = ((i * 23) % 67) as f32 / 37.0 - 0.5;
+        for (i, x) in v.iter_mut().enumerate() {
+            *x = ((i * 23) % 67) as f32 / 37.0 - 0.5;
         }
         let mut out = vec![0.0f32; head_dim];
         softmax_v(
@@ -2113,9 +2126,8 @@ mod tests {
         for j in 0..head_dim {
             let mut acc = 0.0f32;
             for kk in k0..k1 {
-                acc += (srow[kk * n_heads + h] - maxv).exp()
-                    * inv
-                    * v[kk * head_dim + j];
+                acc = ((srow[kk * n_heads + h] - maxv).exp() * inv)
+                    .mul_add(v[kk * head_dim + j], acc);
             }
             let tol = 1e-3 * (1.0 + acc.abs());
             assert!(
@@ -2153,7 +2165,7 @@ mod tests {
                     if ti < 0 || ti as usize >= t {
                         continue;
                     }
-                    acc += x[ti as usize * dim + c] * w[c * kh + k];
+                    acc = x[ti as usize * dim + c].mul_add(w[c * kh + k], acc);
                 }
                 out_ref[ot * dim + c] = acc;
             }
@@ -2179,7 +2191,7 @@ mod tests {
             let row = &f[j * inp..(j + 1) * inp];
             let mut acc = 0.0f32;
             for i in 0..inp {
-                acc += row[i] * x[i];
+                acc = row[i].mul_add(x[i], acc);
             }
             y_ref[j] = acc;
         }

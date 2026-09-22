@@ -3,7 +3,7 @@
 //! The transcript is printed inline as chunks are recognized.
 //!
 //! Usage:
-//!   cargo run -p audio_engine --example live -- --model path/to/model.gguf
+//!   cargo run -p `audio_engine` --example live -- --model path/to/model.gguf
 
 use std::{
     io::{self, Write},
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
         SampleFormat::F32 => {
             let buf = Arc::clone(&buf);
             device.build_input_stream(
-                mic_config.clone(),
+                mic_config,
                 move |data: &[f32], _: &InputCallbackInfo| {
                     let v =
                         to_mono_16k(data, device_channels.into(), device_rate);
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         SampleFormat::I16 => {
             let buf = Arc::clone(&buf);
             device.build_input_stream(
-                mic_config.clone(),
+                mic_config,
                 move |data: &[i16], _: &InputCallbackInfo| {
                     let s: Vec<f32> = data
                         .iter()
@@ -112,11 +112,13 @@ fn main() -> Result<()> {
         SampleFormat::U16 => {
             let buf = Arc::clone(&buf);
             device.build_input_stream(
-                mic_config.clone(),
+                mic_config,
                 move |data: &[u16], _: &InputCallbackInfo| {
                     let s: Vec<f32> = data
                         .iter()
-                        .map(|&x| (x as f32 / u16::MAX as f32) * 2.0 - 1.0)
+                        .map(|&x| {
+                            (x as f32 / u16::MAX as f32).mul_add(2.0, -1.0)
+                        })
                         .collect();
                     let v =
                         to_mono_16k(&s, device_channels.into(), device_rate);

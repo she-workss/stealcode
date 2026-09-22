@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     num::NonZero,
     sync::{
         Arc, LazyLock, Mutex,
@@ -8,6 +7,7 @@ use std::{
 };
 
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, buffer::SamplesBuffer};
+use rustc_hash::FxHashMap;
 
 use crate::sounds::{
     FilterType, NoiseLayer, Shimmer, SoundLayer, SoundName, SoundRecipe,
@@ -23,8 +23,8 @@ const SAMPLE_RATE_NONZERO: NonZero<u32> =
     NonZero::new(SAMPLE_RATE).expect("44100 is non-zero");
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
-static RENDER_CACHE: LazyLock<Mutex<HashMap<SoundName, Arc<Vec<f32>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static RENDER_CACHE: LazyLock<Mutex<FxHashMap<SoundName, Arc<Vec<f32>>>>> =
+    LazyLock::new(|| Mutex::new(FxHashMap::default()));
 static DEVICE_LOST: AtomicBool = AtomicBool::new(false);
 static STREAM: Mutex<Option<MixerDeviceSink>> = Mutex::new(None);
 
@@ -81,9 +81,14 @@ impl Biquad {
     }
 
     fn process(&mut self, x: f32) -> f32 {
-        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1
-            - self.a2 * self.y2;
+        let y = self.a2.mul_add(
+            -self.y2,
+            self.a1.mul_add(
+                -self.y1,
+                self.b2
+                    .mul_add(self.x2, self.b1.mul_add(self.x1, self.b0 * x)),
+            ),
+        );
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
@@ -98,8 +103,7 @@ impl Xorshift32 {
     fn seeded() -> Self {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0x9e3779b9)
+            .map_or(0x9e37_79b9, |d| d.subsec_nanos())
             .max(1);
         Self(seed)
     }
@@ -110,7 +114,7 @@ impl Xorshift32 {
         x ^= x >> 17;
         x ^= x << 5;
         self.0 = x;
-        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+        (x as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
     }
 }
 
@@ -148,7 +152,7 @@ fn waveform_sample(waveform: Waveform, phase: f32) -> f32 {
         Waveform::Sawtooth => phase / std::f32::consts::PI - 1.0,
         Waveform::Triangle => {
             let x = phase / std::f32::consts::TAU;
-            4.0 * (x - (x + 0.5).floor()).abs() - 1.0
+            4.0f32.mul_add((x - (x + 0.5).floor()).abs(), -1.0)
         }
     }
 }
@@ -166,9 +170,7 @@ fn shimmer_tail(shimmer: Option<&Shimmer>) -> f32 {
         None => 0.0,
         Some(s) if s.feedback <= 0.0 => 0.0,
         Some(s) if s.feedback >= 1.0 => s.delay,
-        Some(s) => {
-            s.delay * (1.0 + (INAUDIBLE_GAIN.ln() / s.feedback.ln()).ceil())
-        }
+        Some(s) => s.delay * (1.0 + INAUDIBLE_GAIN.log(s.feedback).ceil()),
     }
 }
 
@@ -177,7 +179,7 @@ fn render_tone(dry: &mut [f32], layer: &ToneLayer, sample_rate: f32) {
     let duration = layer.attack + layer.decay + SOURCE_STOP_PADDING;
     let len = (duration * sample_rate).ceil() as usize;
     let glide_time = layer.glide_time.unwrap_or(layer.attack + layer.decay);
-    let detune_ratio = 2f32.powf(layer.detune_cents / 1200.0);
+    let detune_ratio = (layer.detune_cents / 1200.0).exp2();
     let mut phase = 0.0_f32;
     for i in 0..len {
         let idx = start + i;
@@ -191,7 +193,8 @@ fn render_tone(dry: &mut [f32], layer: &ToneLayer, sample_rate: f32) {
         };
         phase += std::f32::consts::TAU * base_freq * detune_ratio / sample_rate;
         let env = envelope(layer.attack, layer.decay, layer.peak, t);
-        dry[idx] += waveform_sample(layer.waveform, phase) * env;
+        dry[idx] =
+            waveform_sample(layer.waveform, phase).mul_add(env, dry[idx]);
     }
 }
 
@@ -214,7 +217,7 @@ fn render_noise(dry: &mut [f32], layer: &NoiseLayer, sample_rate: f32) {
         let t = i as f32 / sample_rate;
         let filtered = filter.process(rng.next_signed());
         let env = envelope(layer.attack, layer.decay, layer.peak, t);
-        dry[idx] += filtered * env;
+        dry[idx] = filtered.mul_add(env, dry[idx]);
     }
 }
 
@@ -249,10 +252,11 @@ fn render_recipe(recipe: &SoundRecipe) -> Vec<f32> {
             0.0
         };
         let filtered = filter.process(delayed);
-        out[n] += filtered * shimmer.wet;
+        out[n] = filtered.mul_add(shimmer.wet, out[n]);
         let future = n + delay_samples;
         if future < total_len {
-            delay_line[future] += filtered * shimmer.feedback;
+            delay_line[future] =
+                filtered.mul_add(shimmer.feedback, delay_line[future]);
         }
     }
     out
@@ -283,16 +287,21 @@ pub fn play(sound: SoundName) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    let mut guard = STREAM
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if guard.is_none() || DEVICE_LOST.swap(false, Ordering::Relaxed) {
-        *guard = open_stream();
-    }
-    let Some(stream) = guard.as_ref() else {
+    // Clone the mixer under the lock and release it before the (potentially
+    // slow) synthesis; the global `STREAM` keeps the sink alive.
+    let mixer = {
+        let mut guard = STREAM
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.is_none() || DEVICE_LOST.swap(false, Ordering::Relaxed) {
+            *guard = open_stream();
+        }
+        guard.as_ref().map(|stream| stream.mixer().clone())
+    };
+    let Some(mixer) = mixer else {
         return;
     };
     let samples = Arc::unwrap_or_clone(rendered(sound));
     let buffer = SamplesBuffer::new(CHANNELS, SAMPLE_RATE_NONZERO, samples);
-    stream.mixer().add(buffer);
+    mixer.add(buffer);
 }

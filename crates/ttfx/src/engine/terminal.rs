@@ -46,7 +46,7 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
-        TerminalConfig {
+        Self {
             tab_width: 4,
             xterm_colors: false,
             no_color: false,
@@ -66,7 +66,7 @@ impl Default for TerminalConfig {
     }
 }
 
-/// CharacterSort (argutils.CharacterSort).
+/// `CharacterSort` (argutils.CharacterSort).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharacterSort {
     Random,
@@ -78,7 +78,7 @@ pub enum CharacterSort {
     MiddleRowToOutside,
 }
 
-/// CharacterGroup (argutils.CharacterGroup).
+/// `CharacterGroup` (argutils.CharacterGroup).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharacterGroup {
     ColumnLeftToRight,
@@ -93,7 +93,7 @@ pub enum CharacterGroup {
     OutsideToCenter,
 }
 
-/// ColorSort (argutils.ColorSort).
+/// `ColorSort` (argutils.ColorSort).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorSort {
     LeastToMost,
@@ -112,7 +112,7 @@ pub struct CharacterFilter {
 
 impl Default for CharacterFilter {
     fn default() -> Self {
-        CharacterFilter {
+        Self {
             input_chars: true,
             inner_fill_chars: false,
             outer_fill_chars: false,
@@ -125,7 +125,7 @@ impl Default for CharacterFilter {
 /// renderer (ratatui, an image test, ...) can draw it directly. Mirrors what
 /// `CharacterVisual::format_symbol_into` emits (`dim` is never emitted, so it
 /// is not represented here).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameCell {
     pub symbol: String,
     pub fg: Option<ColorCode>,
@@ -141,7 +141,7 @@ pub struct FrameCell {
 
 impl FrameCell {
     fn empty() -> Self {
-        FrameCell {
+        Self {
             symbol: " ".to_string(),
             fg: None,
             bg: None,
@@ -163,7 +163,7 @@ pub struct Terminal {
     pub arena: Vec<EffectCharacter>,
     next_character_id: u32,
     pub input_colors_frequency: ColorFrequency,
-    terminal_dimensions: (i64, i64),
+    dimensions: (i64, i64),
     layout: Layout,
     /// Pre-wrap input line lengths - all `compute_layout` needs from the
     /// input, so a resize can re-derive the geometry without
@@ -243,12 +243,12 @@ impl Terminal {
 
         let input_line_lengths: Vec<i64> =
             preprocessed_lines.iter().map(|l| l.len() as i64).collect();
-        let terminal_dimensions = get_terminal_dimensions();
+        let dimensions = get_terminal_dimensions();
         let layout = compute_layout(
             &config,
             &input_line_lengths,
-            terminal_dimensions.0,
-            terminal_dimensions.1,
+            dimensions.0,
+            dimensions.1,
         );
         let mut canvas = Canvas::new(layout.canvas_height, layout.canvas_width);
         let Layout {
@@ -289,13 +289,13 @@ impl Terminal {
             ansi::DEC_SAVE_CURSOR,
             ansi::move_cursor_up(visible_top.max(0) as usize)
         );
-        let mut terminal = Terminal {
+        let mut terminal = Self {
             config,
             canvas,
             arena,
             next_character_id,
             input_colors_frequency,
-            terminal_dimensions,
+            dimensions,
             layout,
             input_line_lengths,
             canvas_column_offset,
@@ -322,8 +322,9 @@ impl Terminal {
         Ok(terminal)
     }
 
-    /// Terminal._make_fill_characters: row-major from (1,1), fresh space chars
-    /// for unoccupied canvas coords, split inner/outer by the text bounds.
+    /// Terminal._`make_fill_characters`: row-major from (1,1), fresh space
+    /// chars for unoccupied canvas coords, split inner/outer by the text
+    /// bounds.
     fn make_fill_characters(&mut self) {
         for row in 1..=self.canvas.top {
             for column in 1..=self.canvas.right {
@@ -390,8 +391,8 @@ impl Terminal {
         }
     }
 
-    /// Terminal.add_character: registered only in added_characters, not in
-    /// character_by_input_coord or the neighbor map.
+    /// `Terminal.add_character`: registered only in `added_characters`, not in
+    /// `character_by_input_coord` or the neighbor map.
     pub fn add_character(&mut self, symbol: &str, coord: Coord) -> CharId {
         let mut ch = EffectCharacter::new(
             self.next_character_id,
@@ -411,6 +412,7 @@ impl Terminal {
         id
     }
 
+    #[must_use]
     pub fn get_character_by_input_coord(&self, coord: Coord) -> Option<CharId> {
         self.character_by_input_coord.get(&coord).copied()
     }
@@ -438,7 +440,7 @@ impl Terminal {
         }
     }
 
-    /// Terminal.get_input_colors. Equal-count ties keep insertion order
+    /// `Terminal.get_input_colors`. Equal-count ties keep insertion order
     /// (Python's stable sort over dict keys).
     pub fn get_input_colors(
         &self,
@@ -464,6 +466,7 @@ impl Terminal {
         colors.into_iter().map(|(c, _)| c).collect()
     }
 
+    #[must_use]
     pub fn collect_characters(&self, filter: CharacterFilter) -> Vec<CharId> {
         let capacity = if filter.input_chars {
             self.input_characters.len()
@@ -498,7 +501,7 @@ impl Terminal {
         all
     }
 
-    /// Terminal.get_characters with all sort variants.
+    /// `Terminal.get_characters` with all sort variants.
     pub fn get_characters(
         &self,
         rng: &mut Rng,
@@ -548,7 +551,8 @@ impl Terminal {
         all
     }
 
-    /// Terminal.get_characters_grouped with all grouping variants.
+    /// `Terminal.get_characters_grouped` with all grouping variants.
+    #[must_use]
     pub fn get_characters_grouped(
         &self,
         filter: CharacterFilter,
@@ -660,7 +664,7 @@ impl Terminal {
     }
 
     /// Paint the visible characters into the reusable cell buffer using the
-    /// canonical (layer, character_id) painter order (plan.md §4.3).
+    /// canonical (layer, `character_id`) painter order (plan.md §4.3).
     fn update_render_cells(&mut self) -> (usize, usize) {
         let width = self.visible_right.max(0) as usize;
         let height = self.visible_top.max(0) as usize;
@@ -702,7 +706,8 @@ impl Terminal {
         (width, height)
     }
 
-    /// get_formatted_output_string: refresh + emit top row first.
+    /// `get_formatted_output_string`: refresh + emit top row first.
+    #[allow(unsafe_code)] // inherent: the buffer is built only from UTF-8 symbol runs
     pub fn get_formatted_output_string(&mut self) -> String {
         let (width, height) = self.update_render_cells();
         let minimum_capacity = width
@@ -749,8 +754,9 @@ impl Terminal {
     /// string, for embedding into external renderers (ratatui etc.).
     ///
     /// Row 0 is the bottom row, matching the emission order of
-    /// `get_formatted_output_string`; the grid covers columns 1..=visible_right
-    /// of rows 1..=visible_top, so every row has `visible_right` cells.
+    /// `get_formatted_output_string`; the grid covers columns
+    /// `1..=visible_right` of rows `1..=visible_top`, so every row has
+    /// `visible_right` cells.
     pub fn frame_cells(&mut self) -> Vec<Vec<FrameCell>> {
         let (width, height) = self.update_render_cells();
         let mut grid: Vec<Vec<FrameCell>> = Vec::with_capacity(height);
@@ -796,7 +802,7 @@ impl Terminal {
             return false;
         }
         let (width, height) = get_terminal_dimensions();
-        if (width, height) == self.terminal_dimensions {
+        if (width, height) == self.dimensions {
             return false;
         }
         compute_layout(&self.config, &self.input_line_lengths, width, height)
@@ -866,7 +872,7 @@ impl Terminal {
         out.write_all(self.move_cursor_to_top.as_bytes())
     }
 
-    /// Terminal.enforce_framerate: sleep off the remainder; timestamp taken
+    /// `Terminal.enforce_framerate`: sleep off the remainder; timestamp taken
     /// AFTER the sleep (drift accumulates, faithfully).
     pub fn enforce_framerate(&mut self) {
         if self.frame_rate == 0 {
@@ -883,7 +889,7 @@ impl Terminal {
     }
 }
 
-/// shutil.get_terminal_size semantics: COLUMNS/LINES env vars win; else query
+/// `shutil.get_terminal_size` semantics: COLUMNS/LINES env vars win; else query
 /// the tty; on failure (80, 24).
 fn get_terminal_dimensions() -> (i64, i64) {
     let env_dim = |name: &str| -> Option<i64> {
@@ -904,7 +910,7 @@ fn get_terminal_dimensions() -> (i64, i64) {
 
 /// Everything about the drawing area that is derived from the terminal size.
 /// A resize only matters if recomputing this yields something different, so it
-/// is factored out of Terminal::new rather than inlined there.
+/// is factored out of `Terminal::new` rather than inlined there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Layout {
     canvas_height: i64,
@@ -931,12 +937,12 @@ fn compute_layout(
     );
     let canvas = Canvas::new(canvas_height, canvas_width);
     let (mut width, mut height) = (terminal_width, terminal_height);
-    let (column_offset, row_offset) = if !config.ignore_terminal_dimensions {
-        calc_canvas_offsets(config, &canvas, width, height)
-    } else {
+    let (column_offset, row_offset) = if config.ignore_terminal_dimensions {
         width = canvas.right;
         height = canvas.top;
         (0, 0)
+    } else {
+        calc_canvas_offsets(config, &canvas, width, height)
     };
     Layout {
         canvas_height,
@@ -950,40 +956,40 @@ fn compute_layout(
     }
 }
 
-/// Terminal._get_canvas_dimensions -> (height, width).
+/// Terminal._`get_canvas_dimensions` -> (height, width).
 fn get_canvas_dimensions(
     config: &TerminalConfig,
     line_lengths: &[i64],
     terminal_width: i64,
     terminal_height: i64,
 ) -> (i64, i64) {
-    let canvas_width = if config.canvas_width > 0 {
-        config.canvas_width
-    } else if config.canvas_width == 0 {
-        terminal_width
-    } else {
-        let input_width = line_lengths.iter().copied().max().unwrap_or(0);
-        if config.ignore_terminal_dimensions {
-            input_width
-        } else {
-            std::cmp::min(terminal_width, input_width)
+    let canvas_width = match config.canvas_width.cmp(&0) {
+        std::cmp::Ordering::Greater => config.canvas_width,
+        std::cmp::Ordering::Equal => terminal_width,
+        std::cmp::Ordering::Less => {
+            let input_width = line_lengths.iter().copied().max().unwrap_or(0);
+            if config.ignore_terminal_dimensions {
+                input_width
+            } else {
+                std::cmp::min(terminal_width, input_width)
+            }
         }
     };
-    let canvas_height = if config.canvas_height > 0 {
-        config.canvas_height
-    } else if config.canvas_height == 0 {
-        terminal_height
-    } else {
-        let input_height = line_lengths.len() as i64;
-        if config.ignore_terminal_dimensions {
-            input_height
-        } else if config.wrap_text {
-            std::cmp::min(
-                wrapped_line_count(line_lengths, canvas_width),
-                terminal_height,
-            )
-        } else {
-            std::cmp::min(terminal_height, input_height)
+    let canvas_height = match config.canvas_height.cmp(&0) {
+        std::cmp::Ordering::Greater => config.canvas_height,
+        std::cmp::Ordering::Equal => terminal_height,
+        std::cmp::Ordering::Less => {
+            let input_height = line_lengths.len() as i64;
+            if config.ignore_terminal_dimensions {
+                input_height
+            } else if config.wrap_text {
+                std::cmp::min(
+                    wrapped_line_count(line_lengths, canvas_width),
+                    terminal_height,
+                )
+            } else {
+                std::cmp::min(terminal_height, input_height)
+            }
         }
     };
     (canvas_height, canvas_width)
@@ -1002,7 +1008,7 @@ fn wrapped_line_count(line_lengths: &[i64], width: i64) -> i64 {
     count
 }
 
-/// Terminal._wrap_lines.
+/// Terminal._`wrap_lines`.
 fn wrap_lines(lines: Vec<Vec<CharId>>, width: i64) -> Vec<Vec<CharId>> {
     let mut wrapped: Vec<Vec<CharId>> = Vec::new();
     for line in lines {
@@ -1017,19 +1023,22 @@ fn wrap_lines(lines: Vec<Vec<CharId>>, width: i64) -> Vec<Vec<CharId>> {
     wrapped
 }
 
-fn calc_canvas_offsets(
+const fn calc_canvas_offsets(
     config: &TerminalConfig,
     canvas: &Canvas,
     terminal_width: i64,
     terminal_height: i64,
 ) -> (i64, i64) {
-    use crate::{engine::canvas::Anchor::*, utils::pycompat::floor_div};
+    use crate::{
+        engine::canvas::Anchor::{C, E, N, Ne, Nw, S, Se, W},
+        utils::pycompat::floor_div,
+    };
     let mut column_offset = 0;
     let mut row_offset = 0;
     match config.anchor_canvas {
         S | N | C => {
             column_offset =
-                floor_div(terminal_width, 2) - floor_div(canvas.width, 2)
+                floor_div(terminal_width, 2) - floor_div(canvas.width, 2);
         }
         Se | E | Ne => column_offset = terminal_width - canvas.width,
         _ => {}
@@ -1037,7 +1046,7 @@ fn calc_canvas_offsets(
     match config.anchor_canvas {
         W | E | C => {
             row_offset =
-                floor_div(terminal_height, 2) - floor_div(canvas.height, 2)
+                floor_div(terminal_height, 2) - floor_div(canvas.height, 2);
         }
         Nw | N | Ne => row_offset = terminal_height - canvas.height,
         _ => {}
@@ -1045,7 +1054,7 @@ fn calc_canvas_offsets(
     (column_offset, row_offset)
 }
 
-/// Terminal._setup_input_characters: wrap, assign 1-based bottom-up coords,
+/// Terminal._`setup_input_characters`: wrap, assign 1-based bottom-up coords,
 /// drop plain spaces (they become fill), anchor, and keep in-canvas chars.
 fn setup_input_characters(
     config: &TerminalConfig,
@@ -1086,7 +1095,7 @@ mod tests {
         utils::rng::Rng,
     };
 
-    /// frame_cells must expose the same rows the ANSI output string emits
+    /// `frame_cells` must expose the same rows the ANSI output string emits
     /// (row 0 = bottom), with a cell per visible column.
     #[test]
     fn frame_cells_layout_matches_input_grid() {

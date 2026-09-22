@@ -1,5 +1,5 @@
 //! Shared primitives for the dotted 3D thought-orbs.
-//! Ported from thinking-orbs / inkform (HalftoneSphere lineage).
+//! Ported from thinking-orbs / inkform (`HalftoneSphere` lineage).
 
 use std::{cell::RefCell, f32::consts::PI};
 
@@ -27,7 +27,8 @@ pub struct Dot {
 }
 
 impl Dot {
-    pub fn new(x: f32, y: f32, z: f32, r: f32, white: f32) -> Self {
+    #[must_use]
+    pub const fn new(x: f32, y: f32, z: f32, r: f32, white: f32) -> Self {
         Self {
             x,
             y,
@@ -38,7 +39,8 @@ impl Dot {
         }
     }
 
-    pub fn with_a(mut self, a: f32) -> Self {
+    #[must_use]
+    pub const fn with_a(mut self, a: f32) -> Self {
         self.a = a;
         self
     }
@@ -64,6 +66,7 @@ pub struct Frame {
 }
 
 impl Frame {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -95,18 +98,23 @@ pub struct Proj {
 
 impl Proj {
     #[inline]
+    #[must_use]
     pub fn project(&self, x: f32, y: f32, z: f32) -> (f32, f32, f32) {
-        let x1 = x * self.cyw + z * self.sy;
-        let z1 = -x * self.sy + z * self.cyw;
-        let y1 = y * self.ct - z1 * self.st;
-        let z2 = y * self.st + z1 * self.ct;
-        (self.cx + x1 * self.scale, self.cy - y1 * self.scale, z2)
+        let x1 = z.mul_add(self.sy, x * self.cyw);
+        let z1 = z.mul_add(self.cyw, -x * self.sy);
+        let y1 = z1.mul_add(-self.st, y * self.ct);
+        let z2 = z1.mul_add(self.ct, y * self.st);
+        (
+            x1.mul_add(self.scale, self.cx),
+            y1.mul_add(-self.scale, self.cy),
+            z2,
+        )
     }
 }
 
 #[inline]
 pub(super) fn lerp(a: f32, b: f32, f: f32) -> f32 {
-    a + (b - a) * f
+    (b - a).mul_add(f, a)
 }
 
 #[inline]
@@ -123,7 +131,7 @@ pub(super) fn frac(x: f32) -> f32 {
 #[inline]
 #[allow(clippy::excessive_precision)]
 pub(super) fn hash_d(a: f32, b: f32) -> f32 {
-    let h = (a * 12.9898 + b * 78.233).sin() * 43758.5453;
+    let h = b.mul_add(78.233, a * 12.9898).sin() * 43758.5453;
     h - h.floor()
 }
 
@@ -133,20 +141,21 @@ pub(super) fn vnoise(x: f32, y: f32) -> f32 {
     let yi = y.floor();
     let mut fx = x - xi;
     let mut fy = y - yi;
-    fx = fx * fx * (3.0 - 2.0 * fx);
-    fy = fy * fy * (3.0 - 2.0 * fy);
+    fx = fx * fx * 2.0f32.mul_add(-fx, 3.0);
+    fy = fy * fy * 2.0f32.mul_add(-fy, 3.0);
     let a = hash_d(xi, yi);
     let b = hash_d(xi + 1.0, yi);
     let c = hash_d(xi, yi + 1.0);
     let d = hash_d(xi + 1.0, yi + 1.0);
-    a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy
+    ((a - b - c + d) * fx)
+        .mul_add(fy, (c - a).mul_add(fy, (b - a).mul_add(fx, a)))
 }
 
 /// Stable directions on a unit sphere (Fibonacci lattice).
 pub(super) fn fib_dir(i: usize, n: usize) -> (f32, f32, f32) {
     let golden = PI * (3.0 - 5.0_f32.sqrt());
     let y = 1.0 - (2.0 * (i as f32 + 0.5)) / n as f32;
-    let rad = (1.0 - y * y).sqrt();
+    let rad = y.mul_add(-y, 1.0).sqrt();
     let a = i as f32 * golden;
     (rad * a.cos(), y, rad * a.sin())
 }
@@ -162,10 +171,7 @@ pub(super) fn with_fib_dirs<R>(n: usize, f: impl FnOnce(&[Vec3]) -> R) -> R {
         }
         let directions = cache[n].get_or_insert_with(|| {
             (0..n)
-                .map(|i| {
-                    let (x, y, z) = fib_dir(i, n);
-                    [x, y, z]
-                })
+                .map(|i| fib_dir(i, n).into())
                 .collect::<Vec<_>>()
                 .into_boxed_slice()
         });
@@ -202,6 +208,7 @@ pub(super) fn angle_delta(a: f32, b: f32) -> f32 {
 }
 
 /// Shared spin + tilt + orthographic projection.
+#[must_use]
 pub fn make_proj(yaw: f32, tilt: f32, cx: f32, cy: f32, scale: f32) -> Proj {
     Proj {
         st: tilt.sin(),

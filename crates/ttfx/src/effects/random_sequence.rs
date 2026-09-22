@@ -1,4 +1,4 @@
-//! randomsequence, ported from effects/effect_random_sequence.py.
+//! randomsequence, ported from `effects/effect_random_sequence.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -62,8 +62,9 @@ pub struct RandomSequence {
 const DYNAMIC_NEUTRAL_GRAY: &str = "808080";
 
 impl RandomSequence {
+    #[must_use]
     pub fn new(config: RandomSequenceConfig) -> Self {
-        RandomSequence {
+        Self {
             config,
             pending_chars: Vec::new(),
             character_final_color_map: FxHashMap::default(),

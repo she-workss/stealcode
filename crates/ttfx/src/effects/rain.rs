@@ -1,4 +1,4 @@
-//! rain, ported from effects/effect_rain.py.
+//! rain, ported from `effects/effect_rain.py`.
 
 use std::collections::BTreeMap;
 
@@ -95,8 +95,9 @@ pub struct Rain {
 }
 
 impl Rain {
+    #[must_use]
     pub fn new(config: RainConfig) -> Self {
-        Rain {
+        Self {
             config,
             pending_chars: Vec::new(),
             group_by_row: BTreeMap::new(),

@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Waveform {
     Sine,
     Square,
@@ -35,7 +35,7 @@ impl Default for ToneLayer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterType {
     LowPass,
     BandPass,
@@ -73,24 +73,27 @@ pub enum SoundLayer {
 }
 
 impl SoundLayer {
-    pub fn offset(&self) -> f32 {
+    #[must_use]
+    pub const fn offset(&self) -> f32 {
         match self {
-            SoundLayer::Tone(t) => t.offset,
-            SoundLayer::Noise(n) => n.offset,
+            Self::Tone(t) => t.offset,
+            Self::Noise(n) => n.offset,
         }
     }
 
-    pub fn attack(&self) -> f32 {
+    #[must_use]
+    pub const fn attack(&self) -> f32 {
         match self {
-            SoundLayer::Tone(t) => t.attack,
-            SoundLayer::Noise(n) => n.attack,
+            Self::Tone(t) => t.attack,
+            Self::Noise(n) => n.attack,
         }
     }
 
-    pub fn decay(&self) -> f32 {
+    #[must_use]
+    pub const fn decay(&self) -> f32 {
         match self {
-            SoundLayer::Tone(t) => t.decay,
-            SoundLayer::Noise(n) => n.decay,
+            Self::Tone(t) => t.decay,
+            Self::Noise(n) => n.decay,
         }
     }
 }
@@ -132,52 +135,54 @@ pub enum SoundName {
 }
 
 impl SoundName {
-    pub const ALL: [SoundName; 17] = [
-        SoundName::Chime,
-        SoundName::Sparkle,
-        SoundName::Droplet,
-        SoundName::Bloom,
-        SoundName::Whisper,
-        SoundName::Tick,
-        SoundName::Press,
-        SoundName::Release,
-        SoundName::Toggle,
-        SoundName::Success,
-        SoundName::Error,
-        SoundName::Page,
-        SoundName::Loading,
-        SoundName::Ready,
-        SoundName::Pulse,
-        SoundName::Scan,
-        SoundName::Arrival,
+    pub const ALL: [Self; 17] = [
+        Self::Chime,
+        Self::Sparkle,
+        Self::Droplet,
+        Self::Bloom,
+        Self::Whisper,
+        Self::Tick,
+        Self::Press,
+        Self::Release,
+        Self::Toggle,
+        Self::Success,
+        Self::Error,
+        Self::Page,
+        Self::Loading,
+        Self::Ready,
+        Self::Pulse,
+        Self::Scan,
+        Self::Arrival,
     ];
 
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            SoundName::Chime => "chime",
-            SoundName::Sparkle => "sparkle",
-            SoundName::Droplet => "droplet",
-            SoundName::Bloom => "bloom",
-            SoundName::Whisper => "whisper",
-            SoundName::Tick => "tick",
-            SoundName::Press => "press",
-            SoundName::Release => "release",
-            SoundName::Toggle => "toggle",
-            SoundName::Success => "success",
-            SoundName::Error => "error",
-            SoundName::Page => "page",
-            SoundName::Loading => "loading",
-            SoundName::Ready => "ready",
-            SoundName::Pulse => "pulse",
-            SoundName::Scan => "scan",
-            SoundName::Arrival => "arrival",
+            Self::Chime => "chime",
+            Self::Sparkle => "sparkle",
+            Self::Droplet => "droplet",
+            Self::Bloom => "bloom",
+            Self::Whisper => "whisper",
+            Self::Tick => "tick",
+            Self::Press => "press",
+            Self::Release => "release",
+            Self::Toggle => "toggle",
+            Self::Success => "success",
+            Self::Error => "error",
+            Self::Page => "page",
+            Self::Loading => "loading",
+            Self::Ready => "ready",
+            Self::Pulse => "pulse",
+            Self::Scan => "scan",
+            Self::Arrival => "arrival",
         }
     }
 
+    #[must_use]
     pub fn recipe(self) -> SoundRecipe {
-        use SoundLayer::*;
+        use SoundLayer::{Noise, Tone};
         match self {
-            SoundName::Chime => SoundRecipe {
+            Self::Chime => SoundRecipe {
                 master_gain: 0.5,
                 layers: vec![
                     Tone(ToneLayer {
@@ -203,7 +208,7 @@ impl SoundName {
                     lowpass: 4000.0,
                 }),
             },
-            SoundName::Sparkle => SoundRecipe {
+            Self::Sparkle => SoundRecipe {
                 master_gain: 0.5,
                 layers: vec![
                     Tone(ToneLayer {
@@ -245,7 +250,7 @@ impl SoundName {
                     lowpass: 6000.0,
                 }),
             },
-            SoundName::Droplet => SoundRecipe {
+            Self::Droplet => SoundRecipe {
                 master_gain: 0.55,
                 layers: vec![Tone(ToneLayer {
                     frequency: 1200.0,
@@ -263,7 +268,7 @@ impl SoundName {
                     lowpass: 3000.0,
                 }),
             },
-            SoundName::Bloom => SoundRecipe {
+            Self::Bloom => SoundRecipe {
                 master_gain: 0.5,
                 layers: vec![
                     Tone(ToneLayer {
@@ -289,7 +294,7 @@ impl SoundName {
                     lowpass: 2500.0,
                 }),
             },
-            SoundName::Whisper => SoundRecipe {
+            Self::Whisper => SoundRecipe {
                 master_gain: 0.48,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -314,7 +319,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Tick => SoundRecipe {
+            Self::Tick => SoundRecipe {
                 master_gain: 0.4,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -336,7 +341,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Press => SoundRecipe {
+            Self::Press => SoundRecipe {
                 master_gain: 0.4,
                 layers: vec![Noise(NoiseLayer {
                     filter_type: FilterType::BandPass,
@@ -349,7 +354,7 @@ impl SoundName {
                 })],
                 shimmer: None,
             },
-            SoundName::Release => SoundRecipe {
+            Self::Release => SoundRecipe {
                 master_gain: 0.4,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -372,7 +377,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Toggle => SoundRecipe {
+            Self::Toggle => SoundRecipe {
                 master_gain: 0.4,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -392,12 +397,11 @@ impl SoundName {
                         attack: 0.001,
                         decay: 0.02,
                         peak: 0.1,
-                        ..Default::default()
                     }),
                 ],
                 shimmer: None,
             },
-            SoundName::Success => SoundRecipe {
+            Self::Success => SoundRecipe {
                 master_gain: 0.5,
                 layers: vec![
                     Tone(ToneLayer {
@@ -431,7 +435,7 @@ impl SoundName {
                     lowpass: 4500.0,
                 }),
             },
-            SoundName::Error => SoundRecipe {
+            Self::Error => SoundRecipe {
                 master_gain: 0.42,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -464,7 +468,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Page => SoundRecipe {
+            Self::Page => SoundRecipe {
                 master_gain: 0.38,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -484,7 +488,6 @@ impl SoundName {
                         attack: 0.004,
                         decay: 0.065,
                         peak: 0.08,
-                        ..Default::default()
                     }),
                     Tone(ToneLayer {
                         frequency: 2400.0,
@@ -497,7 +500,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Loading => SoundRecipe {
+            Self::Loading => SoundRecipe {
                 master_gain: 0.42,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -526,7 +529,7 @@ impl SoundName {
                     lowpass: 2800.0,
                 }),
             },
-            SoundName::Ready => SoundRecipe {
+            Self::Ready => SoundRecipe {
                 master_gain: 0.48,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -565,7 +568,7 @@ impl SoundName {
                     lowpass: 4200.0,
                 }),
             },
-            SoundName::Pulse => SoundRecipe {
+            Self::Pulse => SoundRecipe {
                 master_gain: 0.42,
                 layers: vec![
                     Noise(NoiseLayer {
@@ -590,7 +593,7 @@ impl SoundName {
                 ],
                 shimmer: None,
             },
-            SoundName::Scan => SoundRecipe {
+            Self::Scan => SoundRecipe {
                 master_gain: 0.4,
                 layers: vec![
                     Tone(ToneLayer {
@@ -624,7 +627,7 @@ impl SoundName {
                     lowpass: 4200.0,
                 }),
             },
-            SoundName::Arrival => SoundRecipe {
+            Self::Arrival => SoundRecipe {
                 master_gain: 0.44,
                 layers: vec![
                     Noise(NoiseLayer {

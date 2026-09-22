@@ -1,4 +1,4 @@
-//! sweep, ported from effects/effect_sweep.py.
+//! sweep, ported from `effects/effect_sweep.py`.
 
 use rustc_hash::FxHashMap;
 
@@ -79,19 +79,20 @@ pub struct Sweep {
     complete: bool,
     first_phase: bool,
     easer: Option<SequenceEaser<Vec<CharId>>>,
-    groups_second_sweep: Vec<Vec<CharId>>,
+    second_sweep_groups: Vec<Vec<CharId>>,
 }
 
 impl Sweep {
+    #[must_use]
     pub fn new(config: SweepConfig) -> Self {
-        Sweep {
+        Self {
             config,
             character_final_color_map: FxHashMap::default(),
             dynamic_second_sweep_palette: Vec::new(),
             complete: false,
             first_phase: true,
             easer: None,
-            groups_second_sweep: Vec::new(),
+            second_sweep_groups: Vec::new(),
         }
     }
 }
@@ -142,8 +143,8 @@ impl Effect for Sweep {
                 }
             }
             if self.dynamic_second_sweep_palette.is_empty() {
-                self.dynamic_second_sweep_palette =
-                    final_fg_gradient.spectrum.clone();
+                self.dynamic_second_sweep_palette
+                    .clone_from(&final_fg_gradient.spectrum);
             }
         }
 
@@ -297,7 +298,7 @@ impl Effect for Sweep {
             Easing::InOutCirc,
             100,
         ));
-        self.groups_second_sweep = ctx.terminal.get_characters_grouped(
+        self.second_sweep_groups = ctx.terminal.get_characters_grouped(
             fills_filter,
             self.config.second_sweep_direction,
         );
@@ -326,7 +327,7 @@ impl Effect for Sweep {
             }
             let easer_complete = easer.is_complete();
             if easer_complete && self.first_phase {
-                easer.sequence = std::mem::take(&mut self.groups_second_sweep);
+                easer.sequence = std::mem::take(&mut self.second_sweep_groups);
                 easer.reset();
                 self.first_phase = false;
             } else if easer_complete && !self.first_phase {

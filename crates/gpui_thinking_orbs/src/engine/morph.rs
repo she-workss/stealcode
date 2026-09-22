@@ -18,11 +18,11 @@ const SQUARE: [(f32, f32); 4] =
     [(0.0, -0.2), (0.2, -0.2), (0.2, 0.2), (-0.2, 0.2)];
 
 fn smooth_e(x: f32) -> f32 {
-    x * x * (3.0 - 2.0 * x)
+    x * x * 2.0f32.mul_add(-x, 3.0)
 }
 
 fn circle_path(f: f32) -> (f32, f32) {
-    let a = -PI / 2.0 + f * 2.0 * PI;
+    let a = (f * 2.0).mul_add(PI, -PI / 2.0);
     (a.cos() * 0.24, a.sin() * 0.24)
 }
 
@@ -72,7 +72,7 @@ impl PolyPath {
         } else {
             0.0
         };
-        (a.0 + (b.0 - a.0) * ff, a.1 + (b.1 - a.1) * ff)
+        ((b.0 - a.0).mul_add(ff, a.0), (b.1 - a.1).mul_add(ff, a.1))
     }
 }
 
@@ -84,8 +84,8 @@ enum Shape {
 impl Shape {
     fn at(&self, f: f32) -> (f32, f32) {
         match self {
-            Shape::Circle => circle_path(f),
-            Shape::Poly(p) => p.at(f),
+            Self::Circle => circle_path(f),
+            Self::Poly(p) => p.at(f),
         }
     }
 }
@@ -113,7 +113,7 @@ pub(super) fn draw_morph_into(
     let k_len = cycle.len();
     let tc = t.rem_euclid(SEG * k_len as f32);
     let k = ((tc / SEG).floor() as usize).min(k_len - 1);
-    let local = tc - k as f32 * SEG;
+    let local = (k as f32).mul_add(-SEG, tc);
     let m = if local > HOLD {
         smooth_e((local - HOLD) / MORPH)
     } else {
@@ -133,8 +133,8 @@ pub(super) fn draw_morph_into(
         let a = p_a.at(f);
         let b = p_b.at(f);
         *p = (
-            (a.0 + (b.0 - a.0) * m) * sprd,
-            (a.1 + (b.1 - a.1) * m) * sprd,
+            (b.0 - a.0).mul_add(m, a.0) * sprd,
+            (b.1 - a.1).mul_add(m, a.1) * sprd,
         );
     }
     let mut total = 0.0f32;
@@ -148,7 +148,7 @@ pub(super) fn draw_morph_into(
 
     let n = morph_n(o.icon_d.unwrap_or(1.0));
     let re = o.r_dot.unwrap_or(0.021) * 1.35 * sprd;
-    let pulse = 1.0 + 0.018 * (t * 2.35).sin();
+    let pulse = 0.018f32.mul_add((t * 2.35).sin(), 1.0);
 
     let dots = &mut out.dots;
     dots.reserve(n);
@@ -171,8 +171,14 @@ pub(super) fn draw_morph_into(
         } else {
             0.0
         };
-        let x = (a.0 + (b.0 - a.0) * f) * pulse;
-        let y = (a.1 + (b.1 - a.1) * f) * pulse;
-        dots.push(Dot::new(c2 + x * size, c2 + y * size, 0.0, radius, 0.1));
+        let x = f32::mul_add(b.0 - a.0, f, a.0) * pulse;
+        let y = f32::mul_add(b.1 - a.1, f, a.1) * pulse;
+        dots.push(Dot::new(
+            x.mul_add(size, c2),
+            y.mul_add(size, c2),
+            0.0,
+            radius,
+            0.1,
+        ));
     }
 }

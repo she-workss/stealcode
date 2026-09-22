@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap;
 const INDEX_THRESHOLD: usize = 8;
 const NO_CACHED_LOOKUP: usize = usize::MAX;
 
-/// Keys are shared so that long-lived handles (Motion::active_path,
-/// Animation::active_scene) can hold the map's own key allocation; lookups
+/// Keys are shared so that long-lived handles (`Motion::active_path`,
+/// `Animation::active_scene`) can hold the map's own key allocation; lookups
 /// then settle on a pointer compare instead of a memcmp.
 #[derive(Debug, Clone)]
 pub struct OrderedMap<V> {
@@ -27,19 +27,20 @@ fn same_allocation(entry: &str, key: &str) -> bool {
 }
 
 impl<V> OrderedMap<V> {
-    pub fn new() -> Self {
-        OrderedMap {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
             entries: Vec::new(),
             index: None,
             last_lookup: Cell::new(NO_CACHED_LOOKUP),
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 

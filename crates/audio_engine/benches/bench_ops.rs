@@ -2,7 +2,7 @@
 //! conv / matvec helpers vs their scalar references, at the streaming
 //! encoder shapes.
 //!
-//!   cargo bench -p audio_engine --bench bench_ops
+//!   cargo bench -p `audio_engine` --bench `bench_ops`
 //!
 //! Kernel order within a group is fixed (simd first, then scalar): on
 //! this thermally-drifting machine the first benches run on the
@@ -50,7 +50,7 @@ fn bench_ln(c: &mut Criterion) {
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
@@ -62,12 +62,12 @@ fn bench_ln(c: &mut Criterion) {
                         / D as f32;
                 let inv = 1.0 / (var + 1e-5).sqrt();
                 for i in 0..D {
-                    out[i] = (x[i] - mean) * inv * w[i] + b[i];
+                    out[i] = ((x[i] - mean) * inv).mul_add(w[i], b[i]);
                 }
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -82,18 +82,18 @@ fn bench_silu(c: &mut Criterion) {
             || v_ref.clone(),
             |mut v| silu_into(black_box(&mut v)),
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
             || v_ref.clone(),
             |mut v| {
-                for x in v.iter_mut() {
+                for x in &mut v {
                     *x = *x * (1.0 + (-*x).exp()).recip();
                 }
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     black_box(&mut v);
     group.finish();
@@ -111,7 +111,7 @@ fn bench_glu(c: &mut Criterion) {
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
@@ -127,7 +127,7 @@ fn bench_glu(c: &mut Criterion) {
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -152,22 +152,22 @@ fn bench_score(c: &mut Criterion) {
                 black_box(&pos),
                 0.125,
             )
-        })
+        });
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
             || (),
-            |_| {
+            |()| {
                 let mut acc = 0.0f32;
                 for i in 0..HEAD_DIM {
                     let qui = qu[i] + uh[i];
                     let qvi = qv[i] + vh[i];
-                    acc += qui * kk[i] + qvi * pos[i];
+                    acc += qvi.mul_add(pos[i], qui * kk[i]);
                 }
                 black_box(acc * 0.125);
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -179,7 +179,7 @@ fn bench_softmax(c: &mut Criterion) {
     let v: Vec<f32> = (0..BAND * HEAD_DIM)
         .map(|i| ((i * 23) % 67) as f32 / 37.0 - 0.5)
         .collect();
-    let out = vec![0.0f32; HEAD_DIM];
+    let _out = vec![0.0f32; HEAD_DIM];
     let v_at = |i: usize| &v[i * HEAD_DIM..(i + 1) * HEAD_DIM];
     let mut group = c.benchmark_group("softmax_61x64");
     group.throughput(Throughput::Elements((BAND * HEAD_DIM) as u64));
@@ -193,41 +193,40 @@ fn bench_softmax(c: &mut Criterion) {
                     BAND,
                     N_HEADS,
                     0,
-                    &v_at,
+                    v_at,
                     HEAD_DIM,
                     &mut out,
                 );
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
             || vec![0.0f32; HEAD_DIM],
             |mut out| {
                 let mut maxv = f32::NEG_INFINITY;
-                for kk in 0..BAND {
-                    maxv = maxv.max(srow[kk]);
+                for &v in srow.iter().take(BAND) {
+                    maxv = maxv.max(v);
                 }
                 let mut sum = 0.0f32;
-                for kk in 0..BAND {
-                    sum += (srow[kk] - maxv).exp();
+                for &v in srow.iter().take(BAND) {
+                    sum += (v - maxv).exp();
                 }
                 let inv = 1.0 / sum;
                 for j in 0..HEAD_DIM {
                     let mut acc = 0.0f32;
                     for kk in 0..BAND {
-                        acc += (srow[kk] - maxv).exp()
-                            * inv
-                            * v[kk * HEAD_DIM + j];
+                        acc = ((srow[kk] - maxv).exp() * inv)
+                            .mul_add(v[kk * HEAD_DIM + j], acc);
                     }
                     out[j] = acc;
                 }
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -257,7 +256,7 @@ fn bench_dwconv(c: &mut Criterion) {
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
@@ -272,7 +271,8 @@ fn bench_dwconv(c: &mut Criterion) {
                             if ti < 0 || ti as usize >= t {
                                 continue;
                             }
-                            acc += x[ti as usize * D + c] * w[c * kh + k];
+                            acc = x[ti as usize * D + c]
+                                .mul_add(w[c * kh + k], acc);
                         }
                         out[ot * D + c] = acc;
                     }
@@ -280,7 +280,7 @@ fn bench_dwconv(c: &mut Criterion) {
                 black_box(out.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -290,7 +290,7 @@ fn bench_matvec(c: &mut Criterion) {
     let out = 256;
     let f = make(inp * out);
     let x = make(inp);
-    let mut y = vec![0.0f32; out];
+    let _y = vec![0.0f32; out];
     let mut group = c.benchmark_group("matvec_768x256");
     group.throughput(Throughput::Elements((inp * out) as u64));
     group.bench_function("simd", |be| {
@@ -301,7 +301,7 @@ fn bench_matvec(c: &mut Criterion) {
                 black_box(y.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
@@ -311,14 +311,14 @@ fn bench_matvec(c: &mut Criterion) {
                     let row = &f[j * inp..(j + 1) * inp];
                     let mut acc = 0.0f32;
                     for i in 0..inp {
-                        acc += row[i] * x[i];
+                        acc = row[i].mul_add(x[i], acc);
                     }
                     y[j] = acc;
                 }
                 black_box(y.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -337,7 +337,7 @@ fn bench_transpose(c: &mut Criterion) {
                 black_box(y.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.bench_function("scalar", |be| {
         be.iter_batched(
@@ -351,7 +351,7 @@ fn bench_transpose(c: &mut Criterion) {
                 black_box(y.iter().copied().sum::<f32>())
             },
             BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }

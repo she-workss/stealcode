@@ -1,10 +1,17 @@
 //! Regenerates the canonical geometry golden lines in Rust and diffs against
-//! the CPython-generated fixture (tools/goldens/gen_geometry.py).
+//! the CPython-generated fixture (`tools/goldens/gen_geometry.py`).
 
 use ttfx::utils::geometry::{self, Coord};
 
+#[allow(clippy::format_collect)] // clearest form for a fixed-width byte hex dump
 fn fbits(x: f64) -> String {
     x.to_le_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn byte_hex_dump_is_lowercase_hex() {
+    assert_eq!(fbits(0.0), "0000000000000000");
+    assert_eq!(fbits(1.0), "000000000000f03f");
 }
 
 fn coords(cs: &[Coord]) -> String {

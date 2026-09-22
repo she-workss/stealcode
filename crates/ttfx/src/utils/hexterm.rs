@@ -54,7 +54,8 @@ fn closest_xterm([r, g, b]: Rgb) -> u8 {
 
 /// Closest xterm-256 code by mean absolute channel difference; linear scan over
 /// codes 0..=255 in order, strict `<` so the first minimum wins (upstream
-/// hexterm.py hex_to_xterm).
+/// hexterm.py `hex_to_xterm`).
+#[must_use]
 pub fn hex_to_xterm(hex_color: &str) -> u8 {
     let rgb = parse_rgb(hex_color);
     let key = u32::from_be_bytes([0, rgb[0], rgb[1], rgb[2]]);
@@ -69,13 +70,15 @@ pub fn hex_to_xterm(hex_color: &str) -> u8 {
 }
 
 /// xterm code -> hex string without leading '#'.
-pub fn xterm_to_hex(xterm_color: u8) -> &'static str {
+#[must_use]
+pub const fn xterm_to_hex(xterm_color: u8) -> &'static str {
     XTERM_TO_HEX[xterm_color as usize]
 }
 
-/// Upstream is_valid_color for strings: 6 (or, faithfully, 7) hex digits with
+/// Upstream `is_valid_color` for strings: 6 (or, faithfully, 7) hex digits with
 /// optional leading '#'s. Integer codes are validated by range at the type
 /// level (u8).
+#[must_use]
 pub fn is_valid_hex_color(color: &str) -> bool {
     let stripped_len = color.trim_start_matches('#').len();
     if stripped_len != 6 && stripped_len != 7 {

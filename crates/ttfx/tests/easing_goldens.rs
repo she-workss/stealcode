@@ -1,6 +1,6 @@
 //! Bit-exact comparison of every easing function against CPython-generated
-//! goldens (tools/goldens/gen_easing.py). A mismatch prints the first diverging
-//! sample with both bit patterns.
+//! goldens (`tools/goldens/gen_easing.py`). A mismatch prints the first
+//! diverging sample with both bit patterns.
 
 use ttfx::utils::easing::Easing;
 
@@ -71,12 +71,8 @@ fn easing_matches_python_bit_exactly() {
                     // builds LLVM const-folds some powf
                     // calls, which can differ from
                     // runtime libm by an ulp.
-                    let tolerance = if matches!(easing, Easing::CubicBezier(..))
-                    {
-                        1
-                    } else {
-                        0
-                    };
+                    let tolerance =
+                        u64::from(matches!(easing, Easing::CubicBezier(..)));
                     actual.to_bits().abs_diff(expected.to_bits()) <= tolerance
                 } else {
                     (actual - expected).abs() <= 1e-15
