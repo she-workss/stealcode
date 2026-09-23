@@ -28,7 +28,7 @@ impl std::fmt::Debug for GpuContext {
             .field("adapter", &self.adapter_info.name)
             .field("backend", &self.adapter_info.backend)
             .field("f16", &self.f16)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -40,7 +40,7 @@ impl GpuContext {
     /// Uses a high-performance (discrete) adapter when present. f16
     /// (`Features::SHADER_F16`) is requested opportunistically - if the
     /// adapter lacks it the context is still created and `f16` is false.
-    pub fn init() -> Option<GpuContext> {
+    pub fn init() -> Option<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -76,7 +76,7 @@ impl GpuContext {
             "voice/gpu: adapter={} backend={:?} f16={f16}",
             adapter_info.name, adapter_info.backend
         );
-        Some(GpuContext {
+        Some(Self {
             device: Arc::new(device),
             queue,
             adapter_info,
@@ -86,7 +86,8 @@ impl GpuContext {
         })
     }
 
-    pub fn supports_f16(&self) -> bool {
+    #[must_use]
+    pub const fn supports_f16(&self) -> bool {
         self.f16
     }
 
@@ -106,6 +107,7 @@ impl GpuContext {
     }
 
     /// Build a compute pipeline from a module and bind-group layout.
+    #[must_use]
     pub fn pipeline(
         &self,
         label: &str,
@@ -126,18 +128,21 @@ impl GpuContext {
                 layout: Some(&pl),
                 module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(
+                ),
                 cache: None,
             })
     }
 
     /// Create a GPU buffer for compute usage (bytes -> storage).
+    #[must_use]
     pub fn storage_buffer(&self, label: &str, size: u64) -> wgpu::Buffer {
         self.create_buffer(label, size, wgpu::BufferUsages::STORAGE)
     }
 
     /// Create a GPU buffer usable as a compute input (readable by
     /// shaders) and as a copy destination.
+    #[must_use]
     pub fn create_buffer(
         &self,
         label: &str,
@@ -157,6 +162,7 @@ impl GpuContext {
     /// Uses `queue.write_buffer` (one transient staging buffer per call) -
     /// fine for small buffers; bulk weight uploads use a `StagingBelt`
     /// (see `GpuModel::from_encoder`).
+    #[must_use]
     pub fn upload(
         &self,
         label: &str,
@@ -176,6 +182,7 @@ impl GpuContext {
     /// Copy `size` bytes from `src` into a CPU-visible staging buffer
     /// and map them back, blocking until the copy is done. Used for
     /// parity checks and for the final encoder/decoder readback.
+    #[must_use]
     pub fn download(&self, src: &wgpu::Buffer, size: u64) -> Vec<u8> {
         self.download_many(&[(src.clone(), size)])
             .pop()
@@ -187,6 +194,7 @@ impl GpuContext {
     /// wait - one submission and two device polls total, instead of
     /// per-buffer. Used to pull back all of a batch's persistent
     /// results at once.
+    #[must_use]
     pub fn download_many(&self, bufs: &[(wgpu::Buffer, u64)]) -> Vec<Vec<u8>> {
         let total: u64 = bufs.iter().map(|(_, size)| *size).sum();
         if total == 0 {
@@ -246,7 +254,12 @@ mod tests {
 
     #[test]
     fn gpu_init_and_download() {
-        let ctx = GpuContext::init().expect("no GPU adapter available");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping gpu_init_and_download: no GPU adapter available"
+            );
+            return;
+        };
         // Round-trip a small buffer through the GPU to exercise the
         // upload/download paths.
         let data: [u8; 64] = (0..64u8).collect::<Vec<_>>().try_into().unwrap();

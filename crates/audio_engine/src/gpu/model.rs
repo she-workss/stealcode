@@ -33,7 +33,7 @@ pub struct LinBufs {
     pub k: usize,
 }
 
-/// Host copies of a LayerNorm's affine params (uploaded per op).
+/// Host copies of a `LayerNorm`'s affine params (uploaded per op).
 #[derive(Debug)]
 pub struct NormW {
     pub w: Vec<f32>,

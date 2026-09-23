@@ -2,6 +2,11 @@
 //! optional wgpu GPU backend for the encoder. The app-facing `voice`
 //! service builds on the [`model`] traits.
 
+// wgpu's deeply nested auto-trait chain overflows the trait solver's default
+// recursion limit (`wgpu::Device: Send`); rustc suggests raising the limit
+// (lint `recursion_depth_exceeding_limit`, rust-lang/rust#159228). The chain
+// is deep but finite, so a higher limit resolves it.
+#![recursion_limit = "256"]
 #![feature(portable_simd)]
 #![feature(core_intrinsics)]
 // `core_intrinsics::prefetch_read_data` is used deliberately by the

@@ -4,12 +4,12 @@
 //! per-frame caches (`pre`, per-block outputs, pre-FF2 activations, band
 //! K/V) and the same chunk-aligned attention band, so the output for any
 //! frame equals the offline GPU encode. The heavy per-block work (GEMMs,
-//! LayerNorms, streaming attention, dw conv) runs on the GPU: all of a
+//! `LayerNorms`, streaming attention, dw conv) runs on the GPU: all of a
 //! batch's blocks are recorded into one [`ComputeBatch`] and submitted
 //! once (a block's GPU output feeds the next block in-device), then the
 //! persistent per-block results are pulled back with a single batched
 //! download - one submit + two device polls per batch, instead of one
-//! submit per block. pre_encode and the tiny prompt MLP stay on the CPU
+//! submit per block. `pre_encode` and the tiny prompt MLP stay on the CPU
 //! (convs + 2-layer MLP are small). Caches are host-side for now -
 //! moving them to persistent GPU buffers is a later optimization.
 
@@ -56,11 +56,11 @@ impl BlockKernels {
 pub struct GpuStreamingEncoder {
     kern: BlockKernels,
     model: GpuModel,
-    /// pre_encode output cache.
+    /// `pre_encode` output cache.
     pre: Vec<f32>,
     /// Per-block output caches; `blocks[b]` feeds block `b+1`.
     blocks: Vec<Vec<f32>>,
-    /// Per-block GLU outputs (post LN_conv + pw1) - the dw conv's
+    /// Per-block GLU outputs (post `LN_conv` + pw1) - the dw conv's
     /// causal left context, computed once per frame instead of being
     /// rebuilt from the pre-FF2 activations on every batch (see the CPU
     /// encoder for the rationale).
@@ -71,7 +71,7 @@ pub struct GpuStreamingEncoder {
     v_v: Vec<Vec<f32>>,
     /// Absolute first encoder frame of the band caches.
     kv_lo: usize,
-    /// Per-block attn_pos projections for pos [-3..59] (computed once,
+    /// Per-block `attn_pos` projections for pos [-3..59] (computed once,
     /// time-major `[pos][d]`).
     pos_p: Vec<Vec<f32>>,
     /// Reusable CPU scratch (prompt MLP).
@@ -80,7 +80,7 @@ pub struct GpuStreamingEncoder {
     base: usize,
     /// Total frames in the caches.
     total: usize,
-    /// d_model (set on the first `encode_new`).
+    /// `d_model` (set on the first `encode_new`).
     d: usize,
 }
 
@@ -105,7 +105,8 @@ impl GpuStreamingEncoder {
     }
 
     /// Number of encoder frames currently cached.
-    pub fn total(&self) -> usize {
+    #[must_use]
+    pub const fn total(&self) -> usize {
         self.total
     }
 
@@ -130,6 +131,9 @@ impl GpuStreamingEncoder {
 
     /// Append encoder frames for mel frames `[t0, t1)`, exactly like
     /// `StreamingEncoder::encode_new` but computing each block on the GPU.
+    // Signature mirrors the CPU `StreamEncoder::encode_new` contract; the
+    // arg count is dictated by that shared trait, not by this impl.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_new(
         &mut self,
         enc: &mut Encoder,
@@ -161,7 +165,8 @@ impl GpuStreamingEncoder {
                 self.total
             );
         }
-        let t_enc_offline = |tail: usize| ((tail / 2 + 1) / 2 + 1) / 2 + 1;
+        let t_enc_offline =
+            |tail: usize| (tail / 2).div_ceil(2).div_ceil(2) + 1;
         // Same contract as the CPU encoder: intermediate batches end the
         // cache exactly at their decoded end (`e`), so the next call
         // stays in sync for any batch size; the final tail (`fin`)
@@ -326,28 +331,28 @@ impl GpuStreamingEncoder {
         }
 
         // ---- prompt MLP on the new frames (CPU, like encode) ----
-        if let (Some(mlp), Some(pid)) = (&mut enc.prompt, prompt_id) {
-            if (pid as usize) < num_prompts {
-                let cat_in = d + num_prompts;
-                let mut cat = vec![0.0f32; cat_in * c];
-                for t in 0..c {
-                    cat[t * cat_in..t * cat_in + d]
-                        .copy_from_slice(&out_new[t * d..(t + 1) * d]);
-                    cat[t * cat_in + d + pid as usize] = 1.0;
-                }
-                let xt = transpose(&cat, c, cat_in);
-                let mut h = Vec::new();
-                mlp.mlp0.forward_t(&mut self.scratch, &xt, c, &mut h);
-                for v in &mut h {
-                    *v = v.max(0.0);
-                }
-                let mut y = Vec::new();
-                mlp.mlp2.forward_t(&mut self.scratch, &h, c, &mut y);
-                let y = transpose(&y, d, c);
-                let last = self.blocks.len() - 1;
-                let n = self.blocks[last].len();
-                self.blocks[last][n - c * d..].copy_from_slice(&y);
+        if let (Some(mlp), Some(pid)) = (&mut enc.prompt, prompt_id)
+            && (pid as usize) < num_prompts
+        {
+            let cat_in = d + num_prompts;
+            let mut cat = vec![0.0f32; cat_in * c];
+            for t in 0..c {
+                cat[t * cat_in..t * cat_in + d]
+                    .copy_from_slice(&out_new[t * d..(t + 1) * d]);
+                cat[t * cat_in + d + pid as usize] = 1.0;
             }
+            let xt = transpose(&cat, c, cat_in);
+            let mut h = Vec::new();
+            mlp.mlp0.forward_t(&mut self.scratch, &xt, c, &mut h);
+            for v in &mut h {
+                *v = v.max(0.0);
+            }
+            let mut y = Vec::new();
+            mlp.mlp2.forward_t(&mut self.scratch, &h, c, &mut y);
+            let y = transpose(&y, d, c);
+            let last = self.blocks.len() - 1;
+            let n = self.blocks[last].len();
+            self.blocks[last][n - c * d..].copy_from_slice(&y);
         }
 
         // ---- trim old frames ----
@@ -702,13 +707,11 @@ impl crate::streaming::StreamEncoder for GpuStreamingEncoder {
         prompt_id: Option<u32>,
         fin: bool,
     ) -> anyhow::Result<()> {
-        GpuStreamingEncoder::encode_new(
-            self, enc, mel, n_mels, t0, t1, prompt_id, fin,
-        )
+        Self::encode_new(self, enc, mel, n_mels, t0, t1, prompt_id, fin)
     }
 
     fn frames(&self, from: usize, to: usize) -> anyhow::Result<&[f32]> {
-        GpuStreamingEncoder::frames(self, from, to)
+        Self::frames(self, from, to)
     }
 
     fn total(&self) -> usize {

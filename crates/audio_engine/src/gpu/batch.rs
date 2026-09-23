@@ -21,9 +21,9 @@
 use super::context::GpuContext;
 
 /// Minimum scratch slot allocation (bytes). The largest single activation
-/// in the streaming block is `[band, d]` (64 x 1024 f32 = 256 KiB), but
+/// in the streaming block is `[band, d]` (64 x 1024 f32 = 256 `KiB`), but
 /// slots are aligned modestly because a full batch (all 24 blocks in one
-/// submission) bumps ~700 slots; 64 KiB keeps the pool at ~50 MiB.
+/// submission) bumps ~700 slots; 64 `KiB` keeps the pool at ~50 `MiB`.
 const SLOT_ALIGN: u64 = 64 << 10;
 
 /// One reusable submission: owns the command encoder and a pool of
@@ -47,6 +47,7 @@ pub struct ComputeBatch<'a> {
 }
 
 impl<'a> ComputeBatch<'a> {
+    #[must_use]
     pub fn new(ctx: &'a GpuContext) -> Self {
         Self {
             ctx,

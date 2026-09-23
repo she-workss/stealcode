@@ -39,8 +39,9 @@ pub struct PackedMeta {
 }
 
 /// Pack raw Q8 bytes (one row per `padded_row` bytes, `block_bytes`
-/// 34 for Q8F16 or 36 for Q8_0, scale first) into the GPU layout.
+/// 34 for Q8F16 or 36 for `Q8_0`, scale first) into the GPU layout.
 /// `rows` = weight output rows, `k` = weight input cols.
+#[must_use]
 pub fn pack_q8(
     raw: &[u8],
     rows: usize,
@@ -116,9 +117,10 @@ pub fn q8_gemm_ref(
                 ]);
                 let mut bdot = 0.0f32;
                 for i in 0..32 {
-                    bdot += wval(n, b * 32 + i) as f32 * x[ti * k + b * 32 + i];
+                    bdot = (wval(n, b * 32 + i) as f32)
+                        .mul_add(x[ti * k + b * 32 + i], bdot);
                 }
-                acc += scale * bdot;
+                acc = scale.mul_add(bdot, acc);
             }
             y[ti * rows + n] = acc;
         }
@@ -184,6 +186,8 @@ impl Q8Gemm {
 
     /// `y[t, n] = x[t, k] @ W^T + bias` where `W` is the packed Q8 weight
     /// matrix (n = packed.rows). Blocks until done and returns `y`.
+    // Dispatch wrapper: the args mirror the q8_gemm binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn gemm(
         &mut self,
         packed: &PackedMeta,
@@ -270,6 +274,8 @@ impl Q8Gemm {
 
     /// Record the Q8 GEMM into `batch` (no submit/download). `x` is a
     /// GPU buffer; `out` receives `[t, n]` and must be a scratch slot.
+    // Dispatch wrapper: the args mirror the q8_gemm binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
         batch: &mut ComputeBatch<'_>,
@@ -342,7 +348,8 @@ fn grow_buffer(
     }
 }
 
-/// Compute LayerNorm over rows: `out[t, d] = (x - mean) * rstd * gamma + beta`.
+/// Compute `LayerNorm` over rows: `out[t, d] = (x - mean) * rstd * gamma +
+/// beta`.
 #[derive(Debug)]
 pub struct LayerNormKernel {
     ctx: Arc<GpuContext>,
@@ -490,9 +497,11 @@ impl LayerNormKernel {
         bytes_to_f32(&bytes, count)
     }
 
-    /// Record LayerNorm into `batch`. `x` is a GPU buffer (read from byte
+    /// Record `LayerNorm` into `batch`. `x` is a GPU buffer (read from byte
     /// offset `x_off`); `gamma`/`beta` are host slices (uploaded per op -
     /// tiny); `out` receives `[t, d]`.
+    // Dispatch wrapper: the args mirror the layernorm binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
         batch: &mut ComputeBatch<'_>,
@@ -614,7 +623,7 @@ impl ElementwiseKernel {
     ) -> Vec<f32> {
         let size = (count * 4).max(4) as u64;
         let x_size = (x.len() * 4).max(4) as u64;
-        let y_size = (y.map_or(0, |v| v.len()) * 4).max(4) as u64;
+        let y_size = (y.map_or(0, <[f32]>::len) * 4).max(4) as u64;
         grow_buffer(
             &self.ctx,
             &mut self.x_buf,
@@ -720,6 +729,8 @@ impl ElementwiseKernel {
 
     /// Record one elementwise op into `batch`. `x`/`y` (optional) are GPU
     /// buffers; `out` receives `count` values.
+    // Dispatch wrapper: the args mirror the elementwise binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
         batch: &mut ComputeBatch<'_>,
@@ -873,7 +884,9 @@ impl AttentionKernel {
 
     /// One workgroup per query frame; only supports `head_dim <= 128`.
     /// `left`/`right` define the attention band as in `EncoderConfig`
-    /// (chunk_size = right + 1, left_chunks = left / chunk_size).
+    /// (`chunk_size` = right + 1, `left_chunks` = left / `chunk_size`).
+    // Dispatch wrapper: the args mirror the attention binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &mut self,
         q: &[f32],
@@ -1052,7 +1065,7 @@ const ATTN_STREAM_WGSL: &str = include_str!("shaders/attn_stream.wgsl");
 /// Streaming attention: new query frames (offsets `s..s+c`) scored
 /// against a combined band of frames `kv`/`vv` (absolute frames
 /// `k_lo..k_hi`), with relative position rows `pos_p[qq - fr + pos_off]`.
-/// One workgroup (128 lanes = head_dim) per new frame.
+/// One workgroup (128 lanes = `head_dim`) per new frame.
 #[derive(Debug)]
 pub struct AttnStreamKernel {
     ctx: Arc<GpuContext>,
@@ -1458,6 +1471,8 @@ impl DwConvKernel {
 
     /// Record the causal depthwise conv into `batch`. `x` is a GPU buffer;
     /// `w` is a host slice (`[d, kh]`); `out` receives `[t, d]`.
+    // Dispatch wrapper: the args mirror the dwconv binding layout.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
         batch: &mut ComputeBatch<'_>,
@@ -1493,7 +1508,10 @@ impl DwConvKernel {
     }
 }
 
-fn bind_buffer(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+const fn bind_buffer(
+    binding: u32,
+    read_only: bool,
+) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
@@ -1506,19 +1524,19 @@ fn bind_buffer(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn binding<'a>(
+const fn binding(
     binding: u32,
-    buffer: &'a wgpu::Buffer,
-) -> wgpu::BindGroupEntry<'a> {
+    buffer: &wgpu::Buffer,
+) -> wgpu::BindGroupEntry<'_> {
     binding_off(binding, buffer, 0)
 }
 
 /// Like [`binding`] but with a byte offset into `buffer`.
-fn binding_off<'a>(
+const fn binding_off(
     binding: u32,
-    buffer: &'a wgpu::Buffer,
+    buffer: &wgpu::Buffer,
     offset: u64,
-) -> wgpu::BindGroupEntry<'a> {
+) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -1547,9 +1565,9 @@ pub(crate) fn bytes_to_f32(v: &[u8], count: usize) -> Vec<f32> {
 }
 
 #[allow(unsafe_code)]
-pub(crate) fn bytemuck_safe(x: &[f32]) -> &[u8] {
+pub(crate) const fn bytemuck_safe(x: &[f32]) -> &[u8] {
     // SAFETY: f32 has no padding bits; the slice is exactly len*4 bytes.
-    unsafe { std::slice::from_raw_parts(x.as_ptr() as *const u8, x.len() * 4) }
+    unsafe { std::slice::from_raw_parts(x.as_ptr().cast::<u8>(), x.len() * 4) }
 }
 
 pub(crate) use crate::math::f32_bytes;
@@ -1561,14 +1579,19 @@ mod tests {
 
     #[test]
     fn q8_gemm_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping q8_gemm_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let mut rnd_u16 = move || {
             seed ^= seed << 13;
@@ -1646,7 +1669,7 @@ mod tests {
             let rstd = 1.0 / (var + eps).sqrt();
             for i in 0..d {
                 out[base + i] =
-                    (x[base + i] - mean) * rstd * gamma[i] + beta[i];
+                    ((x[base + i] - mean) * rstd).mul_add(gamma[i], beta[i]);
             }
         }
         out
@@ -1658,14 +1681,19 @@ mod tests {
 
     #[test]
     fn layernorm_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping layernorm_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0x1234_5678_9abc_def0u64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let (t, d) = (13usize, 1024usize);
         let eps = 1e-5;
@@ -1673,10 +1701,10 @@ mod tests {
         let mut gamma = vec![0.0f32; d];
         let mut beta = vec![0.0f32; d];
         for v in &mut x {
-            *v = rnd_f() * 3.0 + 1.0;
+            *v = rnd_f().mul_add(3.0, 1.0);
         }
         for v in &mut gamma {
-            *v = 1.0 + rnd_f() * 0.5;
+            *v = rnd_f().mul_add(0.5, 1.0);
         }
         for v in &mut beta {
             *v = rnd_f() * 0.2;
@@ -1698,14 +1726,19 @@ mod tests {
 
     #[test]
     fn elementwise_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping elementwise_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0xdead_beef_cafe_f00du64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let n = 4096;
         let mut x = vec![0.0f32; n];
@@ -1787,14 +1820,19 @@ mod tests {
 
     #[test]
     fn attention_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping attention_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0xcafe_babe_1234_5678u64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let (t, d, n_heads) = (13usize, 1024usize, 8usize);
         let (left, right) = (8usize, 3usize);
@@ -1836,8 +1874,11 @@ mod tests {
                     for i in 0..head_dim {
                         let qui = q[qq * d + hoff + i] + q_bias[hoff + i];
                         let qvi = q[qq * d + hoff + i] + v_bias[hoff + i];
-                        acc += qui * k[kk * d + hoff + i]
-                            + qvi * pos[(kk + t - qq - 1) * d + hoff + i];
+                        acc += f32::mul_add(
+                            qvi,
+                            pos[(kk + t - qq - 1) * d + hoff + i],
+                            qui * k[kk * d + hoff + i],
+                        );
                     }
                     let s = acc * scale;
                     maxv = maxv.max(s);
@@ -1851,7 +1892,8 @@ mod tests {
                 for i in 0..head_dim {
                     let mut acc = 0.0;
                     for kk in k_min..k_max {
-                        acc += exps[kk] * inv * v[kk * d + hoff + i];
+                        acc =
+                            (exps[kk] * inv).mul_add(v[kk * d + hoff + i], acc);
                     }
                     y_ref[qq * d + hoff + i] = acc;
                 }
@@ -1877,14 +1919,19 @@ mod tests {
 
     #[test]
     fn attn_stream_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping attn_stream_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0x5150_1503_7265_616du64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let (d, n_heads) = (1024usize, 8usize);
         let head_dim = d / n_heads;
@@ -1933,8 +1980,11 @@ mod tests {
                     for i in 0..head_dim {
                         let qui = q[qi * d + hoff + i] + q_bias[hoff + i];
                         let qvi = q[qi * d + hoff + i] + v_bias[hoff + i];
-                        acc += qui * kv[kk * d + hoff + i]
-                            + qvi * pos_p[pr as usize * d + hoff + i];
+                        acc += f32::mul_add(
+                            qvi,
+                            pos_p[pr as usize * d + hoff + i],
+                            qui * kv[kk * d + hoff + i],
+                        );
                     }
                     let s = acc * scale;
                     maxv = maxv.max(s);
@@ -1948,7 +1998,8 @@ mod tests {
                 for i in 0..head_dim {
                     let mut acc = 0.0;
                     for kk in k0..k1 {
-                        acc += exps[kk] * inv * vv[kk * d + hoff + i];
+                        acc = (exps[kk] * inv)
+                            .mul_add(vv[kk * d + hoff + i], acc);
                     }
                     y_ref[qi * d + hoff + i] = acc;
                 }
@@ -1989,14 +2040,19 @@ mod tests {
 
     #[test]
     fn dwconv_matches_reference() {
-        let ctx = GpuContext::init().expect("no GPU adapter");
+        let Some(ctx) = GpuContext::init() else {
+            eprintln!(
+                "skipping dwconv_matches_reference: no GPU adapter available"
+            );
+            return;
+        };
         let ctx = Arc::new(ctx);
         let mut seed = 0xf00d_baad_9876_5432u64;
         let mut rnd_f = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed >> 33) as f32 / u32::MAX as f32 * 2.0 - 1.0
+            ((seed >> 33) as f32 / u32::MAX as f32).mul_add(2.0, -1.0)
         };
         let (t, d, kh, pad_left) = (13usize, 1024usize, 9usize, 8usize);
         let x: Vec<f32> = (0..t * d).map(|_| rnd_f()).collect();
@@ -2011,7 +2067,7 @@ mod tests {
                     if ti < 0 || ti as usize >= t {
                         continue;
                     }
-                    acc += x[ti as usize * d + dd] * w[dd * kh + k];
+                    acc = x[ti as usize * d + dd].mul_add(w[dd * kh + k], acc);
                 }
                 y_ref[tt * d + dd] = acc;
             }
