@@ -76,16 +76,19 @@ jobs:
             arch: x86_64
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.create_release.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: always()
+          save-if: ${{ always() }}
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -146,17 +149,19 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.create_release.outputs.tag }}
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           key: android-${{ matrix.abi }}
-          save-if: always()
+          save-if: ${{ always() }}
 
       - uses: taiki-e/install-action@v2
         with:

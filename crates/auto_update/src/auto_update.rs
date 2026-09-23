@@ -202,8 +202,10 @@ pub struct GithubReleaseSource {
     pub owner: String,
     pub repo: String,
     /// A fine-grained personal access token scoped to this repository with
-    /// `Contents: Read-only` permission. Only needed while the repository is
-    /// private; must never be embedded in a binary distributed to others.
+    /// `Contents: Read-only` permission. Only needed for a private
+    /// repository; an empty or whitespace-only value is treated as absent
+    /// (the repository is public, so no token is required). Must never be
+    /// embedded in a binary distributed to others.
     pub token: Option<String>,
     api_base: String,
 }
@@ -217,7 +219,7 @@ impl GithubReleaseSource {
         Self {
             owner: owner.into(),
             repo: repo.into(),
-            token,
+            token: token.filter(|t| !t.trim().is_empty()),
             api_base: "https://api.github.com".to_string(),
         }
     }
@@ -281,7 +283,7 @@ pub async fn fetch_most_recent_release(
         .bytes()
         .await
         .context("failed to read the releases list body")?;
-    ensure_success(status, &body, "GitHub releases API")?;
+    ensure_success(status, &body, "GitHub releases API", token_hint(source))?;
     Ok(most_recent_prerelease(parse_releases_list_response(&body)?))
 }
 
@@ -333,32 +335,65 @@ pub async fn fetch_release_by_version(
         })
 }
 
+/// Builds a GitHub API `GET` request, optionally attaching the bearer token.
+fn github_request(
+    client: &reqwest::Client,
+    source: &GithubReleaseSource,
+    url: &str,
+    authenticated: bool,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .get(url)
+        .header(USER_AGENT, USER_AGENT_VALUE)
+        .header(ACCEPT, "application/vnd.github+json");
+    if authenticated && let Some(token) = &source.token {
+        request = request.bearer_auth(token);
+    }
+    request
+}
+
+/// A hint appended to API errors: a rejected token is the most likely cause
+/// of an unexpected 401/403 now that the repository is public.
+const fn token_hint(source: &GithubReleaseSource) -> &'static str {
+    if source.token.is_some() {
+        " - the token in STEALCODE_GH_TOKEN may be invalid or expired; it can \
+         be removed for a public repository"
+    } else {
+        ""
+    }
+}
+
 async fn github_get(
     client: &reqwest::Client,
     source: &GithubReleaseSource,
     url: &str,
 ) -> Result<reqwest::Response> {
-    let mut request = client
-        .get(url)
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .header(ACCEPT, "application/vnd.github+json");
-    if let Some(token) = &source.token {
-        request = request.bearer_auth(token);
-    }
-    request
+    let response = github_request(client, source, url, true)
         .send()
         .await
-        .context("failed to reach the GitHub releases API")
+        .context("failed to reach the GitHub releases API")?;
+    // A stale/invalid token turns a public-repo read into a 401. Retry once
+    // without it: the repository is public, so the request should succeed.
+    if source.token.is_some()
+        && response.status() == reqwest::StatusCode::UNAUTHORIZED
+    {
+        return github_request(client, source, url, false)
+            .send()
+            .await
+            .context("failed to reach the GitHub releases API");
+    }
+    Ok(response)
 }
 
 fn ensure_success(
     status: reqwest::StatusCode,
     body: &[u8],
     api: &str,
+    hint: &str,
 ) -> Result<()> {
     anyhow::ensure!(
         status.is_success(),
-        "{api} returned {status}: {}",
+        "{api} returned {status}: {}{hint}",
         String::from_utf8_lossy(body)
     );
     Ok(())
@@ -378,7 +413,7 @@ async fn fetch_release(
     if status == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
-    ensure_success(status, &body, "GitHub releases API")?;
+    ensure_success(status, &body, "GitHub releases API", token_hint(source))?;
     parse_release_response(&body).map(Some)
 }
 
@@ -388,32 +423,56 @@ pub async fn download_asset(
     asset: &ReleaseAsset,
     destination: &Path,
 ) -> Result<()> {
-    let mut request = if source.token.is_some() {
+    let response = if source.token.is_some() {
         // Private repo: must go through the API asset endpoint with this
         // exact Accept header. The API responds with either a 200
         // (streamed directly) or a 302 redirect to a pre-signed storage
         // URL; reqwest follows redirects by default, so both cases are
         // handled transparently.
-        client
+        let authenticated = client
             .get(&asset.url)
             .header(ACCEPT, "application/octet-stream")
+            .header(USER_AGENT, USER_AGENT_VALUE)
+            .bearer_auth(source.token.as_deref().expect("token checked above"))
+            .send()
+            .await
+            .with_context(|| {
+                format!("failed to start downloading asset {:?}", asset.name)
+            })?;
+        // A stale/invalid token is rejected with a 401; fall back to the
+        // public direct URL without auth (the repository is public).
+        if authenticated.status() == reqwest::StatusCode::UNAUTHORIZED {
+            client
+                .get(&asset.browser_download_url)
+                .header(USER_AGENT, USER_AGENT_VALUE)
+                .send()
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to start downloading asset {:?}",
+                        asset.name
+                    )
+                })?
+        } else {
+            authenticated
+        }
     } else {
         // Public repo: the direct download URL works without auth.
-        client.get(&asset.browser_download_url)
+        client
+            .get(&asset.browser_download_url)
+            .header(USER_AGENT, USER_AGENT_VALUE)
+            .send()
+            .await
+            .with_context(|| {
+                format!("failed to start downloading asset {:?}", asset.name)
+            })?
     };
-    request = request.header(USER_AGENT, USER_AGENT_VALUE);
-    if let Some(token) = &source.token {
-        request = request.bearer_auth(token);
-    }
-
-    let response = request.send().await.with_context(|| {
-        format!("failed to start downloading asset {:?}", asset.name)
-    })?;
     let status = response.status();
     anyhow::ensure!(
         status.is_success(),
-        "failed to download asset {:?}: HTTP {status}",
-        asset.name
+        "failed to download asset {:?}: HTTP {status}{}",
+        asset.name,
+        token_hint(source)
     );
 
     if let Some(parent) = destination.parent() {
@@ -970,7 +1029,63 @@ pub fn restart_and_update() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+
+    /// A local HTTP server standing in for the GitHub API. It records the
+    /// `Authorization` header of every request and answers with whatever
+    /// `responder` returns for that header.
+    fn spawn_mock_github(
+        responder: impl Fn(Option<&str>) -> (u16, String) + Send + Sync + 'static,
+    ) -> (String, Arc<Mutex<Vec<Option<String>>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_for_server = Arc::clone(&seen);
+        let responder = Arc::new(responder);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    match std::io::Read::read(&mut stream, &mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            request.extend_from_slice(&chunk[..n]);
+                            if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let request = String::from_utf8_lossy(&request);
+                let auth = request.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("authorization") {
+                        Some(value.trim().to_string())
+                    } else {
+                        None
+                    }
+                });
+                seen_for_server.lock().unwrap().push(auth.clone());
+                let (status, body) = responder(auth.as_deref());
+                let response = format!(
+                    "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\n\
+                     Content-Type: application/json\r\nConnection: close\r\n\
+                     \r\n{body}",
+                    if status == 200 { "OK" } else { "Unauthorized" },
+                    body.len()
+                );
+                let _ =
+                    std::io::Write::write_all(&mut stream, response.as_bytes());
+                let _ = std::io::Write::flush(&mut stream);
+            }
+        });
+        (base_url, seen)
+    }
 
     fn sample_release_json(
         tag: &str,
@@ -1135,5 +1250,101 @@ mod tests {
         std::io::Read::read_to_end(&mut { held }, &mut buf).unwrap();
         assert_eq!(buf, b"old");
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
+    }
+
+    #[tokio::test]
+    async fn empty_token_is_treated_as_absent() {
+        let release = sample_release_json("v9.9.9", false, &[]);
+        let (base_url, seen) = spawn_mock_github(move |auth| {
+            if auth.is_some() {
+                (401, r#"{"message": "Bad credentials"}"#.to_string())
+            } else {
+                (200, release.clone())
+            }
+        });
+        let source = GithubReleaseSource::new(
+            "she-workss",
+            "stealcode",
+            Some(String::new()),
+        )
+        .with_api_base(base_url);
+        let client = reqwest::Client::new();
+        let found =
+            fetch_release_for_channel(&client, &source, ReleaseChannel::Stable)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(found.tag_name, "v9.9.9");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "an empty token must not be sent at all");
+        assert!(seen[0].is_none());
+    }
+
+    #[tokio::test]
+    async fn bad_token_is_retried_without_authentication() {
+        let release = sample_release_json("v9.9.9", false, &[]);
+        let (base_url, seen) = spawn_mock_github(move |auth| {
+            if auth.is_some() {
+                (401, r#"{"message": "Bad credentials"}"#.to_string())
+            } else {
+                (200, release.clone())
+            }
+        });
+        let source = GithubReleaseSource::new(
+            "she-workss",
+            "stealcode",
+            Some("stale-token".to_string()),
+        )
+        .with_api_base(base_url);
+        let client = reqwest::Client::new();
+        let found =
+            fetch_release_for_channel(&client, &source, ReleaseChannel::Stable)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(found.tag_name, "v9.9.9");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "expected one authenticated retry");
+        assert_eq!(seen[0].as_deref(), Some("Bearer stale-token"));
+        assert!(seen[1].is_none());
+    }
+
+    #[tokio::test]
+    async fn bad_token_falls_back_to_public_asset_download() {
+        let (base_url, seen) = spawn_mock_github(move |auth| {
+            if auth.is_some() {
+                (401, r#"{"message": "Bad credentials"}"#.to_string())
+            } else {
+                (200, "installer-bytes".to_string())
+            }
+        });
+        let source = GithubReleaseSource::new(
+            "she-workss",
+            "stealcode",
+            Some("stale-token".to_string()),
+        )
+        .with_api_base(base_url.clone());
+        let asset = ReleaseAsset {
+            id: 1,
+            name: "StealCode-x86_64.exe".to_string(),
+            size: 15,
+            url: format!(
+                "{base_url}/repos/she-workss/stealcode/releases/assets/1"
+            ),
+            browser_download_url: format!(
+                "{base_url}/download/StealCode-x86_64.exe"
+            ),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("StealCode-x86_64.exe");
+        let client = reqwest::Client::new();
+        download_asset(&client, &source, &asset, &destination)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"installer-bytes");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "expected one authenticated retry");
+        assert_eq!(seen[0].as_deref(), Some("Bearer stale-token"));
+        assert!(seen[1].is_none());
     }
 }

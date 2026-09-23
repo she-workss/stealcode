@@ -22,10 +22,13 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           components: clippy, rustfmt, rustc-codegen-cranelift-preview
       - uses: Swatinem/rust-cache@v2
         with:
@@ -53,8 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           components: rustc-codegen-cranelift-preview
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,14 +81,18 @@ jobs:
         run: cargo doc --features cli/all --no-deps
     env:
       RUSTDOCFLAGS: "-D rustdoc::all -A rustdoc::private-doc-tests -A rustdoc::missing-crate-level-docs"
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
 
   test-versions:
     needs: check
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           components: rustc-codegen-cranelift-preview
       - uses: Swatinem/rust-cache@v2
         with:
@@ -117,10 +125,13 @@ jobs:
   test-docs:
     needs: check
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: ${{ vars.RUST_NIGHTLY || 'nightly' }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: ${{ vars.RUST_NIGHTLY || 'nightly' }}
           components: rustc-codegen-cranelift-preview
       - uses: Swatinem/rust-cache@v2
         with:
