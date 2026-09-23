@@ -549,12 +549,12 @@ pub async fn apply_release_asset(
 /// Locates `StealCode.app` from the running binary inside a macOS bundle.
 #[cfg(target_os = "macos")]
 fn macos_app_dir() -> Result<PathBuf> {
-    std::env::current_exe()
+    Ok(std::env::current_exe()
         .context("failed to determine current executable path")?
         .ancestors()
         .nth(2) // Contents/MacOS/stealcode -> Contents -> StealCode.app
         .context("could not locate StealCode.app from the running executable")?
-        .to_path_buf()
+        .to_path_buf())
 }
 
 /// Relaunches `StealCode` after a successful `update_now_blocking` and exits
