@@ -77,11 +77,7 @@ rustflags = [
 rustflags = ["-Ctarget-cpu=x86-64-v3"]
 
 [target.'cfg(all(target_os = "windows", target_env = "msvc"))']
-rustflags = [
-    "--cfg=windows_slim_errors",
-    "-Clink-args=/DYNAMICBASE",
-    "-Clink-args=/CETCOMPAT",
-]
+rustflags = ["--cfg=windows_slim_errors"]
 
 [target.'cfg(all(target_os = "windows", target_env = "gnu"))']
 rustflags = ["--cfg=windows_slim_errors", "-Clink-arg=-fuse-ld=lld"]

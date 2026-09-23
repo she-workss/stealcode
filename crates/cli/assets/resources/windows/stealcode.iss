@@ -95,7 +95,7 @@ Name: "{app}\tools"
 
 [Files]
 Source: "{#ResourcesDir}{#MyAppExeName}"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
-Source: "{#ResourcesDir}auto_update_helper.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#ResourcesDir}auto-update-helper.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#AppUserId}"

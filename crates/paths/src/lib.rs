@@ -229,17 +229,22 @@ pub fn database_dir() -> &'static PathBuf {
 
 /// Returns the path to the crashes directory, if it exists for the current
 /// platform.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn crashes_dir() -> Option<&'static PathBuf> {
+    static CRASHES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    Some(
+        CRASHES_DIR
+            .get_or_init(|| home_dir().join("Library/Logs/DiagnosticReports")),
+    )
+}
+
+/// Returns the path to the crashes directory, if it exists for the current
+/// platform.
+#[cfg(not(target_os = "macos"))]
 #[must_use]
 pub const fn crashes_dir() -> Option<&'static PathBuf> {
-    cfg_select! {
-        target_os = "macos" => {
-            static CRASHES_DIR: OnceLock<PathBuf> = OnceLock::new();
-            Some(CRASHES_DIR.get_or_init(|| {
-                home_dir().join("Library/Logs/DiagnosticReports")
-            }))
-        }
-        _ => None,
-    }
+    None
 }
 
 /// Returns the path to the `settings.json` file.

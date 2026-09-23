@@ -1,4 +1,4 @@
-//! `StealCode`'s self-updater, paired with a separate `auto_update_helper`
+//! `StealCode`'s self-updater, paired with a separate `auto-update-helper`
 //! binary for the Windows-only file swap).
 
 use std::{
@@ -538,7 +538,7 @@ pub async fn apply_release_asset(
         let helper_path = install_release_windows(&downloaded_path).await?;
         anyhow::ensure!(
             helper_path.is_file(),
-            "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
+            "auto-update-helper.exe not found at {} - is StealCode installed via the normal installer?",
             helper_path.display()
         );
     }
@@ -559,7 +559,7 @@ fn macos_app_dir() -> Result<PathBuf> {
 
 /// Relaunches `StealCode` after a successful `update_now_blocking` and exits
 /// the current process. On Windows the binary swap is done by
-/// `auto_update_helper.exe --launch true` (see `restart_and_update`); on
+/// `auto-update-helper.exe --launch true` (see `restart_and_update`); on
 /// Unix the new binary is already in place, so the current executable is
 /// simply re-executed. Never returns on success.
 pub fn restart_updated_app() -> Result<()> {
@@ -798,7 +798,7 @@ fn tempdir_next_to(path: &Path) -> Result<PathBuf> {
 /// `stealcode.iss` interprets as "install into `{app}\install\` instead of
 /// `{app}` directly, and write `updates\versions.txt` when done" - see the
 /// `IsUpdating`/`GetInstallDir` Pascal functions there. Returns the path to
-/// `auto_update_helper.exe`, which the caller should invoke later (at quit
+/// `auto-update-helper.exe`, which the caller should invoke later (at quit
 /// time, or immediately for an explicit restart).
 #[cfg(windows)]
 pub async fn install_release_windows(
@@ -822,7 +822,7 @@ pub async fn install_release_windows(
         .parent()
         .context("no parent dir for stealcode.exe")?
         .join("tools")
-        .join("auto_update_helper.exe");
+        .join("auto-update-helper.exe");
     Ok(helper_path)
 }
 
@@ -862,17 +862,17 @@ pub fn apply_staged_update_on_startup() -> Result<bool> {
     if !flag_file.exists() || !staged.is_file() {
         return Ok(false);
     }
-    let helper = app_dir.join("tools").join("auto_update_helper.exe");
+    let helper = app_dir.join("tools").join("auto-update-helper.exe");
     anyhow::ensure!(
         helper.is_file(),
-        "auto_update_helper.exe not found at {} - is StealCode installed via the normal installer?",
+        "auto-update-helper.exe not found at {} - is StealCode installed via the normal installer?",
         helper.display()
     );
     std::process::Command::new(&helper)
         .arg("--launch")
         .arg("true")
         .status()
-        .context("failed to spawn auto_update_helper.exe")?;
+        .context("failed to spawn auto-update-helper.exe")?;
     Ok(true)
 }
 
@@ -899,7 +899,7 @@ pub async fn finalize_auto_update_on_quit() {
     if !flag_file.exists() {
         return;
     }
-    let helper = app_dir.join("tools").join("auto_update_helper.exe");
+    let helper = app_dir.join("tools").join("auto-update-helper.exe");
     if let Ok(mut child) = tokio::process::Command::new(helper)
         .arg("--launch")
         .arg("false")
@@ -959,12 +959,12 @@ pub fn cleanup_windows_blocking() -> Result<()> {
 pub fn restart_and_update() -> Result<()> {
     let exe = std::env::current_exe()?;
     let app_dir = exe.parent().context("no parent dir for stealcode.exe")?;
-    let helper = app_dir.join("tools").join("auto_update_helper.exe");
+    let helper = app_dir.join("tools").join("auto-update-helper.exe");
     std::process::Command::new(helper)
         .arg("--launch")
         .arg("true")
         .spawn()
-        .context("failed to spawn auto_update_helper.exe")?;
+        .context("failed to spawn auto-update-helper.exe")?;
     std::process::exit(0);
 }
 

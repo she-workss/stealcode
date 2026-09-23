@@ -1,6 +1,6 @@
 #![allow(unsafe_code)]
 
-//! A minimal Win32 progress window shown while `auto_update_helper` swaps
+//! A minimal Win32 progress window shown while `auto-update-helper` swaps
 //! files. A plain WNDCLASS with a progress bar control.
 
 use anyhow::{Context, Result};

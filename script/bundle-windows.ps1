@@ -38,7 +38,9 @@ function Build-Binaries {
     $env:STEALCODE_RELEASE_CHANNEL = $Channel
     cargo build --release --package cli --features all --package auto_update_helper --target $Target
     Copy-Item -Path (Join-Path $CargoOutDir 'stealcode.exe') -Destination (Join-Path $StagingDir 'stealcode.exe') -Force
-    Copy-Item -Path (Join-Path $CargoOutDir 'auto_update_helper.exe') -Destination (Join-Path $StagingDir 'auto_update_helper.exe') -Force
+    # The cargo bin target is kebab-case (cargo's non-kebab-case-bins lint), and
+    # the installer and the updater expect the same kebab-case name on staging.
+    Copy-Item -Path (Join-Path $CargoOutDir 'auto-update-helper.exe') -Destination (Join-Path $StagingDir 'auto-update-helper.exe') -Force
 }
 
 function Build-Installer {

@@ -22,7 +22,7 @@ fn main() {
 #[cfg(not(windows))]
 fn main() {
     eprintln!(
-        "auto_update_helper only does anything on Windows; macOS and Linux \
+        "auto-update-helper only does anything on Windows; macOS and Linux \
          apply updates directly (see auto_update::apply_linux_update / \
          apply_macos_update)"
     );
