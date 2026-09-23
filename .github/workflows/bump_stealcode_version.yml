@@ -1,3 +1,9 @@
+# main is the development line. A minor release cuts a new vX.Y.x branch from
+# `base` (default main); when a fresh branch is cut, main is then bumped to the
+# same version so the next cut gets the next minor instead of colliding with an
+# existing tag. The daily nightly dispatch passes branch=main, which already
+# exists, so it neither cuts a branch nor bumps main. Cutting a branch from a
+# `base` other than main (a backport) does not move main.
 name: bump_stealcode_version
 
 on:
@@ -17,6 +23,14 @@ on:
         description: "Branch to bump and tag on (e.g. v0.14.x; main for nightly)"
         type: string
         default: main
+      base:
+        description: "Ref to cut a NEW release branch from (ignored when the branch already exists)"
+        type: string
+        default: main
+      bump_main:
+        description: "After cutting a new release branch, also bump main to the same version (keeps the next minor release from colliding)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -32,20 +46,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout or create release branch
+      - id: branch
+        name: Checkout or create release branch
         run: |
-          if git branch -r | grep -q "origin/${{ inputs.branch }}"; then
+          if git show-ref --verify --quiet "refs/remotes/origin/${{ inputs.branch }}"; then
             echo "Branch ${{ inputs.branch }} already exists, checking it out"
+            echo "created=false" >> "$GITHUB_OUTPUT"
             git checkout "${{ inputs.branch }}"
             git pull --ff-only origin "${{ inputs.branch }}"
           else
-            stable_tag="$(git tag -l 'v*' | grep -v -- '-pre' | sort -V | tail -n1)"
-            if [ -z "$stable_tag" ]; then
-              echo "::error::no stable tag yet; cannot derive base for a new release branch"
-              exit 1
-            fi
-            echo "Creating ${{ inputs.branch }} from latest stable tag $stable_tag"
-            git checkout -b "${{ inputs.branch }}" "$stable_tag"
+            echo "Creating ${{ inputs.branch }} from ${{ inputs.base }}"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            git checkout -b "${{ inputs.branch }}" "origin/${{ inputs.base }}"
           fi
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -77,6 +89,19 @@ jobs:
             echo "tag=v${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Fail if the tag already exists
+        run: |
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/${{ steps.tag.outputs.tag }}" >/dev/null || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::tag ${{ steps.tag.outputs.tag }} already exists - bump a different version part or delete/retag deliberately"
+            exit 1
+          fi
+          if [ "$rc" -ne 2 ]; then
+            echo "::error::could not query remote tags (git ls-remote exit $rc); refusing to tag"
+            exit 1
+          fi
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
@@ -96,5 +121,17 @@ jobs:
           git push origin "${{ steps.tag.outputs.tag }}"
           # A push made with RELEASE_TOKEN DOES trigger `release.yml` via its
           # `push: tags: v*` trigger, so no explicit dispatch is needed.
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Bump main to the same version
+        if: steps.branch.outputs.created == 'true' && inputs.bump_main && inputs.base == 'main'
+        run: |
+          git checkout main
+          git pull --ff-only origin main
+          cargo set-version --workspace "${{ steps.version.outputs.version }}"
+          git add -A
+          git commit -m "Bump StealCode to ${{ steps.tag.outputs.tag }}"
+          git push origin main
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}

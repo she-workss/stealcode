@@ -241,9 +241,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Same policy as Zed: a release is always published as a draft first,
-  # then -pre nightlies are flip to published automatically, while stable
-  # releases stay drafts until a human publishes them manually.
+  # A release is always created as a draft first. Both channels (stable and
+  # nightly) are published automatically once `validate_release_assets`
+  # passes; a failed build or validation leaves the release as a draft.
   auto_publish:
     needs:
       - create_release
@@ -252,8 +252,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Publish nightly release (remove draft flag)
-        if: needs.create_release.outputs.channel == 'nightly'
+      - name: Publish release (remove draft flag)
         run: gh release edit "${{ needs.create_release.outputs.tag }}" --repo she-workss/stealcode --draft=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

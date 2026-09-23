@@ -1,0 +1,99 @@
+# One-click stable release.
+#
+# Clicking "Run workflow" is the whole operation:
+#   * kind=minor cuts the next vX.Y.x branch from main (when it does not exist
+#     yet), bumps the version to vX.Y.0, tags it and pushes;
+#   * kind=patch targets the existing release branch for the current line and
+#     bumps to the next vX.Y.Z.
+# The tag push triggers `release.yml`, which builds every bundle, uploads and
+# validates all assets, and publishes the release automatically - no manual
+# "Publish release" click is required.
+name: release_stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "minor = cut a new vX.Y.0 line from main; patch = next vX.Y.Z on an existing release branch"
+        type: choice
+        options: [minor, patch]
+        default: minor
+      branch:
+        description: "Release branch (empty = computed from main: minor -> v<major>.<minor+1>.x, patch -> v<major>.<minor>.x)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - id: resolve
+        name: Resolve the release branch
+        env:
+          KIND: ${{ inputs.kind }}
+          BRANCH_INPUT: ${{ inputs.branch }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ -z "$version" ]; then
+            echo "::error::could not determine version from Cargo.toml"
+            exit 1
+          fi
+          major=$(echo "$version" | cut -d. -f1)
+          minor=$(echo "$version" | cut -d. -f2)
+
+          branch="$BRANCH_INPUT"
+          if [ -z "$branch" ]; then
+            if [ "$KIND" = "minor" ]; then
+              branch="v${major}.$((minor + 1)).x"
+            else
+              branch="v${major}.${minor}.x"
+            fi
+          fi
+
+          if [ "$KIND" = "patch" ]; then
+            rc=0
+            git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null || rc=$?
+            if [ "$rc" -eq 2 ]; then
+              echo "::error::release branch ${branch} does not exist; use kind=minor to cut the first vX.Y.x branch for this line"
+              exit 1
+            fi
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::could not query remote branch ${branch} (git ls-remote exit $rc)"
+              exit 1
+            fi
+          fi
+
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if [ "$KIND" = "minor" ]; then
+            echo "Resolved branch: $branch (will become v${major}.$((minor + 1)).0)"
+          else
+            echo "Resolved branch: $branch (patch bump decided by the callee)"
+          fi
+
+      - name: Dispatch the stable release
+        run: |
+          gh workflow run bump_stealcode_version.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f bump=${{ inputs.kind }} \
+            -f channel=stable \
+            -f branch=${{ steps.resolve.outputs.branch }} \
+            -f base=main \
+            -f bump_main=true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Print the triggered run URL
+        run: |
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow bump_stealcode_version.yml --limit 1 --json url --jq '.[0].url' || true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
