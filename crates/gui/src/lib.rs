@@ -30,6 +30,7 @@ use tray_icon::{
 #[cfg(feature = "voice")]
 use voice::VoiceManager;
 
+#[cfg(target_os = "windows")]
 const APP_USER_MODEL_ID: &str = "he-thinks.StealCode";
 
 /// How often the background task polls the voice/update workers for new

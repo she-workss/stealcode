@@ -95,6 +95,8 @@ jobs:
             libasound2-dev \
             libpulse-dev \
             libssl-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
             pkg-config \
             libgtk-3-dev \
             libxdo-dev \
